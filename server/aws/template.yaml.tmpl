@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: GPT for Gdrive
+
+Parameters:
+  LambdaVersion:
+    Type: String
+    Description: Version of Lambdas
+  OauthClientId:
+    Type: String
+  OauthClientSecret:
+    Type: String
+  OauthRedirectUri:
+    Type: String
+  UsersTable:
+    Type: String
+  ServiceconfTable:
+    Type: String
+  CookieDomain:
+    Type: String
+  OpenaiApiKey:
+    Type: String
+Globals:
+  Function:
+    Environment:
+      Variables:
+        LAMBDA_VERSION: !Ref LambdaVersion
+        OAUTH_CLIENT_ID: !Ref OauthClientId
+        OAUTH_CLIENT_SECRET: !Ref OauthClientSecret
+        OAUTH_REDIRECT_URI: !Ref OauthRedirectUri
+        USERS_TABLE: !Ref UsersTable
+        SERVICECONF_TABLE: !Ref ServiceconfTable
+        COOKIE_DOMAIN: !Ref CookieDomain
+        HF_HUB_OFFLINE: '1'
+        HF_HOME: '/tmp'
+        TRANSFORMERS_OFFLINE: '1'
+        OPENAI_API_KEY: !Ref OpenaiApiKey
+Resources:
+  MyFilesGPTLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        -
+          PolicyName: 'AllowSTS'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource: '*'
+        -
+          PolicyName: 'AllowPassRole'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - 'execute-api:Invoke'
+                Resource: '*'
+        -
+          PolicyName: 'AllowInvokeOtherLambda'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: '*'
+        -
+          PolicyName: AllowDdb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+              - dynamodb:ConditionCheckItem
+              - dynamodb:PutItem
+              - dynamodb:DescribeTable
+              - dynamodb:DeleteItem
+              - dynamodb:GetItem
+              - dynamodb:Scan
+              - dynamodb:Query
+              - dynamodb:UpdateItem
+              Resource:
+              - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-users
+              - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-ServiceConf
+        - PolicyName: AllowS3Pylaprof
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: arn:aws:s3:::pylaprof/*
+  MyFilesGPTApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET,HEAD,OPTIONS,POST,PUT,PATCH,DELETE'"
+        AllowHeaders: "'Access-Control-Allow-Headers,Access-Control-Allow-Origin,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,x-requested-with,X-Api-Key,Authorization,X-Amz-Date,X-Forwarded-For,Idtoken'"
+        AllowCredentials: false
+  entrypoint:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      ImageUri: IIIIIIIIII
+      MemorySize: 8192
+      EphemeralStorage:
+        Size: 8192
+      Timeout: 900
+      PackageType: Image
+      ImageConfig:
+        Command:
+          - entrypoint.entrypoint 
+      Description: get version
+      Role: !GetAtt MyFilesGPTLambdaRole.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+        Cors:
+          AllowCredentials: true
+          AllowHeaders:
+            - authorization
+          AllowMethods: 
+            - '*'
+          AllowOrigins: 
+            - '*'
+          ExposeHeaders: 
+            - access-control-allow-origin
+            - access-control-allow-headers
+            - access-control-allow-methods
+            - access-control-allow-credentials
+          MaxAge: 30
+      Environment:
+        Variables:
+          LAMBDA_VERSION: !Ref LambdaVersion
+          PYLAPROF_DISABLE: true    # https://github.com/glumia/pylaprof/blob/master/examples/hello-lambda/serverless.yml
+          PERIOIDIC_PROCESS_FILES_TIME_LIMIT: 9
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MyFilesGPTApi
+            Path: /entrypoint
+            Method: ANY
+Outputs:
+  GetversionFunctionArn:
+    Description: The Arn of the entrypoint lambda
+    Value: !GetAtt entrypoint.Arn
+    Export:
+      Name: 'yoja:entrypointarn'
