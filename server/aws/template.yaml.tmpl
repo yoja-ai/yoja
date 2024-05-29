@@ -36,7 +36,7 @@ Globals:
         TRANSFORMERS_OFFLINE: '1'
         OPENAI_API_KEY: !Ref OpenaiApiKey
 Resources:
-  MyFilesGPTLambdaRole:
+  YojaLambdaRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -110,7 +110,7 @@ Resources:
               Action:
                 - s3:PutObject
               Resource: arn:aws:s3:::pylaprof/*
-  MyFilesGPTApi:
+  YojaApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
@@ -132,7 +132,7 @@ Resources:
         Command:
           - entrypoint.entrypoint 
       Description: get version
-      Role: !GetAtt MyFilesGPTLambdaRole.Arn
+      Role: !GetAtt YojaLambdaRole.Arn
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
@@ -159,7 +159,7 @@ Resources:
         Api1:
           Type: Api
           Properties:
-            RestApiId: !Ref MyFilesGPTApi
+            RestApiId: !Ref YojaApi
             Path: /entrypoint
             Method: ANY
 Outputs:
