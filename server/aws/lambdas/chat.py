@@ -166,7 +166,7 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
         # Added 'or provide details of the mentioned subject." since openai was not
         # calling our function for a bare chat line such as 'android crypto policy' instead
         # of a full instruction such as 'give me details of android crypto policy'
-        instructions="You are a helpful assistant. Use the provided functions to answer questions or provide details of the mentioned subject.",
+        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
         # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
         model="gpt-4",
         tools=[
@@ -174,7 +174,7 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
                 "type": "function",
                 "function": {
                     "name": "search_question_in_db",
-                    "description": "Search and return relevant passsages for the given question or search and return relevant passages that provide details of the mentioned subject",
+                    "description": "Search confidential and private information and return relevant passsages for the given question or search and return relevant passages that provide details of the mentioned subject",
                     "parameters": {
                         "type": "object",
                         "properties": {
