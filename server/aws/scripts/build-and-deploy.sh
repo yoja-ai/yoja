@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ x"$9" == "x" ] ; then
+if [ x"$11" == "x" ] ; then
   echo "Usage: $0"
   echo "  oauth_client_id"
   echo "  oauth_client_secret"
@@ -9,22 +9,12 @@ if [ x"$9" == "x" ] ; then
   echo "  serviceconf_table_name"
   echo "  cookie_domain"
   echo "  scratch_bucket"
-  echo "  image_name"
   echo "  openai_api_key"
+  echo "  aws_creds_profile"
+  echo "  aws_region"
+  echo "  image_name"
   exit 255
 fi
-
-AWS_REGN="us-east-1"
-if [ x"${10}" == "x" ] ; then
-    AWS_CREDS="default"
-else
-    AWS_CREDS="${10}"
-    if [ x"${11}" != "x" ] ; then
-        AWS_REGN="${11}"
-    fi
-fi
-echo "Using AWS Credentials Profile $AWS_CREDS"
-echo "Using AWS Region $AWS_REGN"
 
 oauth_client_id=$1
 oauth_client_secret=$2
@@ -33,8 +23,13 @@ users_table_name=$4
 serviceconf_table_name=$5
 cookie_domain=$6
 scratch_bucket=$7
-image_name=$8
-openai_api_key=$9
+openai_api_key=$8
+AWS_CREDS="${9}"
+AWS_REGN="${10}"
+image_name=${11}
+
+echo "Using AWS Credentials Profile $AWS_CREDS"
+echo "Using AWS Region $AWS_REGN"
 
 aws --profile ${AWS_CREDS} --region ${AWS_REGN} s3 ls "s3://${scratch_bucket}" || { echo "Error: unable to access the specified s3 bucket ${scratch_bucket}.  Fix and try again"; exit 1; }
 
