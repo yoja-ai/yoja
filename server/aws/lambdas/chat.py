@@ -422,8 +422,10 @@ def print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc):
         fn = last_msg[:fnend]
         chat_msg = last_msg[fnend:]
 
-    for finfo in documents.values():
-        if finfo['filename'] == fn:
+    finfo = None
+    for fi in documents.values():
+        if fi['filename'] == fn:
+            finfo = fi
             break
     if not finfo:
         srp = "File not found in index"
