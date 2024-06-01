@@ -192,7 +192,9 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
     # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     needs_embedding = {}
     for fileid, gdrive_entry in gdrive_listing.items():
-        if fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
+        if gdrive_entry['size'] > (100*1024*1024):
+            print("Skipping file {gdrive_entry['filename']}. Size too big {gdrive_entry['size']}")
+        elif fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
             unmodified[fileid] = s3_index[fileid]
         else:
             path = ""
@@ -560,9 +562,10 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
         # folder_id is specified, then only index the folder's contents
         if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
         while True:
+            # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
             results = (
                 service.files()
-                .list(pageSize=100, fields="nextPageToken, files(id, name, modifiedTime, mimeType, parents)", **kwargs)
+                .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
                 .execute()
             )
             # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
@@ -573,6 +576,10 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
             for item in items:
                 filename = item['name']
                 fileid = item['id']
+                if 'size' in item:
+                    size = int(item['size'])
+                else:
+                    size = 0
                 mtime = from_rfc3339(item['modifiedTime'])
                 mimetype = item['mimeType']
                 if mimetype == 'application/vnd.google-apps.folder':
@@ -580,9 +587,9 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
                         folder_details[fileid] = {'filename': filename, 'parents': item['parents']}
                 else:
                     if 'parents' in item:
-                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'parents': item['parents']}
+                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size, 'parents': item['parents']}
                     else:
-                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype}
+                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size}
             pageToken = results.get("nextPageToken", None)
             kwargs['pageToken']=pageToken
             if not pageToken:
