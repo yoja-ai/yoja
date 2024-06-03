@@ -245,8 +245,9 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
         print(f"get_s3_index: Failed to download files_index.jsonl from s3://{bucket}/{prefix}")
     return rv
 
-def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime) -> Dict[str, Union[str,Dict[str, str]]]:
-    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": []} # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}
+def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}
+    prev_len = len(prev_paras)
     doc = docx.Document(file_io)
     prelude = f"The filename is {filename} and the paragraphs are:"
     prelude_token_len = vectorizer.get_token_count(prelude)
@@ -257,6 +258,10 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
         if para:
             para_len = vectorizer.get_token_count(para)
             if para_len + chunk_len >= 512:
+                if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
+                    chunk_len = prelude_token_len
+                    chunk_paras = []
+                    continue
                 chunk = '.'.join(chunk_paras)
                 para_dct = {'paragraph_text': chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
                 try:
@@ -269,21 +274,27 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
                 doc_dct['paragraphs'].append(para_dct)
                 chunk_len = prelude_token_len
                 chunk_paras = []
+                now = datetime.datetime.now()
+                if now - start_time > datetime.timedelta(minutes=time_limit):
+                    doc_dct['partial'] = "true"
+                    print(f"read_docx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+                    break
             else:
                 chunk_paras.append(para)
                 chunk_len += para_len
     if chunk_len > prelude_token_len and len(chunk_paras) > 0:
-        chunk = '.'.join(chunk_paras)
-        para_dct = {} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
-        para_dct['paragraph_text'] = chunk
-        try:
-            embedding = vectorizer([f"{prelude}{chunk}"])
-            eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
-            para_dct['embedding'] = eem
-        except Exception as ex:
-            print(f"Exception {ex} while creating residual para embedding")
-            traceback.print_exc()
-        doc_dct['paragraphs'].append(para_dct)
+        if prev_len <= len(doc_dct['paragraphs']): # skip previously processed chunks
+            chunk = '.'.join(chunk_paras)
+            para_dct = {} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
+            para_dct['paragraph_text'] = chunk
+            try:
+                embedding = vectorizer([f"{prelude}{chunk}"])
+                eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                para_dct['embedding'] = eem
+            except Exception as ex:
+                print(f"Exception {ex} while creating residual para embedding")
+                traceback.print_exc()
+            doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
 def read_pptx(filename, fileid, file_io, mtime:datetime.datetime) -> Dict[str, Union[str, Dict[str,str]]]:
@@ -330,7 +341,6 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime,
         docs:List[llama_index.core.Document] = pdf_reader.load(file_path=tfile.name)
     
     sent_split:llama_index.core.node_parser.SentenceSplitter = llama_index.core.node_parser.SentenceSplitter(chunk_size=512)
-
     # 
     chunks:List[str] = []
     for doc in docs:
@@ -357,6 +367,20 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime,
     print(f"_read_pdf: fn={filename}. returning. num paras={len(doc_dct['paragraphs'])}")
     return doc_dct
 
+def process_docx(file_item, filename, fileid, bio, start_time, time_limit):
+    if 'partial' in file_item and 'paragraphs' in file_item:
+        del file_item['partial']
+        prev_paras = file_item['paragraphs']
+        print(f"process_docx: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+    else:
+        prev_paras = []
+        print(f"process_docx: fn={filename}. did not find partial")
+    doc_dict = read_docx(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_paras)
+    file_item['paragraphs'] = doc_dict['paragraphs']
+    file_item['filetype'] = 'docx'
+    if 'partial' in doc_dict:
+        file_item['partial'] = 'true'
+
 def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
@@ -380,11 +404,8 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                doc_dct = read_docx(filename, fileid, bio, file_item['mtime'])
-                file_item['paragraphs'] = doc_dct['paragraphs']
-                file_item['filetype'] = 'docx'
+                process_docx(file_item, filename, fileid, bio, start_time, time_limit)
                 done_embedding[fileid] = file_item
-                    
             elif filename.lower().endswith('.doc'):
                 bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
                 tfd, tfn = tempfile.mkstemp(suffix=".doc", dir="/tmp")
@@ -399,9 +420,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to docx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
-                        file_item['paragraphs'] = doc_dct['paragraphs']
-                        file_item['filetype'] = 'docx'
+                        process_docx(file_item, filename, fileid, fp, start_time, time_limit)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}x')
                 else:
