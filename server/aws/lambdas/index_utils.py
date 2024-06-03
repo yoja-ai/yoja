@@ -192,10 +192,11 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
     # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     needs_embedding = {}
     for fileid, gdrive_entry in gdrive_listing.items():
-        if gdrive_entry['size'] > (100*1024*1024):
-            print("Skipping file {gdrive_entry['filename']}. Size too big {gdrive_entry['size']}")
-        elif fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
-            unmodified[fileid] = s3_index[fileid]
+        if fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
+            if 'partial' in s3_index[fileid]:
+                needs_embedding[fileid] = s3_index[fileid]
+            else:
+                unmodified[fileid] = s3_index[fileid]
         else:
             path = ""
             entry = gdrive_entry
@@ -221,7 +222,6 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
                 else:
                     print(f"WARNING: Could not map folder id {folder_id} to folder_name for filename {entry['filename']}, path={path}")
                     break
-            print(f"calc_file_lists: filename {gdrive_entry['filename']}, path={path}")
             gdrive_entry['path'] = path
             needs_embedding[fileid] = gdrive_entry
     
@@ -319,26 +319,7 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime) -> Dict[str, U
         ppt['slides'].append(slide_dct)
     return ppt
 
-def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime) -> Dict[str, Any]:
-    # import fitz
-    # doc = fitz.open(filename) # open a document
-    # text:str = ""
-    # for page in doc: # iterate the document pages
-    #     text = text + page.get_text()  # .encode("utf8") # get plain text (is in UTF-8)
-    # return text
-    
-    # # https://pymupdf.readthedocs.io/en/latest/rag.html
-    # from pymupdf_rag import to_markdown
-    # 
-    # doc = fitz.open("input.pdf")
-    # 
-    # md_text = to_markdown(doc)
-    # 
-    # # write markdown to some file
-    # output = open("out-markdown.md", "w")
-    # output.write(md_text)
-    # output.close()    
-    
+def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Any]:
     # https://docs.llamaindex.ai/en/stable/examples/low_level/oss_ingestion_retrieval/
     pdf_reader:llama_index.readers.file.PyMuPDFReader = llama_index.readers.file.PyMuPDFReader()
     # write the bytes out to a file
@@ -356,175 +337,154 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime)
         chunks.extend(sent_split.split_text(doc.text))
 
     # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}    
-    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": []} 
-    for chunk in chunks:
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
+    for ind in range(len(prev_paras), len(chunks)):
+        chunk = chunks[ind]
         para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
         try:
             embedding = vectorizer([f"The name of the file is {filename} and the paragraph is {chunk}"])
             eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
             para_dct['embedding'] = eem
             doc_dct['paragraphs'].append(para_dct)
+            now = datetime.datetime.now()
+            if now - start_time > datetime.timedelta(minutes=time_limit):
+                doc_dct['partial'] = "true"
+                print(f"_read_pdf: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+                break
         except Exception as ex:
             print(f"Exception {ex} while creating para embedding")
             traceback.print_exc()
-            
+    print(f"_read_pdf: fn={filename}. returning. num paras={len(doc_dct['paragraphs'])}")
     return doc_dct
 
-@dataclass
-class VectorForParagraph:
-    paragraph_index:int
-    paragraph_text:str
-    paragraph_embedding:str    
-
-@dataclass
-class VectorsForFile:
-    fileid:str
-    filename:str
-    mtime:datetime.datetime
-    paragraphs:List[VectorForParagraph]
-
-def process_files(service, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], List[VectorsForFile]] : 
+def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
     """
     start_time = datetime.datetime.now()
+    time_limit:int = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 9))
     done_embedding = {} # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
-    vectorsForFileList:List[VectorsForFile] = []
-    fnm = f"embeddings-{time.time_ns()}.jsonl"
-    # 'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'
-    object_key = f"{prefix}/data/{fnm}"
-    fn = f"/tmp/{fnm}"
-    with open(fn, 'w') as wfp:
+    for fileid, file_item in needs_embedding.items():
         # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}
-        for fileid, file_item in needs_embedding.items():
-            filename = file_item['filename']
-            path = file_item['path'] if 'path' in file_item else ''
-            mimetype = file_item['mimetype']
-            # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
-            try:
-                if filename.lower().endswith('.pptx'):
-                    bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                    ppt = read_pptx(filename, fileid, bio, file_item['mtime'])
-                    # ppt['mtime'] = to_rfc3339(ppt['mtime'])
-                    # wfp.write(json.dumps(ppt) + "\n")
-                    # file_item['index_bucket'] = bucket
-                    # file_item['index_object'] = object_key
-                    file_item['slides'] = ppt['slides']
-                    file_item['filetype'] = 'pptx'
-                    done_embedding[fileid] = file_item
-
-                    # vectorForParaList:List[VectorForParagraph] = [ VectorForParagraph(i, ppt['paragraphs'][i]['paragraph_text'],ppt['paragraphs'][i]['paragraph_embedding']) for i in range(len(ppt['paragraphs'])) ]
-                    # vectorsForFileList.append(VectorsForFile(fileid, filename, ppt['mtime'], ppt['paragraphs']))
-                elif filename.lower().endswith('.docx'):
-                    bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                    doc_dct = read_docx(filename, fileid, bio, file_item['mtime'])
-                    # doc_dct['mtime'] = to_rfc3339(doc_dct['mtime'])
-                    # wfp.write(json.dumps(doc_dct) + "\n")
-                    # file_item['index_bucket'] = bucket  # 'yoja-index-2';     # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}
-                    # file_item['index_object'] = object_key  # 'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'
-                    file_item['paragraphs'] = doc_dct['paragraphs']
-                    file_item['filetype'] = 'docx'
-                    done_embedding[fileid] = file_item
+        filename = file_item['filename']
+        path = file_item['path'] if 'path' in file_item else ''
+        mimetype = file_item['mimetype']
+        # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
+        try:
+            if filename.lower().endswith('.pptx'):
+                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                ppt = read_pptx(filename, fileid, bio, file_item['mtime'])
+                file_item['slides'] = ppt['slides']
+                file_item['filetype'] = 'pptx'
+                done_embedding[fileid] = file_item
+            elif filename.lower().endswith('.docx'):
+                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                doc_dct = read_docx(filename, fileid, bio, file_item['mtime'])
+                file_item['paragraphs'] = doc_dct['paragraphs']
+                file_item['filetype'] = 'docx'
+                done_embedding[fileid] = file_item
                     
-                    vectorForParaList:List[VectorForParagraph] = [ VectorForParagraph(i, doc_dct['paragraphs'][i]['paragraph_text'], doc_dct['paragraphs'][i]['embedding']) for i in range(len(doc_dct['paragraphs'])) ]
-                    vectorsForFileList.append(VectorsForFile(fileid, filename, doc_dct['mtime'], vectorForParaList))
-                elif filename.lower().endswith('.doc'):
-                    bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                    tfd, tfn = tempfile.mkstemp(suffix=".doc", dir="/tmp")
-                    with os.fdopen(tfd, "wb") as wfp:
-                        wfp.write(bio.getvalue())
-                    bio.close()
-                    rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'docx', tfn, '--outdir', '/tmp'],
+            elif filename.lower().endswith('.doc'):
+                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                tfd, tfn = tempfile.mkstemp(suffix=".doc", dir="/tmp")
+                with os.fdopen(tfd, "wb") as wfp:
+                    wfp.write(bio.getvalue())
+                bio.close()
+                rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'docx', tfn, '--outdir', '/tmp'],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                    for line in rv.stdout.splitlines():
-                        print(line.decode('utf-8'))
-                    os.remove(tfn)
-                    if rv.returncode == 0:
-                        print(f"Successfully converted {filename} to docx. temp file is {tfn}, Proceeding with embedding generation")
-                        with open(f"{tfn}x", 'rb') as fp:
-                            doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
-                            file_item['paragraphs'] = doc_dct['paragraphs']
-                            file_item['filetype'] = 'docx'
-                            done_embedding[fileid] = file_item
-                            vectorForParaList:List[VectorForParagraph] = [ VectorForParagraph(i, doc_dct['paragraphs'][i]['paragraph_text'], doc_dct['paragraphs'][i]['embedding']) for i in range(len(doc_dct['paragraphs'])) ]
-                            vectorsForFileList.append(VectorsForFile(fileid, filename, doc_dct['mtime'], vectorForParaList))
-                        os.remove(f'{tfn}x')
-                    else:
-                        print(f"Failed to convert {filename} to docx. Return value {rv.returncode}. Not generating embeddings")
-                elif filename.lower().endswith('.ppt'):
-                    bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                    tfd, tfn = tempfile.mkstemp(suffix=".ppt", dir="/tmp")
-                    with os.fdopen(tfd, "wb") as wfp:
-                        wfp.write(bio.getvalue())
-                    bio.close()
-                    rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'pptx', tfn, '--outdir', '/tmp'],
-                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                    for line in rv.stdout.splitlines():
-                        print(line.decode('utf-8'))
-                    os.remove(tfn)
-                    if rv.returncode == 0:
-                        print(f"Successfully converted {filename} to pptx. temp file is {tfn}, Proceeding with embedding generation")
-                        with open(f"{tfn}x", 'rb') as fp:
-                            ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
-                            file_item['slides'] = ppt['slides']
-                            file_item['filetype'] = 'pptx'
-                            done_embedding[fileid] = file_item
-                        os.remove(f'{tfn}x')
-                    else:
-                        print(f"Failed to convert {filename} to pptx. Return value {rv.returncode}. Not generating embeddings")
-                elif filename.lower().endswith('.pdf'):
-                    bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                    pdf_dict:Dict[str,Any] = _read_pdf(filename, fileid, bio, file_item['mtime'])
-                    file_item['paragraphs'] = pdf_dict['paragraphs']
-                    file_item['filetype'] = 'pdf'
-                    done_embedding[fileid] = file_item                    
-                elif mimetype == 'application/vnd.google-apps.presentation':
-                    bio:io.BytesIO = export_gdrive_file(service, fileid,
-                                            'application/vnd.openxmlformats-officedocument.presentationml.presentation')
-                    if not bio:
-                        print(f"process_files: Unable to export {filename} to pptx format")
-                    else:
-                        tfd, tfn = tempfile.mkstemp(suffix=".pptx", dir="/tmp")
-                        with os.fdopen(tfd, "wb") as wfp:
-                            wfp.write(bio.getvalue())
-                        bio.close()
-                        with open(f"{tfn}", 'rb') as fp:
-                            ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
-                            file_item['slides'] = ppt['slides']
-                            file_item['filetype'] = 'pptx'
-                            done_embedding[fileid] = file_item
-                        os.remove(f'{tfn}')
-                elif mimetype == 'application/vnd.google-apps.document':
-                    bio:io.BytesIO = export_gdrive_file(service, fileid,
-                                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-                    if not bio:
-                        print(f"process_files: Unable to export {filename} to docx format")
-                    else:
-                        tfd, tfn = tempfile.mkstemp(suffix=".docx", dir="/tmp")
-                        with os.fdopen(tfd, "wb") as wfp:
-                            wfp.write(bio.getvalue())
-                        bio.close()
-                        with open(f"{tfn}", 'rb') as fp:
-                            doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
-                            file_item['paragraphs'] = doc_dct['paragraphs']
-                            file_item['filetype'] = 'docx'
-                            done_embedding[fileid] = file_item
-                            vectorForParaList:List[VectorForParagraph] = [ VectorForParagraph(i, doc_dct['paragraphs'][i]['paragraph_text'], doc_dct['paragraphs'][i]['embedding']) for i in range(len(doc_dct['paragraphs'])) ]
-                            vectorsForFileList.append(VectorsForFile(fileid, filename, doc_dct['mtime'], vectorForParaList))
-                        os.remove(f'{tfn}')
+                for line in rv.stdout.splitlines():
+                    print(line.decode('utf-8'))
+                os.remove(tfn)
+                if rv.returncode == 0:
+                    print(f"Successfully converted {filename} to docx. temp file is {tfn}, Proceeding with embedding generation")
+                    with open(f"{tfn}x", 'rb') as fp:
+                        doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
+                        file_item['paragraphs'] = doc_dct['paragraphs']
+                        file_item['filetype'] = 'docx'
+                        done_embedding[fileid] = file_item
+                    os.remove(f'{tfn}x')
                 else:
-                    print(f"process_files: skipping unknown file type {filename}")
-            except Exception as e:
-                print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
-                traceback_with_variables.print_exc()
-            now = datetime.datetime.now()
-            time_limit:int = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 9))
-            if now - start_time > datetime.timedelta(minutes=time_limit):
-                print(f"process_files: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
-                break
+                    print(f"Failed to convert {filename} to docx. Return value {rv.returncode}. Not generating embeddings")
+            elif filename.lower().endswith('.ppt'):
+                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                tfd, tfn = tempfile.mkstemp(suffix=".ppt", dir="/tmp")
+                with os.fdopen(tfd, "wb") as wfp:
+                    wfp.write(bio.getvalue())
+                bio.close()
+                rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'pptx', tfn, '--outdir', '/tmp'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                for line in rv.stdout.splitlines():
+                    print(line.decode('utf-8'))
+                os.remove(tfn)
+                if rv.returncode == 0:
+                    print(f"Successfully converted {filename} to pptx. temp file is {tfn}, Proceeding with embedding generation")
+                    with open(f"{tfn}x", 'rb') as fp:
+                        ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
+                        file_item['slides'] = ppt['slides']
+                        file_item['filetype'] = 'pptx'
+                        done_embedding[fileid] = file_item
+                    os.remove(f'{tfn}x')
+                else:
+                    print(f"Failed to convert {filename} to pptx. Return value {rv.returncode}. Not generating embeddings")
+            elif filename.lower().endswith('.pdf'):
+                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                if 'partial' in file_item and 'paragraphs' in file_item:
+                    del file_item['partial']
+                    prev_paras = file_item['paragraphs']
+                    print(f"process_files: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+                else:
+                    prev_paras = []
+                    print(f"process_files: fn={filename}. did not find partial")
+                pdf_dict:Dict[str,Any] = _read_pdf(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_paras)
+                file_item['paragraphs'] = pdf_dict['paragraphs']
+                file_item['filetype'] = 'pdf'
+                if 'partial' in pdf_dict:
+                    file_item['partial'] = 'true'
+                done_embedding[fileid] = file_item                    
+            elif mimetype == 'application/vnd.google-apps.presentation':
+                bio:io.BytesIO = export_gdrive_file(service, fileid,
+                                        'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+                if not bio:
+                    print(f"process_files: Unable to export {filename} to pptx format")
+                else:
+                    tfd, tfn = tempfile.mkstemp(suffix=".pptx", dir="/tmp")
+                    with os.fdopen(tfd, "wb") as wfp:
+                        wfp.write(bio.getvalue())
+                    bio.close()
+                    with open(f"{tfn}", 'rb') as fp:
+                        ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
+                        file_item['slides'] = ppt['slides']
+                        file_item['filetype'] = 'pptx'
+                        done_embedding[fileid] = file_item
+                    os.remove(f'{tfn}')
+            elif mimetype == 'application/vnd.google-apps.document':
+                bio:io.BytesIO = export_gdrive_file(service, fileid,
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                if not bio:
+                    print(f"process_files: Unable to export {filename} to docx format")
+                else:
+                    tfd, tfn = tempfile.mkstemp(suffix=".docx", dir="/tmp")
+                    with os.fdopen(tfd, "wb") as wfp:
+                        wfp.write(bio.getvalue())
+                    bio.close()
+                    with open(f"{tfn}", 'rb') as fp:
+                        doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
+                        file_item['paragraphs'] = doc_dct['paragraphs']
+                        file_item['filetype'] = 'docx'
+                        done_embedding[fileid] = file_item
+                    os.remove(f'{tfn}')
+            else:
+                print(f"process_files: skipping unknown file type {filename}")
+        except Exception as e:
+            print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
+            traceback_with_variables.print_exc()
+        now = datetime.datetime.now()
+        if now - start_time > datetime.timedelta(minutes=time_limit):
+            print(f"process_files: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+            break
                 
-    return done_embedding, vectorsForFileList
+    return done_embedding
 
 def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
     """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
@@ -602,8 +562,7 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
         # remove deleted files from the index
         for fileid in deleted_files: s3_index.pop(fileid)
 
-        vectorsForFileList:List[VectorsForFile]
-        done_embedding, vectorsForFileList = process_files(service, needs_embedding, s3client, bucket, user_prefix)
+        done_embedding = process_files(service, needs_embedding, s3client, bucket, user_prefix)
         add_or_updated_num = len(done_embedding.items())
         deleted_num = len(deleted_files)
         if add_or_updated_num > 0 or deleted_num > 0:
