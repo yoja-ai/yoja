@@ -297,9 +297,10 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
-def read_pptx(filename, fileid, file_io, mtime:datetime.datetime) -> Dict[str, Union[str, Dict[str,str]]]:
+def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, time_limit, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
     prs = Presentation(file_io)
-    ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": []}  # {'filename': 'S6O4HowToSewAButton.pptx', 'fileid': '11anl03mkvhqmeOGEhX50JYnG8jwZZO8z', 'mtime': datetime.datetime(2024, 4, 10, 7, 42, 6, 750000, tzinfo=datetime.timezone.utc), 'slides': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}]}
+    ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}  # {'filename': 'S6O4HowToSewAButton.pptx', 'fileid': '11anl03mkvhqmeOGEhX50JYnG8jwZZO8z', 'mtime': datetime.datetime(2024, 4, 10, 7, 42, 6, 750000, tzinfo=datetime.timezone.utc), 'slides': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}]}
+    ind = 0
     for slide in prs.slides:
         title=None
         if hasattr(slide, 'shapes') and hasattr(slide.shapes, 'title') \
@@ -320,14 +321,21 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime) -> Dict[str, U
         else:
             slide_dct = {"text": slide_text} # {'text': 'http://www.wikihow.com/Sew-a-Button,Video Clips,http://www.youtube.com/watch?v=Gg0pfdIRBgw,http://www.youtube.com/watch?v=hrSs_DiJ-ZA,[[Image:Sew_button_1.jpg|thumb|description]] ', 'embedding': 'gASVCBsAAAAAAABdlF2UKEe/wtm+YAAAAEc/...'}
             chu = f"The content of the slide is {slide_text}"
-        embedding = vectorizer([chu])
-        try:
-            eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
-            slide_dct['embedding'] = eem
-        except Exception as ex:
-            print(f"Exception {ex} while creating slide embedding")
-            traceback.print_exc()
-        ppt['slides'].append(slide_dct)
+        if ind >= len(prev_slides): # skip past prev_slides
+            embedding = vectorizer([chu])
+            try:
+                eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                slide_dct['embedding'] = eem
+            except Exception as ex:
+                print(f"Exception {ex} while creating slide embedding")
+                traceback.print_exc()
+            ppt['slides'].append(slide_dct)
+            now = datetime.datetime.now()
+            if now - start_time > datetime.timedelta(minutes=time_limit):
+                ppt['partial'] = "true"
+                print(f"read_pptx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+                break
+        ind += 1
     return ppt
 
 def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Any]:
@@ -381,6 +389,18 @@ def process_docx(file_item, filename, fileid, bio, start_time, time_limit):
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
+def process_pptx(file_item, filename, fileid, bio, start_time, time_limit):
+    if 'partial' in file_item and 'slides' in file_item:
+        del file_item['partial']
+        prev_slides = file_item['slides']
+        print(f"process_pptx: fn={filename}. found partial. len(prev_slides)={len(prev_slides)}")
+    else:
+        prev_slides = []
+        print(f"process_pptx: fn={filename}. did not find partial")
+    ppt = read_pptx(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_slides)
+    file_item['slides'] = ppt['slides']
+    file_item['filetype'] = 'pptx'
+
 def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
@@ -398,9 +418,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
         try:
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
-                ppt = read_pptx(filename, fileid, bio, file_item['mtime'])
-                file_item['slides'] = ppt['slides']
-                file_item['filetype'] = 'pptx'
+                process_pptx(file_item, filename, fileid, bio, start_time, time_limit)
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
@@ -439,9 +457,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to pptx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
-                        file_item['slides'] = ppt['slides']
-                        file_item['filetype'] = 'pptx'
+                        process_pptx(file_item, filename, fileid, fp, start_time, time_limit)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}x')
                 else:
