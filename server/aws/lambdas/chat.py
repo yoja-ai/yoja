@@ -20,79 +20,111 @@ import cryptography.fernet
 from sentence_transformers.cross_encoder import CrossEncoder
 from typing import Tuple, List, Dict, Any
 import faiss_rm
+import re
 
-def ongoing_chat(event, body, faiss_rm, documents, index_map, index_type:str = 'flat'):
+def _check_if_agent_mode(messages:List[dict]) -> Tuple[bool, str]:
+    agent_mode:bool = False
+    thread_id:str = None
+    for msg in messages:
+        lines:List[str] = msg['content'].splitlines()
+        # get the last line of the last 'message'
+        l_line:str = lines[-1].strip()
+        # Line format example: **Context Source: ....docx**\t<!-- ID=0B-qJbLgl53j..../0 -->; thread_id=<thread_id>
+        match:re.Match = re.search("thread_id=([^\s;]+)", l_line, re.IGNORECASE)
+        if match:
+            agent_mode = True
+            thread_id = match.group(1)
+            print(f"Extracted thread_id={thread_id}")
+    
+    return agent_mode, thread_id
+        
+def ongoing_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type:str = 'flat'):
     print(f"ongoing_chat: entered")
-    messages_to_openai=[]
-    for msg in body['messages']:
-        print(f"  message={msg}")
-        if msg['content']:
-            content_to_openai = msg['content']
-            paragraph_num = -1
-            fileid = None
-            smsg = msg['content'].splitlines()
-            mm = smsg[-1].strip()
-            # Line format example: **Context Source: ComcastExplanation.docx**\t<!-- ID=0B-qJbLgl53jSSGJNN3l3OUFrUFk/0 -->
-            if mm.startswith(r'**Context Source: '):
-                tab_index = mm[18:].find('\t')
-                if tab_index != -1:
-                    msg_fn = mm[18:18+tab_index-2]
-                    print(f"    message_filename={msg_fn}")
-                    try:
-                        ID = mm[18+tab_index+9:-4]
-                        print(f"    ID={ID}")
-                        slash_index = ID.rfind("/")
-                        if slash_index != -1:
-                            paragraph_num=int(ID[slash_index+1:])
-                            fileid=ID[:slash_index]
-                    except ValueError:
-                        print(f"Error parsing paragraph number. Unable to map Context Source line back to context")
-            if fileid and paragraph_num >= 0: # successfully extracted context
-                print(f"    Successfully extracted context. paragraph_num={paragraph_num}, fileid={fileid}")
-                # inject system context
-                finfo = documents[fileid]
-                print(f"    finfo={finfo}")
-                if 'slides' in finfo:
-                    key = 'slides'
-                elif 'paragraphs' in finfo:
-                    key = 'paragraphs'
+    
+    use_agent:bool; thread_id:str 
+    use_agent, thread_id = _check_if_agent_mode(body['messages'])
+    
+    if use_agent:
+        # get the user message, which is the last line
+        last_msg:str = body['messages'][-1]['content']
+        tracebuf = []; context_srcs=[]; srp:str; thread_id:str
+        # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
+        srp, thread_id = retrieve_using_openai_assistant(faiss_rm,documents, index_map, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
+        srp = srp + f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
+    else:
+        messages_to_openai=[]
+        # {'messages': [{'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers\n...from those PDFs.  \n**Context Source: simple_memo.pdf**\t<!-- ID=15-...X8bI/0 -->'}, {'role': 'user', 'content': 'can you repeat that?'}], 'model': 'gpt-3.5-turbo', 'stream': True, 'temperature': 1, 'top_p': 0.7}
+        for msg in body['messages']:
+            print(f"  message={msg}")
+            if msg['content']:
+                content_to_openai = msg['content']
+                paragraph_num = -1
+                fileid = None
+                smsg = msg['content'].splitlines()
+                # get the last line of the last 'message'
+                mm = smsg[-1].strip()
+                # Line format example: **Context Source: Comcast....docx**\t<!-- ID=0B-qJbLgl..../0 -->
+                if mm.startswith(r'**Context Source: '):
+                    tab_index = mm[18:].find('\t')
+                    if tab_index != -1:
+                        msg_fn = mm[18:18+tab_index-2]
+                        print(f"    message_filename={msg_fn}")
+                        try:
+                            ID = mm[18+tab_index+9:-4]
+                            print(f"    ID={ID}")
+                            slash_index = ID.rfind("/")
+                            if slash_index != -1:
+                                paragraph_num=int(ID[slash_index+1:])
+                                fileid=ID[:slash_index]
+                        except ValueError:
+                            print(f"Error parsing paragraph number. Unable to map Context Source line back to context")
+                if fileid and paragraph_num >= 0: # successfully extracted context from the last line of the last 'message'
+                    print(f"    Successfully extracted context. paragraph_num={paragraph_num}, fileid={fileid}")
+                    # inject system context
+                    finfo = documents[fileid]
+                    print(f"    finfo={finfo}")
+                    if 'slides' in finfo:
+                        key = 'slides'
+                    elif 'paragraphs' in finfo:
+                        key = 'paragraphs'
+                    else:
+                        key = None
+                    if key:
+                        para = finfo[key][paragraph_num]
+                        context = f"{faiss_rm.format_paragraph(para)}"
+                        system_content = f"You are a helpful assistant. Answer using the following context - {context}"
+                        user_msg = messages_to_openai.pop()
+                        messages_to_openai.append({"role": "system", "content": system_content})
+                        messages_to_openai.append(user_msg)
+                    # Remove tracing messages and the context source line from prevous chatgpt output
+                    found_trace = False
+                    for ind in range(len(smsg)):
+                        if smsg[ind].startswith("**Begin Trace"):
+                            print(f"Trace found. smsg truncated at {ind}")
+                            smsg = smsg[:ind]
+                            found_trace = True
+                            break
+                    if found_trace:
+                        print("Trace found. smsg truncated")
+                        content_to_openai = "\n".join(smsg)
+                    else:
+                        print("Trace not found. smsg truncated by the last line - the context line message")
+                        content_to_openai = "\n".join(smsg[:-1])
                 else:
-                    key = None
-                if key:
-                    para = finfo[key][paragraph_num]
-                    context = f"{faiss_rm.format_paragraph(para)}"
-                    system_content = f"You are a helpful assistant. Answer using the following context - {context}"
-                    user_msg = messages_to_openai.pop()
-                    messages_to_openai.append({"role": "system", "content": system_content})
-                    messages_to_openai.append(user_msg)
-                # Remove tracing messages and the context source line from prevous chatgpt output
-                found_trace = False
-                for ind in range(len(smsg)):
-                    if smsg[ind].startswith("**Begin Trace"):
-                        print(f"Trace found. smsg truncated at {ind}")
-                        smsg = smsg[:ind]
-                        found_trace = True
-                        break
-                if found_trace:
-                    print("Trace found. smsg truncated")
+                    print(f"    No context extracted. paragraph_num={paragraph_num}, fileid={fileid}")
                     content_to_openai = "\n".join(smsg)
-                else:
-                    print("Trace not found. smsg truncated by the last line - the context line message")
-                    content_to_openai = "\n".join(smsg[:-1])
-            else:
-                print(f"    No context extracted. paragraph_num={paragraph_num}, fileid={fileid}")
-                content_to_openai = "\n".join(smsg)
-            messages_to_openai.append({"role": msg['role'], "content": content_to_openai})
-    print(f"ongoing_chat: messages_to_openai={messages_to_openai}")
-    client = OpenAI()
-    stream = client.chat.completions.create(model="gpt-3.5-turbo", messages=messages_to_openai, stream=True)
-    print(f"ongoing_chat: openai chat resp={stream}")
-    resp = []
-    for chunk in stream:
-        if chunk.choices[0].delta.content is not None:
-            resp.append(chunk.choices[0].delta.content)
-    srp = "".join(resp)
-    print(f"ongoing_chat: srp={srp}")
+                messages_to_openai.append({"role": msg['role'], "content": content_to_openai})
+        # [{'role': 'system', 'content': 'You are a helpful assistant. Answer using the following context - Memorandum\nAll Developers\...from those PDFs.\nTO:\nFROM:\nDATE:\nSUBJECT:'}, {'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers...from those PDFs.  '}, {'role': 'user', 'content': 'can you repeat that?'}]
+        print(f"ongoing_chat: messages_to_openai={messages_to_openai}")
+        client = OpenAI()
+        stream = client.chat.completions.create(model="gpt-3.5-turbo", messages=messages_to_openai, stream=True)
+        print(f"ongoing_chat: openai chat resp={stream}")
+        resp = []
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                resp.append(chunk.choices[0].delta.content)
+        srp = "".join(resp)
+        print(f"ongoing_chat: srp={srp}")
 
     res = {}
     res['id'] = event['requestContext']['requestId']
@@ -150,7 +182,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
     print(logmsg); tracebuf.append(logmsg)
     return (print_trace, use_ivfadc, cross_encoder_10, use_ner, use_agent, file_details, last_msg)
 
-def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> str:
+def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type, tracebuf:List[str], context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> Tuple[str, str]:
     import openai
     import openai.types
     import openai.types.beta
@@ -190,9 +222,12 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
         ]
     )
 
-    thread:openai.types.beta.Thread = client.beta.threads.create()
+    if not assistants_thread_id:
+        thread:openai.types.beta.Thread = client.beta.threads.create()
+        assistants_thread_id = thread.id
+        
     message:openai.types.beta.threads.Message = client.beta.threads.messages.create(
-        thread_id=thread.id,
+        thread_id=assistants_thread_id,
         role="user",
         content=last_msg,
     )
@@ -204,18 +239,18 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
     retries = 0
     while True:
         run:openai.types.beta.threads.Run = client.beta.threads.runs.create_and_poll(
-            thread_id=thread.id,
+            thread_id=assistants_thread_id,
             assistant_id=assistant.id,
         )
  
         if run.status == 'completed':
             messages = client.beta.threads.messages.list(
-                thread_id=thread.id
+                thread_id=assistants_thread_id
             )
             logmsg = f"run completed: messages={messages}\nrun={run}\n"
             print(logmsg); tracebuf.append(logmsg)
             message = next(iter(messages))
-            return message.content[0].text.value
+            return message.content[0].text.value, assistants_thread_id
         elif run.status == 'failed':
             seconds = 2**retries
             logmsg = f"retrieve_using_openai_assistant: run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
@@ -223,16 +258,25 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
             time.sleep(seconds)
             retries += 1
             if retries >= 5:
-                return None
+                return None, None
         else:
             logmsg = f"run result after running thread with messages={run}\n"
             print(logmsg); tracebuf.append(logmsg)
             break
 
-    incomplete = True; loopcnt:int = 0
-    while incomplete and loopcnt < 5:
-        incomplete = False
+    loopcnt:int = 0
+    while loopcnt < 5:
         loopcnt += 1
+
+        if run.status == 'completed':
+            # messages=SyncCursorPage[Message](data=[
+                # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
+                # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
+            messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
+            logmsg = f"run completed: messages={messages}\nrun={run}\n"
+            print(logmsg); tracebuf.append(logmsg)
+            message = next(iter(messages))
+            return message.content[0].text.value, assistants_thread_id
     
         # Define the list to store tool outputs
         tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
@@ -256,7 +300,7 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
         if tool_outputs:
             try:
                 run = client.beta.threads.runs.submit_tool_outputs_and_poll(
-                    thread_id=thread.id,
+                    thread_id=assistants_thread_id,
                     run_id=run.id,
                     tool_outputs=tool_outputs
                 )
@@ -268,21 +312,8 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
             logmsg = "No tool outputs to submit.\n"
             print(logmsg); tracebuf.append(logmsg)
     
-        if run.status == 'completed':
-            # messages=SyncCursorPage[Message](data=[
-                # Message(id='msg_uwgAzUJhQppFadSABYnAyn3w', assistant_id='asst_M5wNOmbqfqMGSl08fGMl4V2l', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes for you to try:\n\n1. **Three-Bean Curry .... Have fun cooking!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljcJNIGsSYoC04xet61Ej', status=None, thread_id='thread_z2KDBGPNyWqbAxWWar5VShCD'), 
-                # Message(id='msg_V8Gf0SChjchv8KjzW2gX3pKh', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNyWqbAxWWar5VShCD')], object='list', first_id='msg_uwgAzUJhQppFadSABYnAyn3w', last_id='msg_V8Gf0SChjchv8KjzW2gX3pKh', has_more=False)
-            messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(
-                thread_id=thread.id
-            )
-            logmsg = f"run completed: messages={messages}\nrun={run}\n"
-            print(logmsg); tracebuf.append(logmsg)
-            message = next(iter(messages))
-            return message.content[0].text.value
-        else:
-            logmsg = f"run incomplete: result after running thread with above messages={run}\n"
-            print(logmsg); tracebuf.append(logmsg)
-            incomplete = True
+        logmsg = f"run incomplete: result after running thread with above messages={run}\n"
+        print(logmsg); tracebuf.append(logmsg)
 
 def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> str:
     """ returns the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context """
@@ -474,6 +505,7 @@ def print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc):
 g_cross_encoder = None
 def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type:str = 'flat'):
     print(f"new_chat: entered")
+    # {'messages': [{'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers\nFROM: John Smith\nDATE: 1st January 2020\nSUBJECT: A new PDF Parsing tool\n\nThere is a new PDF parsing tool available, called py-pdf-parser - you should all check it out! I think it could really help you extract that data we need from those PDFs.  \n**Context Source: simple_memo.pdf**\t<!-- ID=15-CEM_cX.../0 -->'}, {'role': 'user', 'content': 'can you repeat that?'}], 'model': 'gpt-3.5-turbo', 'stream': True, 'temperature': 1, 'top_p': 0.7}
     messages = body['messages']
     last_msg = messages[len(messages) - 1]['content']
     print(f"new_chat: Last Message = {last_msg}")
@@ -484,17 +516,19 @@ def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index
     if file_details:
         return print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc)
 
+    # string response??
+    srp:str = ""; thread_id:str 
     if not use_agent:
-        srp:str = retrieve_using_openai_assistant(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, last_msg)
+        srp, thread_id = retrieve_using_openai_assistant(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, last_msg)
         if not srp:
             return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
         if print_trace:
             tstr = ""
             for tt in tracebuf:
                 tstr += f"  \n{tt}"
-            srp = srp +tstr + f"  \n{';  '.join(context_srcs)}"
+            srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
         else:
-            srp = srp +f"  \n{';  '.join(context_srcs)}"
+            srp = srp +f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
     else:
         context:str = retrieve_and_rerank_using_faiss(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, last_msg)
             
