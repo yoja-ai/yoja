@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ x"$13" == "x" ] ; then
+if [ x"${13}" == "x" ] ; then
   echo "Usage: $0"
   echo "  oauth_client_id"
   echo "  oauth_client_secret"
