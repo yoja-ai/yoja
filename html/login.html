@@ -189,13 +189,15 @@ limitations under the License.
   }
   async function tryLogin() {
     const myJson = await this.getLoginJson();
-    gdriveLoginSuccess = false;
-    dropboxLoginSuccess = false;
-    if (myJson.google.length > 0) {
+    if (typeof myJson.google === 'undefined' || myJson.google.length == 0) {
+        gdriveLoginSuccess = false;
+    } else {
       gdriveLoginSuccess = true;
       gdriveEmail = myJson.google;
     }
-    if (myJson.dropbox.length > 0) {
+    if (typeof myJson.dropbox === 'undefined' || myJson.dropbox.length == 0) {
+        dropboxLoginSuccess = false;
+    } else {
       dropboxLoginSuccess = true;
       dropboxEmail = myJson.dropbox;
     }
@@ -203,44 +205,6 @@ limitations under the License.
         + ", gdriveEmail=" + gdriveEmail
         + ", dropboxLoginSuccess=" + dropboxLoginSuccess
         + ", dropboxEmail=" + dropboxEmail);
-    loginRestFinished = true;
-  }
-
-  async function tryLoginOld() {
-    try {
-      const response = await fetch('/rest/entrypoint/login', {
-        method: 'POST',
-        body: "initial login",
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      if (response.ok) {
-        const myJson = await response.json(); //extract JSON from the http response
-        gdriveLoginSuccess = false;
-        dropboxLoginSuccess = false;
-        if (myJson.google.length > 0) {
-          gdriveLoginSuccess = true;
-          gdriveEmail = myJson.google;
-        }
-        if (myJson.dropbox.length > 0) {
-          dropboxLoginSuccess = true;
-          dropboxEmail = myJson.dropbox;
-        }
-        console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
-            + ", gdriveEmail=" + gdriveEmail
-            + ", dropboxLoginSuccess=" + dropboxLoginSuccess
-            + ", dropboxEmail=" + dropboxEmail);
-      } else {
-        console.log("tryLogin: Unexpected error " + response.status);
-        gdriveLoginSuccess = false;
-        dropboxLoginSuccess = false;
-      }
-    } catch (error) {
-      console.error('Error logging in:', error)
-      gdriveLoginSuccess = false;
-      dropboxLoginSuccess = false;
-    }
     loginRestFinished = true;
   }
 
