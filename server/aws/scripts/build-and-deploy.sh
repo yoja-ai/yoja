@@ -1,9 +1,11 @@
 #!/bin/bash
 
-if [ x"$11" == "x" ] ; then
+if [ x"$13" == "x" ] ; then
   echo "Usage: $0"
   echo "  oauth_client_id"
   echo "  oauth_client_secret"
+  echo "  dropbox_oauth_client_id"
+  echo "  dropbox_oauth_client_secret"
   echo "  oauth_redirect_uri"
   echo "  users_table_name"
   echo "  serviceconf_table_name"
@@ -18,15 +20,17 @@ fi
 
 oauth_client_id=$1
 oauth_client_secret=$2
-oauth_redirect_uri=$3
-users_table_name=$4
-serviceconf_table_name=$5
-cookie_domain=$6
-scratch_bucket=$7
-openai_api_key=$8
-AWS_CREDS="${9}"
-AWS_REGN="${10}"
-image_name=${11}
+dropbox_oauth_client_id=$3
+dropbox_oauth_client_secret=$4
+oauth_redirect_uri=$5
+users_table_name=$6
+serviceconf_table_name=$7
+cookie_domain=$8
+scratch_bucket=$9
+openai_api_key=${10}
+AWS_CREDS="${11}"
+AWS_REGN="${12}"
+image_name=${13}
 
 echo "Using AWS Credentials Profile $AWS_CREDS"
 echo "Using AWS Region $AWS_REGN"
@@ -62,6 +66,8 @@ sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml 
   --parameter-overrides ParameterKey=LambdaVersion,ParameterValue=${image_name} \
     ParameterKey=OauthClientId,ParameterValue=${oauth_client_id} \
     ParameterKey=OauthClientSecret,ParameterValue=${oauth_client_secret} \
+    ParameterKey=DropboxOauthClientId,ParameterValue=${dropbox_oauth_client_id} \
+    ParameterKey=DropboxOauthClientSecret,ParameterValue=${dropbox_oauth_client_secret} \
     ParameterKey=OauthRedirectUri,ParameterValue=${oauth_redirect_uri} \
     ParameterKey=UsersTable,ParameterValue=${users_table_name} \
     ParameterKey=ServiceconfTable,ParameterValue=${serviceconf_table_name} \

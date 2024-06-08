@@ -1,12 +1,16 @@
 #!/bin/bash
 set -e
 
-if [ x"$7" == "x" ] ; then
-    echo "Usage: $0 bucket api_key app_id oauth_redirect_uri envApiEndpoint client_id aws_creds_profile"
+if [ x"$6" == "x" ] ; then
+    echo "Usage: $0 bucket oauth_redirect_uri envApiEndpoint google_client_id dropbox_client_id aws_creds_profile"
     exit 255
 fi
 
-AWS_CREDS="$7"
+OAUTH_REDIRECT_URI="$2"
+envAPIEndpoint="$3"
+GOOGLE_CLIENT_ID="$4"
+DROPBOX_CLIENT_ID="$5"
+AWS_CREDS="$6"
 
 aws --profile ${AWS_CREDS} s3 ls s3://"$1"/ || {
     echo "Error access s3 bucket $1. Configure aws credentials and try again"
@@ -15,25 +19,18 @@ aws --profile ${AWS_CREDS} s3 ls s3://"$1"/ || {
 
 aws --profile ${AWS_CREDS} s3 rm --recursive s3://$1/html/
 
-API_KEY="$2"
-APP_ID="$3"
-OAUTH_REDIRECT_URI="$4"
-envAPIEndpoint="$5"
-CLIENT_ID="$6"
-
 echo "var ServiceConfig = {" > /tmp/serviceconfig.js.$$
-echo "  API_KEY: \"${API_KEY}\"," >> /tmp/serviceconfig.js.$$
-echo "  APP_ID: \"${APP_ID}\"," >> /tmp/serviceconfig.js.$$
 echo "  OAUTH_REDIRECT_URI: \"${OAUTH_REDIRECT_URI}\"," >> /tmp/serviceconfig.js.$$
 echo "  envAPIEndpoint: \"${envAPIEndpoint}\"," >> /tmp/serviceconfig.js.$$
 echo "  envAPIKey: \"unused\"," >> /tmp/serviceconfig.js.$$
-echo "  CLIENT_ID: \"${CLIENT_ID}\"" >> /tmp/serviceconfig.js.$$
+echo "  GOOGLE_CLIENT_ID: \"${GOOGLE_CLIENT_ID}\"," >> /tmp/serviceconfig.js.$$
+echo "  DROPBOX_CLIENT_ID: \"${DROPBOX_CLIENT_ID}\"" >> /tmp/serviceconfig.js.$$
 echo "}" >> /tmp/serviceconfig.js.$$
 
 aws --profile ${AWS_CREDS} s3 cp /tmp/serviceconfig.js.$$ s3://$1/html/serviceconfig.js
 /bin/rm -f /tmp/serviceconfig.js.$$
 
-FILES="avatar.jpg chatindex.html icon.png login.html sw.js"
+FILES="avatar.jpg chatindex.html icon.png login.html sw.js Dropbox-sdk.min.js"
 
 for i in $FILES
 do

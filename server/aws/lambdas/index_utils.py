@@ -16,7 +16,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user
+from utils import refresh_user_google
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
@@ -538,7 +538,7 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
             return
         
         try:
-            creds:google.oauth2.credentials.Credentials = refresh_user(item)
+            creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
             print(f"update_index_for_user: credentials not valid. not processing user {item['email']['S']}")
             return

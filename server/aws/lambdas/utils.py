@@ -136,7 +136,7 @@ def get_user_table_entry(email):
         print(f"Caught {ex} while getting info for {email} from users table")
         return None
 
-def check_user(cookie_val:Union[bytes,str], refresh_access_token):
+def check_user(cookie_val:str, refresh_access_token, user_type):
     print(f"check_user:= Entered. cookie_val={cookie_val}")
     service_conf = get_service_conf()
     try:
@@ -149,13 +149,17 @@ def check_user(cookie_val:Union[bytes,str], refresh_access_token):
             if not item:
                 print(f"check_user: weird error - Cannot find user {email} in user table")
                 return None
-            refresh_user(item)
+            if user_type == 'google':
+                refresh_user_google(item)
+            elif user_type == 'dropbox':
+                refresh_user_dropbox(item)
         return email
     except Exception as ex:
-        print(f"check_user: caught {ex}")
+        print(f"check_user: cookie={cookie_val}, refresh_access_token={refresh_access_token}, user_type={user_type}: caught {ex}")
         return None
 
 def check_cookie(event, refresh_access_token):
+    rv = {'google': '', 'dropbox': ''}
     for hdr in event['headers']:
         if hdr.lower() == 'cookie':
             cookies = event['headers'][hdr].split(';')
@@ -168,13 +172,16 @@ def check_cookie(event, refresh_access_token):
                     cookie_name=cookie[:ind]
                     cookie_val=cookie[ind+1:]
                     print(f"check_cookie: key={cookie_name} val={cookie_val}")
-                    if cookie_name.strip() == 'yoja-user':
-                        email = check_user(cookie_val.strip(), refresh_access_token)
+                    cn = cookie_name.strip()
+                    if cn == 'yoja-user':
+                        email = check_user(cookie_val.strip(), refresh_access_token, 'google')
                         if email:
-                            return 0, email 
-                        else:
-                            return 403, "Unauthorized. Must login"
-    return 403, "Unauthorized. Must login"
+                            rv['google'] = email
+                    elif cn == 'yoja-dropbox-user':
+                        dropbox_email = check_user(cookie_val.strip(), refresh_access_token, 'dropbox')
+                        if dropbox_email:
+                            rv['dropbox'] = dropbox_email
+    return rv
 
 def update_users_table(email, crds):
     try:
@@ -189,7 +196,7 @@ def update_users_table(email, crds):
         print(f"Caught {ex} while updating users table")
         traceback.print_exc()
 
-def refresh_user(item) -> Credentials:
+def refresh_user_google(item) -> Credentials:
     """ refresh the credentials of the user stored in 'item' if necessary.  Also updates the credentials in the yoja-users table, if refreshed """
     email = item['email']['S']
     refresh_token = item['refresh_token']['S']
@@ -197,7 +204,7 @@ def refresh_user(item) -> Credentials:
     id_token = item['id_token']['S']
     created = int(item['created']['N'])
     expires_in = int(item['expires_in']['N'])
-    print(f"process_user: email={email}, access token created={datetime.datetime.fromtimestamp(created)}")
+    print(f"refresh_user_google: user_type=google, email={email}, access token created={datetime.datetime.fromtimestamp(created)}")
     token={"access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "Bearer",
@@ -218,3 +225,33 @@ def refresh_user(item) -> Credentials:
     print(f"creds after refresh={creds.to_json()}")
     update_users_table(email, json.loads(creds.to_json()))
     return creds
+
+def refresh_user_dropbox(item):
+    """ refresh the credentials of the user stored in 'item' if necessary.  Also updates the credentials in the yoja-users table, if refreshed """
+    try:
+        email = item['email']['S']
+        refresh_token = item['dropbox_refresh_token']['S']
+        postdata={'client_id': os.environ['DROPBOX_OAUTH_CLIENT_ID'],
+                'client_secret': os.environ['DROPBOX_OAUTH_CLIENT_SECRET'], 
+                'refresh_token': refresh_token,
+                'grant_type': 'refresh_token'}
+        resp = requests.post('https://www.dropbox.com/oauth2/token', data=postdata)
+        resp.raise_for_status()
+        print(f"refresh access token post resp.text={resp.text}")
+        rj = json.loads(resp.text)
+        created=int(time.time())
+        expires_in = rj['expires_in']
+        access_token=rj['access_token']
+    except Exception as ex:
+        print(f"while refreshing dropbox access token, post caught {ex}")
+        return respond({"error_msg": f"Exception {ex} refreshing dropbox access_token"}, status=403)
+    try:
+        boto3.client('dynamodb').update_item(
+                        TableName=os.environ['USERS_TABLE'],
+                        Key={'email': {'S': email}},
+                        UpdateExpression="SET dropbox_access_token = :at, dropbox_created = :ct, dropbox_expires_in = :exp",
+                        ExpressionAttributeValues={':at': {'S': access_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} }
+                    )
+    except Exception as ex:
+        print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
+        return respond({"error_msg": f"Exception {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}"}, status=403)

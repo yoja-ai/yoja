@@ -10,7 +10,7 @@ import zlib
 import datetime
 from urllib.parse import unquote
 import numpy as np
-from utils import check_user, respond, check_cookie
+from utils import respond, check_cookie
 
 def login(event, context):
     print('## ENVIRONMENT VARIABLES')
@@ -22,8 +22,6 @@ def login(event, context):
     if (operation != 'POST'):
         print(f"Error: unsupported method: operation={operation}")
         return respond({"error_msg": str(ValueError('Unsupported method ' + str(operation)))}, status=400)
-    rv, sstr = check_cookie(event, True)
-    if rv == 0:
-        return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
-    else:
-        return respond({"status": sstr}, rv, None)
+    rv = check_cookie(event, True)
+    rv['version'] = os.environ['LAMBDA_VERSION']
+    return respond(None, res=rv)

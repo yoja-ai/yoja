@@ -10,6 +10,10 @@ Parameters:
     Type: String
   OauthClientSecret:
     Type: String
+  DropboxOauthClientId:
+    Type: String
+  DropboxOauthClientSecret:
+    Type: String
   OauthRedirectUri:
     Type: String
   UsersTable:
@@ -27,6 +31,8 @@ Globals:
         LAMBDA_VERSION: !Ref LambdaVersion
         OAUTH_CLIENT_ID: !Ref OauthClientId
         OAUTH_CLIENT_SECRET: !Ref OauthClientSecret
+        DROPBOX_OAUTH_CLIENT_ID: !Ref DropboxOauthClientId
+        DROPBOX_OAUTH_CLIENT_SECRET: !Ref DropboxOauthClientSecret
         OAUTH_REDIRECT_URI: !Ref OauthRedirectUri
         USERS_TABLE: !Ref UsersTable
         SERVICECONF_TABLE: !Ref ServiceconfTable
