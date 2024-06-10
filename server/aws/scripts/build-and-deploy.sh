@@ -56,9 +56,9 @@ EOF
 python3 /tmp/replace_image_$$.py
 rm /tmp/replace_image_$$.py
 
-echo "AWS Account ID= $AWS_ACCOUNT_ID"
+echo "AWS Account ID= $aws_account_id"
 
-sam build --profile ${AWS_CREDS} --region ${AWS_REGN}
+sam build --profile ${AWS_CREDS} --region ${AWS_REGN} || exit 1 
 sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml --stack-name yoja \
   --s3-bucket ${scratch_bucket} --s3-prefix yoja \
   --region ${AWS_REGN} --capabilities CAPABILITY_IAM \

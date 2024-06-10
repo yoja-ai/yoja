@@ -50,7 +50,7 @@ def ongoing_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, i
         tracebuf = []; context_srcs=[]; srp:str; thread_id:str
         # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
         srp, thread_id = retrieve_using_openai_assistant(faiss_rm,documents, index_map, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
-        srp = srp + f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
+        srp = srp + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     else:
         messages_to_openai=[]
         # {'messages': [{'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers\n...from those PDFs.  \n**Context Source: simple_memo.pdf**\t<!-- ID=15-...X8bI/0 -->'}, {'role': 'user', 'content': 'can you repeat that?'}], 'model': 'gpt-3.5-turbo', 'stream': True, 'temperature': 1, 'top_p': 0.7}
@@ -526,9 +526,9 @@ def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index
             tstr = ""
             for tt in tracebuf:
                 tstr += f"  \n{tt}"
-            srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
+            srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
         else:
-            srp = srp +f"  \n{';  '.join(context_srcs)}" + "; thread_id=" + thread_id
+            srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     else:
         context:str = retrieve_and_rerank_using_faiss(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, last_msg)
             
