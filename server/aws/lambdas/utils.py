@@ -227,7 +227,6 @@ def refresh_user_google(item) -> Credentials:
     return creds
 
 def refresh_user_dropbox(item):
-    """ refresh the credentials of the user stored in 'item' if necessary.  Also updates the credentials in the yoja-users table, if refreshed """
     try:
         email = item['email']['S']
         refresh_token = item['dropbox_refresh_token']['S']
@@ -244,7 +243,7 @@ def refresh_user_dropbox(item):
         access_token=rj['access_token']
     except Exception as ex:
         print(f"while refreshing dropbox access token, post caught {ex}")
-        return respond({"error_msg": f"Exception {ex} refreshing dropbox access_token"}, status=403)
+        return None
     try:
         boto3.client('dynamodb').update_item(
                         TableName=os.environ['USERS_TABLE'],
@@ -254,4 +253,5 @@ def refresh_user_dropbox(item):
                     )
     except Exception as ex:
         print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
-        return respond({"error_msg": f"Exception {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}"}, status=403)
+        return None
+    return access_token

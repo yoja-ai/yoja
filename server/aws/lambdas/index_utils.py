@@ -16,12 +16,13 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google
+from utils import refresh_user_google, refresh_user_dropbox
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
 import datetime
 import subprocess
+import dropbox
 
 from googleapiclient.http import MediaIoBaseDownload
 from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339
@@ -401,7 +402,43 @@ def process_pptx(file_item, filename, fileid, bio, start_time, time_limit):
     file_item['slides'] = ppt['slides']
     file_item['filetype'] = 'pptx'
 
-def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
+class StorageReader:
+    def read(self, fileid, filename, mimetype):
+        pass
+
+class GoogleDriveReader(StorageReader):
+    def __init__(self, service):
+        self._service = service
+    def read(self, fileid, filename, mimetype):
+        print(f"GoogleDriveReader.read: Entered. fileid={fileid}, filename={filename}, mimetype={mimetype}")
+        if mimetype == 'application/vnd.google-apps.presentation':
+            print(f"GoogleDriveReader.read: fileid={fileid} calling export1")
+            return export_gdrive_file(self._service, fileid,
+                        'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+        elif mimetype == 'application/vnd.google-apps.document':
+            print(f"GoogleDriveReader.read: fileid={fileid} calling export2")
+            return export_gdrive_file(self._service, fileid,
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        else:
+            print(f"GoogleDriveReader.read: fileid={fileid} calling download")
+            return download_gdrive_file(self._service, fileid, filename)
+
+class DropboxReader(StorageReader):
+    def __init__(self, token):
+        self._token = token
+    def read(self, fileid, filename, mimetype):
+        print(f"DropboxReader.read: Entered. fileid={fileid}, filename={filename}")
+        url = 'https://content.dropboxapi.com/2/files/download'
+        headers = {'Authorization': f"Bearer {self._token}", 'Dropbox-API-Arg': json.dumps({'path': fileid})}
+        r = requests.get(url, stream=True, headers=headers)
+        file = io.BytesIO()
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk:
+                file.write(chunk)
+        file.seek(0, os.SEEK_SET)
+        return file
+
+def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
@@ -413,19 +450,19 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
         # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}
         filename = file_item['filename']
         path = file_item['path'] if 'path' in file_item else ''
-        mimetype = file_item['mimetype']
+        mimetype = file_item['mimetype'] if 'mimetype' in file_item else ''
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
             if filename.lower().endswith('.pptx'):
-                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_pptx(file_item, filename, fileid, bio, start_time, time_limit)
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.docx'):
-                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_docx(file_item, filename, fileid, bio, start_time, time_limit)
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.doc'):
-                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 tfd, tfn = tempfile.mkstemp(suffix=".doc", dir="/tmp")
                 with os.fdopen(tfd, "wb") as wfp:
                     wfp.write(bio.getvalue())
@@ -444,7 +481,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 else:
                     print(f"Failed to convert {filename} to docx. Return value {rv.returncode}. Not generating embeddings")
             elif filename.lower().endswith('.ppt'):
-                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 tfd, tfn = tempfile.mkstemp(suffix=".ppt", dir="/tmp")
                 with os.fdopen(tfd, "wb") as wfp:
                     wfp.write(bio.getvalue())
@@ -463,7 +500,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 else:
                     print(f"Failed to convert {filename} to pptx. Return value {rv.returncode}. Not generating embeddings")
             elif filename.lower().endswith('.pdf'):
-                bio:io.BytesIO = download_gdrive_file(service, fileid, filename)
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if 'partial' in file_item and 'paragraphs' in file_item:
                     del file_item['partial']
                     prev_paras = file_item['paragraphs']
@@ -478,8 +515,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                     file_item['partial'] = 'true'
                 done_embedding[fileid] = file_item                    
             elif mimetype == 'application/vnd.google-apps.presentation':
-                bio:io.BytesIO = export_gdrive_file(service, fileid,
-                                        'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if not bio:
                     print(f"process_files: Unable to export {filename} to pptx format")
                 else:
@@ -488,14 +524,11 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        ppt = read_pptx(filename, fileid, fp, file_item['mtime'])
-                        file_item['slides'] = ppt['slides']
-                        file_item['filetype'] = 'pptx'
+                        process_pptx(file_item, filename, fileid, fp, start_time, time_limit)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}')
             elif mimetype == 'application/vnd.google-apps.document':
-                bio:io.BytesIO = export_gdrive_file(service, fileid,
-                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if not bio:
                     print(f"process_files: Unable to export {filename} to docx format")
                 else:
@@ -504,9 +537,7 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        doc_dct = read_docx(filename, fileid, fp, file_item['mtime'])
-                        file_item['paragraphs'] = doc_dct['paragraphs']
-                        file_item['filetype'] = 'docx'
+                        process_docx(file_item, filename, fileid, fp, start_time, time_limit)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}')
             else:
@@ -521,9 +552,131 @@ def process_files(service, needs_embedding, s3client, bucket, prefix) -> Dict[st
                 
     return done_embedding
 
-def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
+def calc_file_lists_dropbox(s3_index, dropbox_listing) -> Tuple[dict, dict, dict]:
+    """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
+    unmodified = {}
+    deleted = {}
+    # dropbox_entry: FileMetadata(client_modified=datetime.datetime(2019, 6, 11, 21, 21, 35), content_hash='90ee4e86a091c6ba45cf374f8e33a3780eb741cab580035d954956d884fee147', export_info=NOT_SET, file_lock_info=NOT_SET, has_explicit_shared_members=NOT_SET, id='id:ArlZLN2U56oAAAAAAANyVQ', is_downloadable=True, media_info=NOT_SET, name='20190611_125301.jpg', parent_shared_folder_id='4413072912', path_display='/Cambridge/Copenhagen/20190611_125301.jpg', path_lower='/cambridge/copenhagen/20190611_125301.jpg', preview_url=NOT_SET, property_groups=NOT_SET, rev='011af00000001070a2610', server_modified=datetime.datetime(2019, 6, 11, 21, 21, 36), sharing_info=FileSharingInfo(modified_by='dbid:AAAbiiHTEGeOdngb129-TLbsQ3XqU877psI', parent_shared_folder_id='4413072912', read_only=True), size=2148185, symlink_info=NOT_SET)
+    needs_embedding = {}
+    for fileid, dropbox_entry in dropbox_listing.items():
+        if fileid in s3_index and s3_index[fileid]['mtime'] == dropbox_entry.client_modified:
+            if 'partial' in s3_index[fileid]:
+                needs_embedding[fileid] = s3_index[fileid]
+            else:
+                unmodified[fileid] = s3_index[fileid]
+        else:
+            needs_embedding[fileid] = {'filename': dropbox_entry.name, 'fileid': fileid,
+                                        'path': dropbox_entry.path_display,
+                                        'mtime': dropbox_entry.client_modified}
+
+    # detect deleted files
+    for fileid in s3_index:
+        if not ( unmodified.get(fileid) or needs_embedding.get(fileid) ): 
+            deleted[fileid] = s3_index[fileid]
+            
+    return unmodified, needs_embedding, deleted
+
+def list_files_in_dropbox_folder(dbx, folder_path, dropbox_listing):
+    print(f"list_files_in_dropbox_folder: Entered {folder_path}")
+    try: 
+        files = dbx.files_list_folder(folder_path).entries 
+        print(f"------------Listing Files in Folder {folder_path} ------------ ") 
+        for ff in files: 
+            # listing 
+            #print(file.name) 
+            if isinstance(ff, dropbox.files.FolderMetadata):
+                print(f"dir={ff.path_display}") 
+                list_files_in_dropbox_folder(dbx, ff.path_display, dropbox_listing)
+            elif isinstance(ff, dropbox.files.FileMetadata):
+                print(f"file={ff}") 
+                dropbox_listing[ff.id] = ff
+            else:
+                print(f"Unknown type {ff}. Ignoring and continuing..")
+    except Exception as e: 
+        print(str(e)) 
+  
+def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client):
+    print(f"update_files_index_jsonl: Updating files_index.jsonl with new embeddings for {len(done_embedding.items())} files and removing deleted files={len(deleted_files)}")
+    # consolidate unmodified and done_embedding
+    for fileid, file_item in done_embedding.items():
+        unmodified[fileid] = file_item
+    unsorted_all_files = []
+    for fileid, file_item in unmodified.items():
+        unsorted_all_files.append(file_item)
+    sorted_all_files = sorted(unsorted_all_files, key=lambda x: x['mtime'], reverse=True)
+    with open("/tmp/files_index.jsonl", "w") as wfp:
+        for file_item in sorted_all_files:
+            file_item['mtime'] = to_rfc3339(file_item['mtime'])
+            wfp.write(json.dumps(file_item) + "\n")
+    files_index_jsonl = '/tmp/files_index.jsonl'
+    print(f"Uploading  {files_index_jsonl}  Size of file={os.path.getsize(files_index_jsonl)}")
+    s3client.upload_file(files_index_jsonl, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl)}")
+
+def build_and_save_faiss(email, s3client, bucket, prefix, user_prefix):
+    # now build the index.
+    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix)
+    
+    # save the created index
+    faiss_flat_fname = '/tmp/faiss_index_flat'
+    faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
+    print(f"Uploading faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)}")
+    s3client.upload_file(faiss_flat_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_flat_fname)}")
+    os.remove(faiss_flat_fname)
+        
+    # save the created index
+    faiss_ivfadc_fname = '/tmp/faiss_index_ivfadc'
+    faiss.write_index(faiss_rm.get_index_ivfadc(), faiss_ivfadc_fname)
+    print(f"Uploading faiss ivfadc index {faiss_ivfadc_fname}.  Size of index={os.path.getsize(faiss_ivfadc_fname)}")
+    s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
+    os.remove(faiss_ivfadc_fname)
+
+def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
+    print(f'update_index_for_user_dropbox: Entered. {item}')
+    email:str = item['email']['S']
+    user_prefix = f"{prefix}/{email}/dropbox"
+    try:
+        s3_index = get_s3_index(s3client, bucket, user_prefix)
+        # if index already exists and ask is to not update it (only create if not found), then return.
+        if s3_index and only_create_index: 
+            print(f"update_index_for_user_dropbox: Not updating index for {user_prefix} since index already exists and only_create_index={only_create_index} ")
+            return
+        access_token = refresh_user_dropbox(item)
+    except HttpError as error:
+        print(f"HttpError occurred: {error}")
+        traceback.print_exc()
+        return
+    except Exception as ex:
+        print(f"Exception occurred: {ex}")
+        traceback.print_exc()
+        return
+    if not access_token:
+        print(f"Error. Failed to create access token. Not updating dropbox index")
+        return
+    try: 
+        dbx = dropbox.Dropbox(access_token) 
+        print('Successfully connected to Dropbox') 
+        dropbox_listing = {}
+        list_files_in_dropbox_folder(dbx, "", dropbox_listing)
+    except Exception as ex:
+        print(f"Exception occurred: {ex}")
+        traceback.print_exc()
+
+    unmodified, needs_embedding, deleted_files = calc_file_lists_dropbox(s3_index, dropbox_listing)
+    print(f"Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
+
+    # remove deleted files from the index
+    for fileid in deleted_files: s3_index.pop(fileid)
+
+    done_embedding = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
+    if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
+        update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
+        build_and_save_faiss(email, s3client, bucket, prefix, user_prefix)
+    else:
+        print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
+
+def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
     """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
-    print(f'update_index_for_user: Entered. {item}')
+    print(f'update_index_for_user_gdrive: Entered. {item}')
     email:str = item['email']['S']
     # index1/xyz@abc.com
     user_prefix = f"{prefix}/{email}"
@@ -540,7 +693,7 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
         try:
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
-            print(f"update_index_for_user: credentials not valid. not processing user {item['email']['S']}")
+            print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}")
             return
         
         # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}, '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks': {'filename': 'Q&A', 'fileid': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 51, 962000, tzinfo=datetime.timezone.utc)}, '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y': {'filename': 'Extraction', 'fileid': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 36, 440000, tzinfo=datetime.timezone.utc)}, '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA': {'filename': 'Chatbots', 'fileid': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 27, 281000, tzinfo=datetime.timezone.utc)}, '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY': {'filename': 'Agents', 'fileid': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 16, 596000, tzinfo=datetime.timezone.utc)}}
@@ -553,7 +706,7 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
             driveid = service.files().get(fileId='root').execute()['id']
             folder_details[driveid] = {'filename': 'My Drive'}
         except Exception as ex:
-            print(f"update_index_for_user: Exception {ex} while getting driveid")
+            print(f"update_index_for_user_gdrive: Exception {ex} while getting driveid")
         # folder_id is specified, then only index the folder's contents
         if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
         while True:
@@ -597,50 +750,22 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_crea
         # remove deleted files from the index
         for fileid in deleted_files: s3_index.pop(fileid)
 
-        done_embedding = process_files(service, needs_embedding, s3client, bucket, user_prefix)
-        add_or_updated_num = len(done_embedding.items())
-        deleted_num = len(deleted_files)
-        if add_or_updated_num > 0 or deleted_num > 0:
-            print(f"update_index_for_user: Updating files_index.jsonl with new embeddings for {add_or_updated_num} files and removing deleted files={deleted_num}")
-            # consolidate unmodified and done_embedding
-            for fileid, file_item in done_embedding.items():
-                unmodified[fileid] = file_item
-            unsorted_all_files = []
-            for fileid, file_item in unmodified.items():
-                unsorted_all_files.append(file_item)
-            sorted_all_files = sorted(unsorted_all_files, key=lambda x: x['mtime'], reverse=True)
-            with open("/tmp/files_index.jsonl", "w") as wfp:
-                for file_item in sorted_all_files:
-                    file_item['mtime'] = to_rfc3339(file_item['mtime'])
-                    wfp.write(json.dumps(file_item) + "\n")
-            files_index_jsonl = '/tmp/files_index.jsonl'
-            print(f"Uploading  {files_index_jsonl}  Size of file={os.path.getsize(files_index_jsonl)}")
-            s3client.upload_file(files_index_jsonl, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl)}")
-            
-            # now build the index.
-            faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix)
-            
-            # save the created index
-            faiss_flat_fname = '/tmp/faiss_index_flat'
-            faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
-            print(f"Uploading faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)}")
-            s3client.upload_file(faiss_flat_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_flat_fname)}")
-            os.remove(faiss_flat_fname)
-                
-            # save the created index
-            faiss_ivfadc_fname = '/tmp/faiss_index_ivfadc'
-            faiss.write_index(faiss_rm.get_index_ivfadc(), faiss_ivfadc_fname)
-            print(f"Uploading faiss ivfadc index {faiss_ivfadc_fname}.  Size of index={os.path.getsize(faiss_ivfadc_fname)}")
-            s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
-            os.remove(faiss_ivfadc_fname)
+        done_embedding = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
+            update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
+            build_and_save_faiss(email, s3client, bucket, prefix, user_prefix)
         else:
-            print(f"update_index_for_user: No new embeddings or deleted files. Not updating files_index.jsonl")
+            print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
     except HttpError as error:
         print(f"HttpError occurred: {error}")
         traceback.print_exc()
     except Exception as ex:
         print(f"Exception occurred: {ex}")
         traceback.print_exc()
+
+def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
+    update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index)
+    update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
 
 if __name__ == '__main__':
     files = [ '/home/dev/simple_memo.pdf', '/home/dev/tp_link_deco_e4_wifi_mesh_datasheet_Deco_E4_EU_US_3.pdf' ]
