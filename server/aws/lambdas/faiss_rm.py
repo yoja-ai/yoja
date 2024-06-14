@@ -10,12 +10,12 @@ import math
 
 class FaissRM():
     def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]], pre_calc_embeddings:List[List[float]], vectorizer, k: int = 3, flat_index_fname=None, ivfadc_index_fname:str=None):
-        """ documents is {fileid: finfo}; index_map is [(fileid, paragraph_index)]; 
+        """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
         The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
         
         documents: each item in this dict is similar to below 
-        {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
+        {'1S8cnV...': {'filename': 'Multimodal', 'fileid': '1S8cnV....', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@.../data/embeddings-1712657862202462825.jsonl'}, ... }
         
         pre_calc_embeddings: list of embeddings.
         
@@ -89,6 +89,7 @@ class FaissRM():
         return file_size
 
     def get_documents(self):
+        """ documents is a dict like {fileid: finfo}; """
         return self._documents
 
     def get_index_flat(self):
@@ -147,6 +148,7 @@ class FaissRM():
         return rv
 
     def get_index_map(self):
+        """ index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index """
         return self._index_map
 
     def _faiss_search(self, emb_npa, k, index_type:str = 'flat'):

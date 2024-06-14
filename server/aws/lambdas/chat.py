@@ -21,6 +21,7 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from typing import Tuple, List, Dict, Any
 import faiss_rm
 import re
+import dataclasses
 
 def _check_if_agent_mode(messages:List[dict]) -> Tuple[bool, str]:
     agent_mode:bool = False
@@ -38,7 +39,11 @@ def _check_if_agent_mode(messages:List[dict]) -> Tuple[bool, str]:
     
     return agent_mode, thread_id
         
-def ongoing_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type:str = 'flat'):
+def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat'):
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)]; the index into this list corresponds to the index of the embedding vector in the faiss index
+    """    
     print(f"ongoing_chat: entered")
     
     use_agent:bool; thread_id:str 
@@ -49,9 +54,13 @@ def ongoing_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, i
         last_msg:str = body['messages'][-1]['content']
         tracebuf = []; context_srcs=[]; srp:str; thread_id:str
         # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
-        srp, thread_id = retrieve_using_openai_assistant(faiss_rm,documents, index_map, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
+        srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
         srp = srp + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     else:
+        # TODO: need to fix this code to work with a list of VDBs.  Code currently is for a single VDB.
+        faiss_rm = faiss_rms[0]
+        documents = documents_list[0]
+        index_map = index_map_list[0]
         messages_to_openai=[]
         # {'messages': [{'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers\n...from those PDFs.  \n**Context Source: simple_memo.pdf**\t<!-- ID=15-...X8bI/0 -->'}, {'role': 'user', 'content': 'can you repeat that?'}], 'model': 'gpt-3.5-turbo', 'stream': True, 'temperature': 1, 'top_p': 0.7}
         for msg in body['messages']:
@@ -182,7 +191,11 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
     print(logmsg); tracebuf.append(logmsg)
     return (print_trace, use_ivfadc, cross_encoder_10, use_ner, use_agent, file_details, last_msg)
 
-def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type, tracebuf:List[str], context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> Tuple[str, str]:
+def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str], context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> Tuple[str, str]:
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
+    """
     import openai
     import openai.types
     import openai.types.beta
@@ -286,7 +299,7 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
             if tool.function.name == "search_question_in_db":
                 args_dict:dict = json.loads(tool.function.arguments)
                 tool_arg_question = args_dict.get('question')
-                context:str = retrieve_and_rerank_using_faiss(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, tool_arg_question)
+                context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, tool_arg_question)
                 logmsg = f"tool output: context={context}"
                 print(logmsg); tracebuf.append(logmsg)
                 tool_outputs.append({
@@ -315,8 +328,26 @@ def retrieve_using_openai_assistant(faiss_rm:faiss_rm.FaissRM, documents, index_
         logmsg = f"run incomplete: result after running thread with above messages={run}\n"
         print(logmsg); tracebuf.append(logmsg)
 
-def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> str:
-    """ returns the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context """
+@dataclasses.dataclass
+class DocumentChunkDetails:
+    index_in_faiss:int
+    faiss_rm_vdb:faiss_rm.FaissRM
+    faiss_rm_vdb_id:int   # currently the index of the vdb in a list of VDBs.  TODO: we need to store this ID in the DB or maintain an ordered list in the DB or similar
+    distance:float
+    file_name:str = None
+    file_id:str = None
+    file_info:dict = None
+    para_id:int = None
+    para_dict:dict = None
+    para_text_formatted:str = None
+    cross_encoder_score:float = None
+    
+def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> str:
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
+    
+    returns the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context """
     if use_ner:
         openai_ner = OpenAiNer()
         ner_result = openai_ner(last_msg)
@@ -329,57 +360,70 @@ def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_
     tracebuf.append("**Begin Trace. Queries(after NER)**")
     tracebuf.extend(queries)
 
-    passage_scores = {}
-    for qind in range(len(queries)):
-        qr = queries[qind]
-        distances, indices = faiss_rm(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
-        for itr in range(len(indices[0])):
-            ind = indices[0][itr]
-            # the first query in queries[] is the actual user chat text. we give that twice the weight
-            dist = distances[0][itr] if qind == 0 else distances[0][itr]/2.0
-            if ind in passage_scores:
-                passage_scores[ind].append(dist)
-            else:
-                passage_scores[ind] = [dist]
-    print(f"new_chat: passage_scores=")
-    tracebuf.append("**Passage Scores**")
-    for ind, ps in passage_scores.items():
-        print(f"    index_in_faiss={ind}, file={documents[index_map[ind][0]]['filename']}, paragraph_num={index_map[ind][1]}, passage_score={ps}")
-        tracebuf.append(f"file={documents[index_map[ind][0]]['filename']}, paragraph_num={index_map[ind][1]}, ps={ps}")
+    sorted_summed_scores:List[DocumentChunkDetails] = []
+    for i in range(len(faiss_rms)):
+        faiss_rm_vdb = faiss_rms[i]
+        documents = documents_list[i]
+        index_map = index_map_list[i]
+        
+        # dict of { index_in_faiss:[distance1, distance2] }
+        passage_scores:Dict[int, List] = {}
+        for qind in range(len(queries)):
+            qr = queries[qind]
+            distances, indices = faiss_rm_vdb(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
+            for itr in range(len(indices[0])):
+                ind_in_faiss = indices[0][itr]
+                # the first query in queries[] is the actual user chat text. we give that twice the weight
+                dist = distances[0][itr] if qind == 0 else distances[0][itr]/2.0
+                if ind_in_faiss in passage_scores:
+                    passage_scores[ind_in_faiss].append(dist)
+                else:
+                    passage_scores[ind_in_faiss] = [dist]
+        print(f"new_chat: passage_scores=")
+        tracebuf.append("**Passage Scores**")
+        for ind_in_faiss, ps in passage_scores.items():
+            print(f"    index_in_faiss={ind_in_faiss}, file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, passage_score={ps}")
+            tracebuf.append(f"file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, ps={ps}")
 
-    # faiss returns METRIC_INNER_PRODUCT - larger number means better match
-    # sum the passage scores
+        # faiss returns METRIC_INNER_PRODUCT - larger number means better match
+        # sum the passage scores
 
-    summed_scores = [] # array of (summed_score, index_in_faiss)
-    for index_in_faiss, scores in passage_scores.items():
-        summed_scores.append((sum(scores), index_in_faiss))
-    if use_ner:
-        print(f"new_chat: summed_scores:")
-        tracebuf.append("**Summed Scores**")
-        for ss in summed_scores:
-            print(f"    index_in_faiss={ss[1]}, score={ss[0]}, file={documents[index_map[ss[1]][0]]['filename']}, paragraph_num={index_map[ss[1]][1]}, ps={ps}")
-            tracebuf.append(f"file={documents[index_map[ss[1]][0]]['filename']}, paragraph_num={index_map[ss[1]][1]}, score={ss[0]}")
-    sorted_summed_scores = sorted(summed_scores, key=lambda x: x[0], reverse=True)
+        summed_scores:List[DocumentChunkDetails] = [] # array of (summed_score, index_in_faiss)
+        for index_in_faiss, scores in passage_scores.items():
+            summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, sum(scores), 
+                                                      documents[index_map[index_in_faiss][0]]['filename'],
+                                                      documents[index_map[index_in_faiss][0]]['fileid'],
+                                                      documents[index_map[index_in_faiss][0]],
+                                                      index_map[index_in_faiss][1]))
+        if use_ner:
+            print(f"new_chat: summed_scores:")
+            tracebuf.append("**Summed Scores**")
+            for chunk_det in summed_scores:
+                print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
+                tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
+        sorted_summed_scores.extend( summed_scores )
+    
+    sorted_summed_scores = sorted(sorted_summed_scores, key=lambda x: x.distance, reverse=True)
     if use_ner:
         print(f"new_chat: sorted_summed_scores:")
         tracebuf.append("**Sorted Summed Scores**")
-        for ss in sorted_summed_scores:
-            print(f"    index_in_faiss={ss[1]}, score={ss[0]}, file={documents[index_map[ss[1]][0]]['filename']}, paragraph_num={index_map[ss[1]][1]}, ps={ps}")
-            tracebuf.append(f"file={documents[index_map[ss[1]][0]]['filename']}, paragraph_num={index_map[ss[1]][1]}, score={ss[0]}")
+        for chunk_det in sorted_summed_scores:
+            print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
+            tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
 
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     reranker_map = [] # array of index_in_faiss
     reranker_input = [] # array of (query, formatted_para)
     for itr in range(min(len(sorted_summed_scores), 128)):
-        index_in_faiss = sorted_summed_scores[itr][1]
-        para = faiss_rm.get_paragraph(index_in_faiss)
-        if not para:
-            continue
-        reranker_input.append([last_msg, faiss_rm.format_paragraph(para)])
-        reranker_map.append(index_in_faiss)
+        curr_chunk:DocumentChunkDetails = sorted_summed_scores[itr]
+        index_in_faiss = curr_chunk.index_in_faiss
+        curr_chunk.para_dict = curr_chunk.faiss_rm_vdb.get_paragraph(index_in_faiss)
+        # force an empty formatted_paragraph from format_paragraph() below, by using an empty dict
+        if not curr_chunk.para_dict: curr_chunk.para_dict = {}
+        curr_chunk.para_text_formatted = curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
+        reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
     print(f"new_chat: reranker_input={reranker_input}")
-    print(f"new_chat: reranker_map={reranker_map}")
     global g_cross_encoder
     # https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-2-v2
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -390,15 +434,17 @@ def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_
     # Returns the indices that would sort an array.
     # Perform an indirect sort along the given axis using the algorithm specified by the kind keyword. It returns an array of indices of the same shape as a that index data along the given axis in sorted order.
     reranked_indices = np.argsort(cross_scores)[::-1]
-    print(f"new_chat: reranked_indices={reranked_indices}")
+    for idx in reranked_indices:
+        sorted_summed_scores[idx].cross_encoder_score = cross_scores[idx]
+        print(f"new_chat: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
 
     tracebuf.append("**Reranker Output**")
     for i in range(len(reranked_indices)):
         # ri == reranked_idx
         ri = reranked_indices[i]
-        # i_i_f : index into the index_map to retrieve the tuple (file_id, paragraph_index)
-        i_i_f = reranker_map[ri]
-        fileid, para_index = index_map[i_i_f]
+        chunk_det = sorted_summed_scores[ri]
+        index_in_faiss = chunk_det.index_in_faiss
+        fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = documents[fileid]
         tracebuf.append(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
         
@@ -409,8 +455,9 @@ def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_
     context:str = ''
     for i in range(min(len(reranked_indices), 3)):
         chosen_reranked_index = reranked_indices[i]
-        index_in_faiss = reranker_map[chosen_reranked_index]
-        fileid, para_index = index_map[index_in_faiss]
+        chunk_det = sorted_summed_scores[chosen_reranked_index]
+        index_in_faiss = chunk_det.index_in_faiss
+        fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = documents[fileid]
         if 'slides' in finfo:
             key = 'slides'
@@ -422,16 +469,16 @@ def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_
             return respond({"error_msg": emsg}, status=500)
         
         if 'path' in finfo:
-            context_srcs.append(f"**Context Source: {finfo['path']}{finfo['filename']}**\t<!-- ID={fileid}/{para_index} -->")
+            context_srcs.append(f"**Context Source: {finfo['path']}{finfo['filename']}**\t<!-- ID={fileid}/{para_index} ; index_id={chunk_det.faiss_rm_vdb_id} -->")
         else:
-            context_srcs.append(f"**Context Source: {finfo['filename']}**\t<!-- ID={fileid}/{para_index} -->")
+            context_srcs.append(f"**Context Source: {finfo['filename']}**\t<!-- ID={fileid}/{para_index} ; index_id={chunk_det.faiss_rm_vdb_id} -->")
         
         fparagraphs = []
         for para in finfo[key]:
-            fparagraphs.append(faiss_rm.format_paragraph(para))
+            fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
         if len(context) + len(". ".join(fparagraphs)) > 4096*3:  # each token on average is 3 bytes..
             # if the document is too long, just use the top hit paragraph and some subseq paras
-            paras = faiss_rm.get_paragraphs(index_in_faiss, 8)
+            paras = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
             if not paras:
                 emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
                 print(emsg)
@@ -443,7 +490,8 @@ def retrieve_and_rerank_using_faiss(faiss_rm:faiss_rm.FaissRM, documents, index_
     
     return context
 
-def print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc):
+def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], last_msg:str, use_ivfadc:bool):
+    """ Returns the details of the filename specified in the query.  The format of the query is <filename>|<query>.  Looks up the query in the vector db, and only returns matches from the specified file, including details of the file and the matches in the file (paragraph_num and distance)    """
     last_msg = last_msg.strip()
     fnend = last_msg.find('|')
     if fnend == -1:
@@ -453,27 +501,32 @@ def print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc):
         fn = last_msg[:fnend]
         chat_msg = last_msg[fnend:]
 
-    finfo = None
-    for fi in documents.values():
-        if fi['filename'] == fn:
-            finfo = fi
-            break
-    if not finfo:
-        srp = "File not found in index"
-    else:
-        srp = f"{finfo['filename']}: fileid={finfo['fileid']}, path={finfo['path']}, mtime={finfo['mtime']}, mimetype={finfo['mimetype']}, num_paragraphs={len(finfo['paragraphs'])}"
-        if chat_msg:
-            index_map = faiss_rm.get_index_map()
-            distances, indices = faiss_rm(chat_msg, k=len(index_map), index_type='ivfadc' if use_ivfadc else 'flat' )
-            for itr in range(len(indices[0])):
-                ind = indices[0][itr]
-                # documents is {fileid: finfo}; index_map is [(fileid, paragraph_index)]; 
-                im = index_map[ind] 
-                if im[0] != finfo['fileid']:
-                    continue
-                else:
-                    fmtxt = faiss_rm.format_paragraph(finfo['paragraphs'][im[1]])
-                    srp += f"\n\ndistance={distances[0][itr]}, paragraph_num={im[1]}, paragraph={fmtxt}"
+    srp:str = ""
+    for i in range(len(documents_list)):
+        documents = documents_list[i]
+        faiss_rm_vdb = faiss_rms[i]
+        finfo = None
+        for fi in documents.values():
+            if fi['filename'] == fn:
+                finfo = fi
+                break
+        if finfo:
+            srp += f"{finfo['filename']}: fileid={finfo['fileid']}, path={finfo['path']}, mtime={finfo['mtime']}, mimetype={finfo['mimetype']}, num_paragraphs={len(finfo['paragraphs'])}"
+            if chat_msg:
+                index_map = faiss_rm_vdb.get_index_map()
+                distances, indices = faiss_rm_vdb(chat_msg, k=len(index_map), index_type='ivfadc' if use_ivfadc else 'flat' )
+                for itr in range(len(indices[0])):
+                    ind = indices[0][itr]
+                    # documents is {fileid: finfo}; index_map is [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
+                    im = index_map[ind] 
+                    if im[0] != finfo['fileid']:
+                        continue
+                    else:
+                        fmtxt = faiss_rm_vdb.format_paragraph(finfo['paragraphs'][im[1]])
+                        srp += f"\n\ndistance={distances[0][itr]}, paragraph_num={im[1]}, paragraph={fmtxt}"
+            srp += "\n"
+    if not srp: srp = "File not found in index"
+
     res = {}
     res['id'] = event['requestContext']['requestId']
     res['object'] = 'chat.completion.chunk'
@@ -503,7 +556,11 @@ def print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc):
     return respond(None, res=res)
 
 g_cross_encoder = None
-def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index_type:str = 'flat'):
+def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat'):
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
+    """
     print(f"new_chat: entered")
     # {'messages': [{'role': 'user', 'content': 'Is there a memo?'}, {'role': 'assistant', 'content': '\n\nTO: All Developers\nFROM: John Smith\nDATE: 1st January 2020\nSUBJECT: A new PDF Parsing tool\n\nThere is a new PDF parsing tool available, called py-pdf-parser - you should all check it out! I think it could really help you extract that data we need from those PDFs.  \n**Context Source: simple_memo.pdf**\t<!-- ID=15-CEM_cX.../0 -->'}, {'role': 'user', 'content': 'can you repeat that?'}], 'model': 'gpt-3.5-turbo', 'stream': True, 'temperature': 1, 'top_p': 0.7}
     messages = body['messages']
@@ -514,12 +571,12 @@ def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index
     print_trace, use_ivfadc, cross_encoder_10, use_ner, use_agent, file_details, last_msg = _debug_flags(last_msg, tracebuf)
 
     if file_details:
-        return print_file_details(event, faiss_rm, documents, last_msg, use_ivfadc)
+        return print_file_details(event, faiss_rms, documents_list, last_msg, use_ivfadc)
 
     # string response??
     srp:str = ""; thread_id:str 
     if not use_agent:
-        srp, thread_id = retrieve_using_openai_assistant(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, last_msg)
+        srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, last_msg)
         if not srp:
             return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
         if print_trace:
@@ -530,7 +587,7 @@ def new_chat(event, body, faiss_rm:faiss_rm.FaissRM, documents, index_map, index
         else:
             srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     else:
-        context:str = retrieve_and_rerank_using_faiss(faiss_rm, documents, index_map, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, last_msg)
+        context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, last_msg)
             
         system_content = f"You are a helpful assistant. Answer using the following context - {context}"
         messages=[
@@ -627,18 +684,21 @@ def chat_completions(event, context):
     body = json.loads(event['body'])
     print(f"body={body}")
 
-    faiss_rm = init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False)
-    if not faiss_rm:
+    faiss_rm_vdbs:List[faiss_rm.FaissRM] = [init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False)]
+    if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
         print(f"chat: no faiss index. Returning")
         return respond({"error_msg": f"No document index found. Indexing occurs hourly. Please wait and try later.."}, status=403)
 
-    documents = faiss_rm.get_documents()
-    index_map = faiss_rm.get_index_map()
+    documents_list:List[Dict[str, dict]] = []
+    index_map_list:List[List[Tuple[str,str]]] = []
+    for faiss_rm_vdb in faiss_rm_vdbs:
+        documents_list.append(faiss_rm_vdb.get_documents())
+        index_map_list.append(faiss_rm_vdb.get_index_map())
 
     messages = body['messages']
     if len(messages) == 1:
-        return new_chat(event, body, faiss_rm, documents, index_map) #, 'ivfadc')
+        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list) #, 'ivfadc')
     else:
-        return ongoing_chat(event, body, faiss_rm, documents, index_map) #, 'ivfadc')
+        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list) #, 'ivfadc')
         
 if __name__ != '__main1__': traceback_with_variables.global_print_exc()
