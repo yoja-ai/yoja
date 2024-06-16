@@ -39,9 +39,11 @@ aws --profile ${AWS_CREDS} --region ${AWS_REGN} s3 ls "s3://${scratch_bucket}" |
 
 # setup the image URI
 aws_account_id=`aws --profile ${AWS_CREDS} --region ${AWS_REGN} sts get-caller-identity --query "Account" --output text`
-CWSEARCH_LAMBDA_IMAGE_URI="${aws_account_id}.dkr.ecr."'${AWS::Region}'".amazonaws.com/yoja-img:$image_name"
-export CWSEARCH_LAMBDA_IMAGE_URI
-echo CWSEARCH_LAMDBA_IMAGE_URI=$CWSEARCH_LAMBDA_IMAGE_URI
+YOJA_LAMBDA_IMAGE_URI="${aws_account_id}.dkr.ecr."'${AWS::Region}'".amazonaws.com/yoja-img:$image_name"
+export YOJA_LAMBDA_IMAGE_URI
+echo YOJA_LAMDBA_IMAGE_URI=$YOJA_LAMBDA_IMAGE_URI
+
+export YOJA_LAMBDA_VERSION=${image_name}
 
 # replace ImageUri attribute in template.yaml
 cat << EOF > /tmp/replace_image_$$.py
@@ -50,7 +52,9 @@ with open("template.yaml", "w") as outfile:
   with open("template.yaml.tmpl", "r") as infile:
     for line in infile:
         if line.find("IIIIIIIIII") >= 0:
-          line = line.replace("IIIIIIIIII", f"!Sub {os.environ['CWSEARCH_LAMBDA_IMAGE_URI']}")
+          line = line.replace("IIIIIIIIII", f"!Sub {os.environ['YOJA_LAMBDA_IMAGE_URI']}")
+        if line.find("VVVVVVVVVV") >= 0:
+          line = line.replace("VVVVVVVVVV", f"{os.environ['YOJA_LAMBDA_VERSION']}")
         outfile.write(line)
 EOF
 python3 /tmp/replace_image_$$.py
@@ -63,8 +67,7 @@ sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml 
   --s3-bucket ${scratch_bucket} --s3-prefix yoja \
   --region ${AWS_REGN} --capabilities CAPABILITY_IAM \
   --image-repository $aws_account_id.dkr.ecr.${AWS_REGN}.amazonaws.com/yoja \
-  --parameter-overrides ParameterKey=LambdaVersion,ParameterValue=${image_name} \
-    ParameterKey=OauthClientId,ParameterValue=${oauth_client_id} \
+  --parameter-overrides ParameterKey=OauthClientId,ParameterValue=${oauth_client_id} \
     ParameterKey=OauthClientSecret,ParameterValue=${oauth_client_secret} \
     ParameterKey=DropboxOauthClientId,ParameterValue=${dropbox_oauth_client_id} \
     ParameterKey=DropboxOauthClientSecret,ParameterValue=${dropbox_oauth_client_secret} \
