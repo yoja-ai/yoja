@@ -33,7 +33,7 @@ RUN touch /tmp/test.txt \
 
 RUN pip3 install faiss-cpu 
 RUN pip3 install polyleven 
-RUN pip3 install numpy 
+RUN pip3 install numpy==1.26.4
 RUN pip3 install scipy 
 RUN pip3 install pandas 
 RUN pip3 install boto3 
@@ -58,7 +58,7 @@ RUN pip3 install transformers
 # └── transformers [required: >=4.6.0,<5.0.0, installed: 4.36.2]
 # 
 # install all dependencies needed for sentence-transformers, except torch and torchvision, since the CPU version is already installed above (but not recoginized by pip as already installed due to +cpu)
-RUN pip3 install huggingface-hub nltk numpy scikit-learn sentencepiece tqdm transformers 
+RUN pip3 install huggingface-hub nltk scikit-learn sentencepiece tqdm transformers
 RUN pip3 install --no-cache-dir sentence-transformers 
 RUN pip3 install pipdeptree 
 RUN pip3 install traceback-with-variables 
