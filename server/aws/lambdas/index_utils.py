@@ -152,10 +152,12 @@ def populate_embeddings_file_cache(embeddings_file_uri, s3client, index_bucket, 
         print(f"Caught {ex} while parsing tmp_embeddings_file.jsonl")
         return False
 
-def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True) -> FaissRM :
-    """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3"""
-    print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}")
-    user_prefix = f"{prefix}/{email}"
+def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
+    """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
+    sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
+    """
+    print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
+    user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
     # each line in files_index.jsonl has the structure below.  In fls, it is stored as { file_id: <dict_from_each_line_of_jsonl_file>}
     # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     fls = {}

@@ -445,7 +445,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         chunk_det = sorted_summed_scores[ri]
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
-        finfo = documents[fileid]
+        finfo = chunk_det.file_info
         tracebuf.append(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
         
         # if we asked to only print the 10 cross encoded outputs
@@ -458,7 +458,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         chunk_det = sorted_summed_scores[chosen_reranked_index]
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
-        finfo = documents[fileid]
+        finfo = chunk_det.file_info
         if 'slides' in finfo:
             key = 'slides'
         elif 'paragraphs' in finfo:
@@ -684,7 +684,10 @@ def chat_completions(event, context):
     body = json.loads(event['body'])
     print(f"body={body}")
 
-    faiss_rm_vdbs:List[faiss_rm.FaissRM] = [init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False)]
+    faiss_rm_vdbs:List[faiss_rm.FaissRM] = []
+    for index in (None, 'dropbox'):
+        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False, sub_prefix=index)
+        if faiss_rm_vdb: faiss_rm_vdbs.append(faiss_rm_vdb)
     if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
         print(f"chat: no faiss index. Returning")
         return respond({"error_msg": f"No document index found. Indexing occurs hourly. Please wait and try later.."}, status=403)

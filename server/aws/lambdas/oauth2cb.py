@@ -111,6 +111,7 @@ def oauth2cb_dropbox(qs):
                 'code': qs['code'],
                 'grant_type': 'authorization_code',
                 'redirect_uri': os.environ['OAUTH_REDIRECT_URI']}
+                #'scope':"openid email profile"}
         resp = requests.post('https://www.dropbox.com/oauth2/token', data=postdata)
         resp.raise_for_status()
         print(f"get access token post resp.text={resp.text}")
@@ -130,6 +131,7 @@ def oauth2cb_dropbox(qs):
                 'client_secret': os.environ['DROPBOX_OAUTH_CLIENT_SECRET'], 
                 'refresh_token': rj['refresh_token'],
                 'grant_type': 'refresh_token'}
+                #'scope':"openid email profile"}
         resp = requests.post('https://www.dropbox.com/oauth2/token', data=postdata)
         resp.raise_for_status()
         print(f"refresh access token post resp.text={resp.text}")
