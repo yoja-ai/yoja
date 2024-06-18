@@ -42,6 +42,7 @@ Globals:
         HF_HOME: '/tmp'
         TRANSFORMERS_OFFLINE: '1'
         OPENAI_API_KEY: !Ref OpenaiApiKey
+        PYTHONUNBUFFERED: 'True'
 Resources:
   YojaLambdaRole:
     Type: AWS::IAM::Role

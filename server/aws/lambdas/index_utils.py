@@ -92,7 +92,8 @@ def export_gdrive_file(service, file_id, mimetype) -> io.BytesIO:
   return file
 
 def download_files_index(s3client, bucket, prefix, download_faiss_index):
-    """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   """
+    """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
+        download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)"""
     try:
         files_index_jsonl = "/tmp/files_index.jsonl"
         # index1/raj@yoja.ai/files_index.jsonl
@@ -598,7 +599,7 @@ def list_files_in_dropbox_folder(dbx, folder_path, dropbox_listing):
         print(str(e)) 
   
 def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client):
-    print(f"update_files_index_jsonl: Updating files_index.jsonl with new embeddings for {len(done_embedding.items())} files and removing deleted files={len(deleted_files)}")
+    print(f"update_files_index_jsonl: Updating files_index.jsonl to s3://{bucket}/{user_prefix} with new embeddings for {len(done_embedding.items())} files and removing deleted files={len(deleted_files)}")
     # consolidate unmodified and done_embedding
     for fileid, file_item in done_embedding.items():
         unmodified[fileid] = file_item
@@ -614,9 +615,10 @@ def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, 
     print(f"Uploading  {files_index_jsonl}  Size of file={os.path.getsize(files_index_jsonl)}")
     s3client.upload_file(files_index_jsonl, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl)}")
 
-def build_and_save_faiss(email, s3client, bucket, prefix, user_prefix):
+def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix):
+    """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
-    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix)
+    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix, sub_prefix=sub_prefix)
     
     # save the created index
     faiss_flat_fname = '/tmp/faiss_index_flat'
@@ -635,7 +637,8 @@ def build_and_save_faiss(email, s3client, bucket, prefix, user_prefix):
 def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
     print(f'update_index_for_user_dropbox: Entered. {item}')
     email:str = item['email']['S']
-    user_prefix = f"{prefix}/{email}/dropbox"
+    sub_prefix = "dropbox"
+    user_prefix = f"{prefix}/{email}/{sub_prefix}"
     try:
         s3_index = get_s3_index(s3client, bucket, user_prefix)
         # if index already exists and ask is to not update it (only create if not found), then return.
@@ -672,10 +675,95 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     done_embedding = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
         update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
-        build_and_save_faiss(email, s3client, bucket, prefix, user_prefix)
+        build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix)
     else:
         print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
 
+FOLDER = 'application/vnd.google-apps.folder'
+
+def iterfiles(service:googleapiclient.discovery.Resource, name=None, *, is_folder=None, parent=None,
+              order_by='folder,name,createdTime'):
+    q = []
+    if name is not None:
+        q.append("name = '{}'".format(name.replace("'", "\\'")))
+    if is_folder is not None:
+        q.append("mimeType {} '{}'".format('=' if is_folder else '!=', FOLDER))
+    if parent is not None:
+        q.append("'{}' in parents".format(parent.replace("'", "\\'")))
+
+    params = {'pageToken': None, 'orderBy': order_by, "fields":"nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)"}
+    
+    if q:
+        params['q'] = ' and '.join(q)
+
+    while True:
+        response = service.files().list(**params).execute()
+        for f in response['files']:
+            yield f
+        try:
+            params['pageToken'] = response['nextPageToken']
+        except KeyError:
+            return
+
+
+def walk(service:googleapiclient.discovery.Resource, top='root', *, by_name: bool = False):
+    if by_name:
+        top, = iterfiles(name=top, is_folder=True)
+    else:
+        top = service.files().get(fileId=top).execute()
+        if top['mimeType'] != FOLDER:
+            raise ValueError(f'not a folder: {top!r}')
+
+    stack = [((top['name'],), top)]
+    while stack:
+        path, top = stack.pop()
+
+        dirs, files = is_file = [], []
+        for f in iterfiles(service, parent=top['id']):
+            is_file[f['mimeType'] != FOLDER].append(f)
+
+        yield path, top, dirs, files
+
+        if dirs:
+            stack.extend((path + (d['name'],), d) for d in reversed(dirs))
+
+def _process_gdrive_items(gdrive_listing, folder_details, items):
+    if not items:
+        print("No more files found.")
+        return
+    for item in items:
+        filename = item['name']
+        fileid = item['id']
+        if 'size' in item:
+            size = int(item['size'])
+        else:
+            size = 0
+        mtime = from_rfc3339(item['modifiedTime'])
+        mimetype = item['mimeType']
+        if mimetype == 'application/vnd.google-apps.folder':
+            if 'parents' in item:
+                folder_details[fileid] = {'filename': filename, 'parents': item['parents']}
+        else:
+            if 'parents' in item:
+                gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size, 'parents': item['parents']}
+            else:
+                gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size}
+    return fileid
+
+
+# for kwargs in [{'top': 'spam', 'by_name': True}, {}]:
+#     for path, root, dirs, files in walk(**kwargs):
+#         print('/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
+
+def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, folder_id:str, gdrive_listing:dict, folder_details:dict):
+    total_items = 0
+    # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
+    # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}    
+    for path, root, dirs, files in walk(service, top=folder_id, by_name=False):
+        total_items += (len(dirs) + len(files))
+        print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
+        _process_gdrive_items(gdrive_listing, folder_details, files + dirs)
+    
 def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
     """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
     print(f'update_index_for_user_gdrive: Entered. {item}')
@@ -709,41 +797,33 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             folder_details[driveid] = {'filename': 'My Drive'}
         except Exception as ex:
             print(f"update_index_for_user_gdrive: Exception {ex} while getting driveid")
+        
         # folder_id is specified, then only index the folder's contents
-        if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
-        while True:
-            # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
-            results = (
-                service.files()
-                .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
-                .execute()
-            )
-            # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
-            items = results.get("files", [])
-            if not items:
-                print("No more files found.")
-                return
-            for item in items:
-                filename = item['name']
-                fileid = item['id']
-                if 'size' in item:
-                    size = int(item['size'])
-                else:
-                    size = 0
-                mtime = from_rfc3339(item['modifiedTime'])
-                mimetype = item['mimeType']
-                if mimetype == 'application/vnd.google-apps.folder':
-                    if 'parents' in item:
-                        folder_details[fileid] = {'filename': filename, 'parents': item['parents']}
-                else:
-                    if 'parents' in item:
-                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size, 'parents': item['parents']}
-                    else:
-                        gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size}
-            pageToken = results.get("nextPageToken", None)
-            kwargs['pageToken']=pageToken
-            if not pageToken:
-                break
+        #if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
+        if folder_id:
+            _get_gdrive_rooted_at_folder_id(service, folder_id, gdrive_listing, folder_details)
+        else:
+            total_items = 0
+            while True:
+                # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
+                results = (
+                    service.files()
+                    .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
+                    .execute()
+                )
+                # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
+                # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}
+                items = results.get("files", [])
+                total_items += len(items)
+                print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
+                # print(f"files = {[ item['name'] for item in items]}")
+                
+                _process_gdrive_items(gdrive_listing, folder_details, items)
+                
+                pageToken = results.get("nextPageToken", None)
+                kwargs['pageToken']=pageToken
+                if not pageToken:
+                    break
 
         unmodified:dict; needs_embedding:dict;  deleted_files: dict
         unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
@@ -755,7 +835,8 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         done_embedding = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
             update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
-            build_and_save_faiss(email, s3client, bucket, prefix, user_prefix)
+            # we update the index only when we have 1 to 100 embeddings that need to be updated..
+            build_and_save_faiss(email, s3client, bucket, prefix, None, user_prefix)
         else:
             print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
     except HttpError as error:

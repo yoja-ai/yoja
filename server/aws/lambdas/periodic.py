@@ -82,5 +82,6 @@ def periodic(event:dict, context) -> dict:
                 break
     except Exception as ex:
         print(f"Caught {ex} while scanning users table")
+        traceback.print_exc(ex)
         return respond({"error_msg": f"Caught {ex} while scanning users table"}, status=403)
     return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
