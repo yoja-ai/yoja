@@ -51,7 +51,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 
     # get the user message, which is the last line
     last_msg:str = body['messages'][-1]['content']
-    tracebuf = []; context_srcs=[]; srp:str
+    tracebuf = ['**Begin Trace**']; context_srcs=[]; srp:str
     # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
     srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
     srp = srp + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
@@ -108,11 +108,14 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
     
     # strip the debug flags from the question
     last_msg = query[idx:]
-    logmsg = f"print_trace={print_trace}; use_ivfadc={use_ivfadc}; cross_encoder_10={cross_encoder_10}; use_ner={use_ner}; print_trace_context_choice={print_trace_context_choice}; file_details={file_details}, last_={last_msg}"
+    logmsg = f"**Debug Flags**: print_trace={print_trace}; use_ivfadc={use_ivfadc}; cross_encoder_10={cross_encoder_10}; use_ner={use_ner}; print_trace_context_choice={print_trace_context_choice}; file_details={file_details}, last_={last_msg}"
     print(logmsg); tracebuf.append(logmsg)
     return (print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg)
 
-def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str], context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> Tuple[str, str]:
+def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
+                                    index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
+                                    context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool,
+                                    cross_encoder_10:bool, use_ner:bool, print_trace_context_choice:bool, last_msg:str) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
@@ -165,7 +168,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         role="user",
         content=last_msg,
     )
-    logmsg:str = f"Adding message to thread and running the thread: message={message}\n"
+    logmsg:str = f"**Adding message to thread and running the thread:** message={message}"
     print(logmsg); tracebuf.append(logmsg)
 
     # runs.create_and_poll sometimes fails with run.status==failed
@@ -181,20 +184,20 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             messages = client.beta.threads.messages.list(
                 thread_id=assistants_thread_id
             )
-            logmsg = f"run completed: messages={messages}\nrun={run}\n"
+            logmsg = f"**run completed:** messages={messages}\nrun={run}"
             print(logmsg); tracebuf.append(logmsg)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
         elif run.status == 'failed':
             seconds = 2**retries
-            logmsg = f"retrieve_using_openai_assistant: run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
+            logmsg = f"**retrieve_using_openai_assistant:** run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
             print(logmsg); tracebuf.append(logmsg)
             time.sleep(seconds)
             retries += 1
             if retries >= 5:
                 return None, None
         else:
-            logmsg = f"run result after running thread with messages={run}\n"
+            logmsg = f"**run result after running thread with messages=** {run}"
             print(logmsg); tracebuf.append(logmsg)
             break
 
@@ -207,7 +210,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
                 # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
             messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
-            logmsg = f"run completed: messages={messages}\nrun={run}\n"
+            logmsg = f"**run completed:** messages={messages}\nrun={run}"
             print(logmsg); tracebuf.append(logmsg)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
@@ -220,15 +223,17 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             if tool.function.name == "search_question_in_db":
                 args_dict:dict = json.loads(tool.function.arguments)
                 tool_arg_question = args_dict.get('question')
-                context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, use_ivfadc, cross_encoder_10, use_ner, tool_arg_question)
-                logmsg = f"tool output: context={context}"
+                context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                                                context_srcs, use_ivfadc, cross_encoder_10, use_ner,
+                                                                print_trace_context_choice, tool_arg_question)
+                logmsg = f"**tool output:** context={context}"
                 print(logmsg); tracebuf.append(logmsg)
                 tool_outputs.append({
                     "tool_call_id": tool.id,
                     "output": context
                 })
             else:
-                raise Exception(f"Unknow function call: {tool.function.name}")
+                raise Exception(f"**Unknown function call:** {tool.function.name}")
   
         # Submit all tool outputs at once after collecting them in a list
         if tool_outputs:
@@ -238,15 +243,15 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     run_id=run.id,
                     tool_outputs=tool_outputs
                 )
-                logmsg = f"Tool outputs submitted successfully: run={run}.\n"
+                logmsg = f"**Tool outputs submitted successfully:** run={run}."
                 print(logmsg); tracebuf.append(logmsg)
             except Exception as e:
                 print("Failed to submit tool outputs: ", e)
         else:
-            logmsg = "No tool outputs to submit.\n"
+            logmsg = "**No tool outputs to submit.**"
             print(logmsg); tracebuf.append(logmsg)
     
-        logmsg = f"run incomplete: result after running thread with above messages={run}\n"
+        logmsg = f"**run incomplete:** result after running thread with above messages={run}"
         print(logmsg); tracebuf.append(logmsg)
 
 @dataclasses.dataclass
@@ -263,7 +268,9 @@ class DocumentChunkDetails:
     para_text_formatted:str = None
     cross_encoder_score:float = None
     
-def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool, cross_encoder_10:bool, use_ner:bool, last_msg:str) -> str:
+def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+                                    index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool,
+                                    cross_encoder_10:bool, use_ner:bool, print_trace_context_choice:bool, last_msg:str) -> str:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -278,7 +285,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     else:
         queries = [last_msg]
     print(f"queries after ner={queries}")
-    tracebuf.append("**Begin Trace. Queries(after NER)**")
+    tracebuf.append("**Queries(after NER)**")
     tracebuf.extend(queries)
 
     sorted_summed_scores:List[DocumentChunkDetails] = []
@@ -301,10 +308,12 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                 else:
                     passage_scores[ind_in_faiss] = [dist]
         print(f"new_chat: passage_scores=")
-        tracebuf.append("**Passage Scores**")
+        if print_trace_context_choice:
+            tracebuf.append("**Passage Scores**")
         for ind_in_faiss, ps in passage_scores.items():
             print(f"    index_in_faiss={ind_in_faiss}, file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, passage_score={ps}")
-            tracebuf.append(f"file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, ps={ps}")
+            if print_trace_context_choice:
+                tracebuf.append(f"file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, ps={ps}")
 
         # faiss returns METRIC_INNER_PRODUCT - larger number means better match
         # sum the passage scores
@@ -318,19 +327,23 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                                                       index_map[index_in_faiss][1]))
         if use_ner:
             print(f"new_chat: summed_scores:")
-            tracebuf.append("**Summed Scores**")
+            if print_trace_context_choice:
+                tracebuf.append("**Summed Scores**")
             for chunk_det in summed_scores:
                 print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
-                tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
+                if print_trace_context_choice:
+                    tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
         sorted_summed_scores.extend( summed_scores )
     
     sorted_summed_scores = sorted(sorted_summed_scores, key=lambda x: x.distance, reverse=True)
     if use_ner:
         print(f"new_chat: sorted_summed_scores:")
-        tracebuf.append("**Sorted Summed Scores**")
+        if print_trace_context_choice:
+            tracebuf.append("**Sorted Summed Scores**")
         for chunk_det in sorted_summed_scores:
             print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
-            tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
+            if print_trace_context_choice:
+                tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
 
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     reranker_map = [] # array of index_in_faiss
@@ -359,7 +372,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         sorted_summed_scores[idx].cross_encoder_score = cross_scores[idx]
         print(f"new_chat: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
 
-    tracebuf.append("**Reranker Output**")
+    if print_trace_context_choice:
+        tracebuf.append("**Reranker Output**")
     for i in range(len(reranked_indices)):
         # ri == reranked_idx
         ri = reranked_indices[i]
@@ -367,7 +381,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
-        tracebuf.append(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
+        if print_trace_context_choice:
+            tracebuf.append(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
         
         # if we asked to only print the 10 cross encoded outputs
         if cross_encoder_10 and i >= 10: break
@@ -488,7 +503,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     last_msg = messages[len(messages) - 1]['content']
     print(f"new_chat: Last Message = {last_msg}")
     
-    tracebuf = []; context_srcs=[]
+    tracebuf = ['**Begin Trace**']; context_srcs=[]
     print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg = _debug_flags(last_msg, tracebuf)
 
     if file_details:
@@ -496,7 +511,8 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, last_msg)
+    srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                    context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if print_trace:
