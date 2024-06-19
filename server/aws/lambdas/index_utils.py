@@ -242,8 +242,8 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
 def get_s3_index(s3client, bucket, prefix, sub_prefix) -> Dict[str, dict]:
     """ download the jsonl that has a line for each file in the google drive; Return the dict {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, paragraphs:[{embedding:xxxxx, paragraph_text|aaaa:yyyy}], slides:[{embedding:xxxx, title:abc, text=xyz}] }   """
     rv = {}
+    files_index_jsonl = f"/tmp/files_index-{sub_prefix}.jsonl" if sub_prefix else "/tmp/files_index.jsonl"
     if download_files_index(s3client, bucket, prefix, False, sub_prefix):
-        files_index_jsonl = f"/tmp/files_index-{sub_prefix}.jsonl" if sub_prefix else "/tmp/files_index.jsonl"
         with open(files_index_jsonl, "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
