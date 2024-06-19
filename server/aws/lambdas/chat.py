@@ -113,7 +113,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
     # strip the debug flags from the question
     last_msg = query[idx:]
     logmsg = f"**{_prtime()}: Debug Flags**: print_trace={print_trace}; use_ivfadc={use_ivfadc}; cross_encoder_10={cross_encoder_10}; use_ner={use_ner}; print_trace_context_choice={print_trace_context_choice}; file_details={file_details}, last_={last_msg}"
-    print(logmsg); tracebuf.append(logmsg)
+    print(logmsg);
     return (print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg)
 
 def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
@@ -172,8 +172,13 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         role="user",
         content=last_msg,
     )
-    logmsg:str = f"**{_prtime()}: Adding message to thread and running the thread:** message={message}"
-    print(logmsg); tracebuf.append(logmsg)
+    print(f"**{_prtime()}: Adding message to thread and running the thread:** message=message")
+    logmsgs = [f"**{_prtime()}: Adding message to thread and running the thread:**"]
+    logmsgs.append(f"**role=** {message.role}")
+    if message.content:
+        for c1 in message.content:
+            logmsgs.append(f"**message_content=** {c1.text.value}")
+    tracebuf.extend(logmsgs)
 
     # runs.create_and_poll sometimes fails with run.status==failed
     # and run.last_error=LastError(code='server_error', message='Sorry, something went wrong.')
@@ -188,8 +193,13 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             messages = client.beta.threads.messages.list(
                 thread_id=assistants_thread_id
             )
-            logmsg = f"**{_prtime()}: run completed:** messages={messages}\nrun={run}"
-            print(logmsg); tracebuf.append(logmsg)
+            print(f"**{_prtime()}: run completed:** messages={messages}\nrun={run}")
+            logmsgs = [f"**{_prtime()}: run completed:**"]
+            ms = iter(messages)
+            for msg in ms:
+                logmsgs.append(f"{msg.content[0].text.value[:64]}...")
+                _ = next(ms)
+            tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
         elif run.status == 'failed':
@@ -201,8 +211,13 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             if retries >= 5:
                 return None, None
         else:
-            logmsg = f"**{_prtime()}: run result after running thread with messages=** {run}"
-            print(logmsg); tracebuf.append(logmsg)
+            print(f"**{_prtime()}: run result after running thread with messages=** run={run}")
+            logmsgs = [f"**{_prtime()}: run result after running thread with messages=**"]
+            logmsgs.append(f"**instructions=** {run.instructions}")
+            if run.required_action and run.required_action.submit_tool_outputs and run.required_action.submit_tool_outputs.tool_calls:
+                for tool_call in run.required_action.submit_tool_outputs.tool_calls:
+                    logmsgs.append(f"**Tool name=** {tool_call.function.name}, **Tool Arguments=** {tool_call.function.arguments}")
+            tracebuf.extend(logmsgs)
             break
 
     loopcnt:int = 0
@@ -214,8 +229,13 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
                 # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
             messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
-            logmsg = f"**{_prtime()}: run completed:** messages={messages}\nrun={run}"
-            print(logmsg); tracebuf.append(logmsg)
+            print(f"**{_prtime()}: run completed:** messages={messages}\nrun={run}")
+            logmsgs = [f"**{_prtime()}: run completed:**"]
+            ms = iter(messages)
+            for msg in ms:
+                logmsgs.append(f"{msg.content[0].text.value[:64]}...")
+                _ = next(ms)
+            tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
     
@@ -230,8 +250,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                                 context_srcs, use_ivfadc, cross_encoder_10, use_ner,
                                                                 print_trace_context_choice, tool_arg_question)
-                logmsg = f"**{_prtime()}: Tool output:** context={context}"
-                print(logmsg); tracebuf.append(logmsg)
+                print(f"**{_prtime()}: Tool output:** context={context}")
+                tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                 tool_outputs.append({
                     "tool_call_id": tool.id,
                     "output": context
@@ -247,16 +267,16 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     run_id=run.id,
                     tool_outputs=tool_outputs
                 )
-                logmsg = f"**{_prtime()}: Tool outputs submitted successfully:** run={run}."
-                print(logmsg); tracebuf.append(logmsg)
+                print(f"**{_prtime()}: Tool outputs submitted successfully:** run={run}.")
+                tracebuf.append(f"**{_prtime()}: Tool outputs submitted successfully:**")
             except Exception as e:
                 print("Failed to submit tool outputs: ", e)
         else:
             logmsg = "**{_prtime()}: No tool outputs to submit.**"
             print(logmsg); tracebuf.append(logmsg)
     
-        logmsg = f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}"
-        print(logmsg); tracebuf.append(logmsg)
+        print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
+        tracebuf.append(f"**{_prtime()}: run incomplete:**")
 
 @dataclasses.dataclass
 class DocumentChunkDetails:
