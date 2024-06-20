@@ -193,7 +193,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             messages = client.beta.threads.messages.list(
                 thread_id=assistants_thread_id
             )
-            print(f"**{_prtime()}: run completed:** messages={messages}\nrun={run}")
+            print(f"**{_prtime()}: run completed:**run={run}")
             logmsgs = [f"**{_prtime()}: run completed:**"]
             ms = iter(messages)
             for msg in ms:
@@ -229,8 +229,11 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
                 # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
             messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
-            print(f"**{_prtime()}: run completed:** messages={messages}\nrun={run}")
-            logmsgs = [f"**{_prtime()}: run completed:**"]
+            print(f"**{_prtime()}: run completed:**run={run}")
+            if run.usage:
+                logmsgs = [f"**{_prtime()}: run completed:** completion_tokens={run.usage.completion_tokens}, prompt_tokens={run.usage.prompt_tokens}, total_tokens={run.usage.total_tokens}"]
+            else:
+                logmsgs = [f"**{_prtime()}: run completed:**"]
             ms = iter(messages)
             for msg in ms:
                 logmsgs.append(f"{msg.content[0].text.value[:64]}...")
