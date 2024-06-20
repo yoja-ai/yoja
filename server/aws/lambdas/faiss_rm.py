@@ -160,8 +160,8 @@ class FaissRM():
         # 
         distance_list, index_list = index.search(emb_npa, k)
             
-        print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc distance_list={distance_list}")
-        print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc index_list={index_list}")
+        # print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc distance_list={distance_list}")
+        # print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc index_list={index_list}")
         lindex = list(list(index_list)[0])
         try:
             trunc_point = lindex.index(-1)
