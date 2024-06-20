@@ -56,10 +56,19 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     # get the user message, which is the last line
     last_msg:str = body['messages'][-1]['content']
     tracebuf = ['**Begin Trace**']; context_srcs=[]; srp:str
-    # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
-    srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type, tracebuf, context_srcs, thread_id, False, False, False, None, last_msg)
-    srp = srp + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
-
+    print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg = _debug_flags(last_msg, tracebuf)
+    srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
+                        tracebuf, context_srcs, thread_id, use_ivfadc, cross_encoder_10,
+                        use_ner, print_trace_context_choice, last_msg)
+    if not srp:
+        return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
+    if print_trace:
+        tstr = ""
+        for tt in tracebuf:
+            tstr += f"  \n{tt}"
+        srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
+    else:
+        srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     res = {}
     res['id'] = event['requestContext']['requestId']
     res['object'] = 'chat.completion.chunk'
@@ -335,7 +344,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                     passage_scores[ind_in_faiss].append(dist)
                 else:
                     passage_scores[ind_in_faiss] = [dist]
-        print(f"new_chat: passage_scores=")
+        print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Passage Scores**")
         for ind_in_faiss, ps in passage_scores.items():
@@ -354,7 +363,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                                                       documents[index_map[index_in_faiss][0]],
                                                       index_map[index_in_faiss][1]))
         if use_ner:
-            print(f"new_chat: summed_scores:")
+            print(f"retrieve_and_rerank_using_faiss: summed_scores:")
             if print_trace_context_choice:
                 tracebuf.append(f"**{_prtime()}: Summed Scores**")
             for chunk_det in summed_scores:
@@ -365,7 +374,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     
     sorted_summed_scores = sorted(sorted_summed_scores, key=lambda x: x.distance, reverse=True)
     if use_ner:
-        print(f"new_chat: sorted_summed_scores:")
+        print(f"retrieve_and_rerank_using_faiss: sorted_summed_scores:")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Sorted Summed Scores**")
         for chunk_det in sorted_summed_scores:
@@ -385,22 +394,21 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         curr_chunk.para_text_formatted = curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
         reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
-    print(f"new_chat: reranker_input={reranker_input}")
+    print(f"retrieve_and_rerank_using_faiss: reranker_input={reranker_input}")
     global g_cross_encoder
     # https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-2-v2
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-    # new_chat: cross_scores=[-10.700319  -11.405142   -3.5650876  -8.041701   -9.972779   -9.609493 -10.653023   -6.8494396  -7.601103  -11.405787  -10.690331  -10.050377 ...
+    # retrieve_and_rerank_using_faiss: cross_scores=[-10.700319  -11.405142   -3.5650876  -8.041701   -9.972779   -9.609493 -10.653023   -6.8494396  -7.601103  -11.405787  -10.690331  -10.050377 ...
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     # 
     # Negative Scores for cross-encoder/ms-marco-MiniLM-L-6-v2 #1058: https://github.com/UKPLab/sentence-transformers/issues/1058
     cross_scores:np.ndarray = g_cross_encoder.predict(reranker_input)
-    print(f"new_chat: cross_scores={cross_scores}")
     # Returns the indices that would sort an array.
     # Perform an indirect sort along the given axis using the algorithm specified by the kind keyword. It returns an array of indices of the same shape as a that index data along the given axis in sorted order.
     reranked_indices = np.argsort(cross_scores)[::-1]
     for idx in reranked_indices:
         sorted_summed_scores[idx].cross_encoder_score = cross_scores[idx]
-        print(f"new_chat: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; vdb_similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
+        print(f"retrieve_and_rerank_using_faiss: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; vdb_similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
 
     if print_trace_context_choice:
         tracebuf.append(f"**{_prtime()}: Reranker Output**")
