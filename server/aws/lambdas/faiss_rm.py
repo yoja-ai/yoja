@@ -98,7 +98,7 @@ class FaissRM():
     def get_index_ivfadc(self):
         return self._faiss_index_ivf_adc
         
-    def format_paragraph(self, res):
+    def format_paragraph(self, res:dict):
         if 'paragraph_text' in res:
             rtext = res['paragraph_text']
         elif 'text' in res:

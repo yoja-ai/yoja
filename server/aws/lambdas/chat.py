@@ -57,7 +57,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     last_msg:str = body['messages'][-1]['content']
     tracebuf = ['**Begin Trace**']; context_srcs=[]; srp:str
     # TODO: hard coded values for use_ivfadc, cross_encoder_10 and use_ner.  fix later.
-    srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type, tracebuf, context_srcs, thread_id, False, False, False, last_msg)
+    srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type, tracebuf, context_srcs, thread_id, False, False, False, None, last_msg)
     srp = srp + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
 
     res = {}
@@ -284,12 +284,12 @@ class DocumentChunkDetails:
     index_in_faiss:int
     faiss_rm_vdb:faiss_rm.FaissRM
     faiss_rm_vdb_id:int   # currently the index of the vdb in a list of VDBs.  TODO: we need to store this ID in the DB or maintain an ordered list in the DB or similar
-    distance:float
+    distance:float           # similarity score from vdb
     file_name:str = None
     file_id:str = None
-    file_info:dict = None
-    para_id:int = None
-    para_dict:dict = None
+    file_info:dict = None    # finfo or details about the file
+    para_id:int = None       # the paragraph number
+    para_dict:dict = None    # details of this paragraph
     para_text_formatted:str = None
     cross_encoder_score:float = None
     
@@ -388,6 +388,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
     # new_chat: cross_scores=[-10.700319  -11.405142   -3.5650876  -8.041701   -9.972779   -9.609493 -10.653023   -6.8494396  -7.601103  -11.405787  -10.690331  -10.050377 ...
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
+    # 
+    # Negative Scores for cross-encoder/ms-marco-MiniLM-L-6-v2 #1058: https://github.com/UKPLab/sentence-transformers/issues/1058
     cross_scores:np.ndarray = g_cross_encoder.predict(reranker_input)
     print(f"new_chat: cross_scores={cross_scores}")
     # Returns the indices that would sort an array.
@@ -395,7 +397,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     reranked_indices = np.argsort(cross_scores)[::-1]
     for idx in reranked_indices:
         sorted_summed_scores[idx].cross_encoder_score = cross_scores[idx]
-        print(f"new_chat: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
+        print(f"new_chat: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; vdb_similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
 
     if print_trace_context_choice:
         tracebuf.append(f"**{_prtime()}: Reranker Output**")
@@ -416,7 +418,13 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     context:str = ''
     for i in range(min(len(reranked_indices), 3)):
         chosen_reranked_index = reranked_indices[i]
-        chunk_det = sorted_summed_scores[chosen_reranked_index]
+        chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
+        # if the cross encoder score is negative, skip.
+        if chunk_det.cross_encoder_score < 0: 
+            print(f"skipping reranked chunk in context since cross_encoder_score is -ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
+            continue
+        
+        print(f"using reranked chunk in context since cross_encoder_score is +ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
