@@ -38,7 +38,7 @@ RUN pip3 install scipy
 RUN pip3 install pandas 
 RUN pip3 install boto3 
 RUN pip3 install cloudpickle 
-RUN pip3 install openai 
+RUN pip3 install openai==1.35.1
 RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu 
 RUN pip3 install transformers 
 # https://stackoverflow.com/questions/77205123/how-do-i-slim-down-sberts-sentencer-transformer-library

@@ -172,8 +172,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         role="user",
         content=last_msg,
     )
-    print(f"**{_prtime()}: Adding message to thread and running the thread:** message=message")
-    logmsgs = [f"**{_prtime()}: Adding message to thread and running the thread:**"]
+    print(f"**{_prtime()}: Adding message to openai thread and running the thread:** message=message")
+    logmsgs = [f"**{_prtime()}: Adding message to openai thread and running the thread:**"]
     logmsgs.append(f"**role=** {message.role}")
     if message.content:
         for c1 in message.content:
@@ -211,8 +211,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             if retries >= 5:
                 return None, None
         else:
-            print(f"**{_prtime()}: run result after running thread with messages=** run={run}")
-            logmsgs = [f"**{_prtime()}: run result after running thread with messages=**"]
+            print(f"**{_prtime()}: run result after running openai thread with messages:** run={run}")
+            logmsgs = [f"**{_prtime()}: run result after running openai thread with messages:**"]
             logmsgs.append(f"**instructions=** {run.instructions}")
             if run.required_action and run.required_action.submit_tool_outputs and run.required_action.submit_tool_outputs.tool_calls:
                 for tool_call in run.required_action.submit_tool_outputs.tool_calls:
@@ -265,10 +265,11 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 run = client.beta.threads.runs.submit_tool_outputs_and_poll(
                     thread_id=assistants_thread_id,
                     run_id=run.id,
+                    poll_interval_ms=500,
                     tool_outputs=tool_outputs
                 )
-                print(f"**{_prtime()}: Tool outputs submitted successfully:** run={run}.")
-                tracebuf.append(f"**{_prtime()}: Tool outputs submitted successfully:**")
+                print(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:** run={run}.")
+                tracebuf.append(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:**")
             except Exception as e:
                 print("Failed to submit tool outputs: ", e)
         else:
@@ -309,7 +310,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     else:
         queries = [last_msg]
     print(f"queries after ner={queries}")
-    tracebuf.append(f"**{_prtime()} Tool retrieve_and_rerank_using_faiss: Entered. Queries=**")
+    tracebuf.append(f"**{_prtime()} Tool call:search_question_in_db: Entered. Queries:**")
     tracebuf.extend(queries)
 
     sorted_summed_scores:List[DocumentChunkDetails] = []
