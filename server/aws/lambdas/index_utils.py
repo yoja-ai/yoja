@@ -91,35 +91,35 @@ def export_gdrive_file(service, file_id, mimetype) -> io.BytesIO:
     file = None
   return file
 
-def download_files_index(s3client, bucket, prefix, download_faiss_index, sub_prefix):
+def download_files_index(s3client, bucket, prefix, download_faiss_index):
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)"""
     try:
-        files_index_jsonl = f"/tmp/files_index-{sub_prefix}.jsonl" if sub_prefix else "/tmp/files_index.jsonl"
+        files_index_jsonl = "/tmp/files_index.jsonl"
         # index1/raj@yoja.ai/files_index.jsonl
         print(f"Downloading {files_index_jsonl}")
-        s3client.download_file(bucket, f"{prefix}/files_index.jsonl", files_index_jsonl)
+        s3client.download_file(bucket, f"{prefix}/{os.path.basename(files_index_jsonl)}", files_index_jsonl)
     except Exception as ex:
-        print(f"Caught {ex} while downloading object {prefix}/files_index.jsonl to local file {files_index_jsonl}")
+        print(f"Caught {ex} while downloading {files_index_jsonl}")
         return False
 
     if download_faiss_index:
         try:
-            faiss_index_flat_fname = f"/tmp/faiss_index_flat-{sub_prefix}" if sub_prefix else "/tmp/faiss_index_flat"
+            faiss_index_flat_fname = "/tmp/faiss_index_flat"
             print(f"Downloading {faiss_index_flat_fname}")
             # index1/raj@yoja.ai/faiss_index_flat
-            s3client.download_file(bucket, f"{prefix}/faiss_index_flat", faiss_index_flat_fname)
+            s3client.download_file(bucket, f"{prefix}/{os.path.basename(faiss_index_flat_fname)}", faiss_index_flat_fname)
         except Exception as ex:
-            print(f"Caught {ex} while downloading object {prefix}/faiss_index_flat to local file {faiss_index_flat_fname}")
+            print(f"Caught {ex} while downloading {faiss_index_flat_fname}")
             return False
 
         try:
-            faiss_index_ivfadc_fname = f"/tmp/faiss_index_ivfadc-{sub_prefix}" if sub_prefix else "/tmp/faiss_index_ivfadc"
+            faiss_index_ivfadc_fname = "/tmp/faiss_index_ivfadc"
             print(f"Downloading {faiss_index_ivfadc_fname}")
             # index1/raj@yoja.ai/faiss_index_ivfadc
-            s3client.download_file(bucket, f"{prefix}/faiss_index_ivfadc", faiss_index_ivfadc_fname)
+            s3client.download_file(bucket, f"{prefix}/{os.path.basename(faiss_index_ivfadc_fname)}", faiss_index_ivfadc_fname)
         except Exception as ex:
-            print(f"Caught {ex} while downloading object {prefix}/faiss_index_ivfadc to local file {faiss_index_ivfadc_fname}")
+            print(f"Caught {ex} while downloading {faiss_index_ivfadc_fname}")
             return False
     
     return True
@@ -163,9 +163,8 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
     # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     fls = {}
     # if the ask is to not build the faiss indexes, then try downloading it..
-    if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes, sub_prefix):
-        files_index_jsonl = f"/tmp/files_index-{sub_prefix}.jsonl" if sub_prefix else "/tmp/files_index.jsonl"
-        with open(files_index_jsonl, "r") as rfp:
+    if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
+        with open("/tmp/files_index.jsonl", "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -188,9 +187,7 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
             para = finfo[key][para_index]
             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
             index_map.append((fileid, para_index))
-    faiss_index_flat_fname = f"/tmp/faiss_index_flat-{sub_prefix}" if sub_prefix else "/tmp/faiss_index_flat"
-    faiss_index_ivfadc_fname = f"/tmp/faiss_index_ivfadc-{sub_prefix}" if sub_prefix else "/tmp/faiss_index_ivfadc"
-    return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else faiss_index_flat_fname, ivfadc_index_fname=None if build_faiss_indexes else faiss_index_ivfadc_fname)
+    return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else '/tmp/faiss_index_flat', ivfadc_index_fname=None if build_faiss_indexes else '/tmp/faiss_index_ivfadc')
 
 def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[dict, dict, dict]:
     """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
@@ -239,18 +236,17 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
             
     return unmodified, needs_embedding, deleted
 
-def get_s3_index(s3client, bucket, prefix, sub_prefix) -> Dict[str, dict]:
+def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
     """ download the jsonl that has a line for each file in the google drive; Return the dict {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, paragraphs:[{embedding:xxxxx, paragraph_text|aaaa:yyyy}], slides:[{embedding:xxxx, title:abc, text=xyz}] }   """
     rv = {}
-    files_index_jsonl = f"/tmp/files_index-{sub_prefix}.jsonl" if sub_prefix else "/tmp/files_index.jsonl"
-    if download_files_index(s3client, bucket, prefix, False, sub_prefix):
-        with open(files_index_jsonl, "r") as rfp:
+    if download_files_index(s3client, bucket, prefix, False):
+        with open("/tmp/files_index.jsonl", "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
                 rv[ff['fileid']] = ff
     else:
-        print(f"get_s3_index: Failed to download {files_index_jsonl} from s3://{bucket}/{prefix}")
+        print(f"get_s3_index: Failed to download files_index.jsonl from s3://{bucket}/{prefix}")
     return rv
 
 def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
@@ -644,7 +640,7 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     sub_prefix = "dropbox"
     user_prefix = f"{prefix}/{email}/{sub_prefix}"
     try:
-        s3_index = get_s3_index(s3client, bucket, user_prefix, 'dropbox')
+        s3_index = get_s3_index(s3client, bucket, user_prefix)
         # if index already exists and ask is to not update it (only create if not found), then return.
         if s3_index and only_create_index: 
             print(f"update_index_for_user_dropbox: Not updating index for {user_prefix} since index already exists and only_create_index={only_create_index} ")
@@ -777,7 +773,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
     folder_id = item['folder_id']['S'] if item.get('folder_id') else None
     try:
         # user_prefix = 'index1/raj@yoja.ai' 
-        s3_index = get_s3_index(s3client, bucket, user_prefix, None)
+        s3_index = get_s3_index(s3client, bucket, user_prefix)
         
         # if index already exists and ask is to not update it (only create if not found), then return.
         if s3_index and only_create_index: 
