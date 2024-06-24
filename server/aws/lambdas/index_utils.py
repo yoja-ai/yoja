@@ -759,7 +759,7 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
         update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
     else:
-        print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
+        print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
         
     # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
     _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix )
