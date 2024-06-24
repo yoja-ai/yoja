@@ -11,7 +11,7 @@ import datetime
 from urllib.parse import unquote
 import numpy as np
 from utils import respond, get_service_conf, check_cookie
-from index_utils import init_vdb, update_index_for_user
+from index_utils import init_vdb
 import boto3
 from openai_ner import OpenAiNer
 from openai import OpenAI
