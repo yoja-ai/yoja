@@ -17,6 +17,8 @@ from index_utils import update_index_for_user
 import jsons
 import dataclasses
 from typing import List, Dict, Optional, Any
+import time
+import datetime
 
 @dataclasses.dataclass
 class PeriodicBody:
@@ -62,6 +64,8 @@ def periodic(event:dict, context) -> dict:
         s3client = boto3.client('s3')
         client = boto3.client('dynamodb')
         last_evaluated_key = None
+        # ideally should use datetime.timezone.utc but timezone not used consistently in the code
+        start_time:datetime.datetime = datetime.datetime.now()
         while True:
             if last_evaluated_key:
                 resp = client.scan(TableName=os.environ['USERS_TABLE'], Select='ALL_ATTRIBUTES',
@@ -73,7 +77,7 @@ def periodic(event:dict, context) -> dict:
                 for item in resp['Items']:
                     # if username not specified in post or if specified and matches the item, then process this time.
                     if not post_body.username or post_body.username == item['email']['S']:
-                        update_index_for_user(item, s3client, bucket, prefix)
+                        update_index_for_user(item, s3client, bucket, prefix, start_time)
                 if 'LastEvaluatedKey' in resp:
                     last_evaluated_key = resp['LastEvaluatedKey']
                 else:

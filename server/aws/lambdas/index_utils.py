@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import datetime
 import subprocess
 import dropbox
+import jsons
 
 from googleapiclient.http import MediaIoBaseDownload
 from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339
@@ -91,35 +92,57 @@ def export_gdrive_file(service, file_id, mimetype) -> io.BytesIO:
     file = None
   return file
 
+@dataclass
+class IndexMetadata:
+    jsonl_last_modified:float  = 0 # time.time()
+    index_flat_last_modified:float = 0
+    index_ivfadc_last_modified: float = 0
+    
+    def is_vdb_index_stale(self):
+        return self.jsonl_last_modified > self.index_flat_last_modified or self.jsonl_last_modified > self.index_ivfadc_last_modified
+
+FILES_INDEX_JSONL = "/tmp/files_index.jsonl"    
+INDEX_METADATA_JSON = "/tmp/index_metadata.json"
+FAISS_INDEX_FLAT = "/tmp/faiss_index_flat"
+FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
 def download_files_index(s3client, bucket, prefix, download_faiss_index):
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)"""
     try:
-        files_index_jsonl = "/tmp/files_index.jsonl"
+        files_index_jsonl = FILES_INDEX_JSONL
         # index1/raj@yoja.ai/files_index.jsonl
-        print(f"Downloading {files_index_jsonl}")
+        print(f"Downloading {files_index_jsonl} from s3://{bucket}/{prefix}")
         s3client.download_file(bucket, f"{prefix}/{os.path.basename(files_index_jsonl)}", files_index_jsonl)
     except Exception as ex:
-        print(f"Caught {ex} while downloading {files_index_jsonl}")
+        print(f"Caught {ex} while downloading {files_index_jsonl} from s3://{bucket}/{prefix}")
         return False
+
+    try:
+        index_metadata_fname = INDEX_METADATA_JSON
+        print(f"Downloading {index_metadata_fname} from s3://{bucket}/{prefix}")
+        s3client.download_file(bucket, f"{prefix}/{os.path.basename(index_metadata_fname)}", index_metadata_fname)
+    except Exception as ex:
+        print(f"Caught {ex} while downloading {index_metadata_fname}.  Creating an empty {index_metadata_fname}")
+        # create an empty metadata file
+        _update_index_metadata_json_local(IndexMetadata(), True)
 
     if download_faiss_index:
         try:
-            faiss_index_flat_fname = "/tmp/faiss_index_flat"
-            print(f"Downloading {faiss_index_flat_fname}")
+            faiss_index_flat_fname = FAISS_INDEX_FLAT
+            print(f"Downloading {faiss_index_flat_fname} from s3://{bucket}/{prefix}")
             # index1/raj@yoja.ai/faiss_index_flat
             s3client.download_file(bucket, f"{prefix}/{os.path.basename(faiss_index_flat_fname)}", faiss_index_flat_fname)
         except Exception as ex:
-            print(f"Caught {ex} while downloading {faiss_index_flat_fname}")
+            print(f"Caught {ex} while downloading {faiss_index_flat_fname} from s3://{bucket}/{prefix}")
             return False
 
         try:
-            faiss_index_ivfadc_fname = "/tmp/faiss_index_ivfadc"
-            print(f"Downloading {faiss_index_ivfadc_fname}")
+            faiss_index_ivfadc_fname = FAISS_INDEX_IVFADC
+            print(f"Downloading {faiss_index_ivfadc_fname} from s3://{bucket}/{prefix}")
             # index1/raj@yoja.ai/faiss_index_ivfadc
             s3client.download_file(bucket, f"{prefix}/{os.path.basename(faiss_index_ivfadc_fname)}", faiss_index_ivfadc_fname)
         except Exception as ex:
-            print(f"Caught {ex} while downloading {faiss_index_ivfadc_fname}")
+            print(f"Caught {ex} while downloading {faiss_index_ivfadc_fname} from s3://{bucket}/{prefix}")
             return False
     
     return True
@@ -164,7 +187,7 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
     fls = {}
     # if the ask is to not build the faiss indexes, then try downloading it..
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
-        with open("/tmp/files_index.jsonl", "r") as rfp:
+        with open(FILES_INDEX_JSONL, "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -187,7 +210,7 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
             para = finfo[key][para_index]
             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
             index_map.append((fileid, para_index))
-    return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else '/tmp/faiss_index_flat', ivfadc_index_fname=None if build_faiss_indexes else '/tmp/faiss_index_ivfadc')
+    return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
 
 def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[dict, dict, dict]:
     """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
@@ -240,7 +263,7 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
     """ download the jsonl that has a line for each file in the google drive; Return the dict {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, paragraphs:[{embedding:xxxxx, paragraph_text|aaaa:yyyy}], slides:[{embedding:xxxx, title:abc, text=xyz}] }   """
     rv = {}
     if download_files_index(s3client, bucket, prefix, False):
-        with open("/tmp/files_index.jsonl", "r") as rfp:
+        with open(FILES_INDEX_JSONL, "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -248,6 +271,7 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
     else:
         print(f"get_s3_index: Failed to download files_index.jsonl from s3://{bucket}/{prefix}")
     return rv
+
 
 def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}
@@ -278,8 +302,7 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
                 doc_dct['paragraphs'].append(para_dct)
                 chunk_len = prelude_token_len
                 chunk_paras = []
-                now = datetime.datetime.now()
-                if now - start_time > datetime.timedelta(minutes=time_limit):
+                if _lambda_timelimit_exceeded():
                     doc_dct['partial'] = "true"
                     print(f"read_docx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
                     break
@@ -334,8 +357,7 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, ti
                 print(f"Exception {ex} while creating slide embedding")
                 traceback.print_exc()
             ppt['slides'].append(slide_dct)
-            now = datetime.datetime.now()
-            if now - start_time > datetime.timedelta(minutes=time_limit):
+            if _lambda_timelimit_exceeded():
                 ppt['partial'] = "true"
                 print(f"read_pptx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
                 break
@@ -368,8 +390,7 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime,
             eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
             para_dct['embedding'] = eem
             doc_dct['paragraphs'].append(para_dct)
-            now = datetime.datetime.now()
-            if now - start_time > datetime.timedelta(minutes=time_limit):
+            if _lambda_timelimit_exceeded():
                 doc_dct['partial'] = "true"
                 print(f"_read_pdf: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
                 break
@@ -446,16 +467,22 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
     """
-    start_time = datetime.datetime.now()
-    time_limit:int = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 9))
+    global g_start_time, g_time_limit
+    start_time = g_start_time
+    time_limit = g_time_limit
     done_embedding = {} # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     for fileid, file_item in needs_embedding.items():
         # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}
         filename = file_item['filename']
         path = file_item['path'] if 'path' in file_item else ''
         mimetype = file_item['mimetype'] if 'mimetype' in file_item else ''
+        
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
+            if 'size' in file_item and int(file_item['size']) == 0: 
+                print(f"skipping google drive with file size == 0: {file_item}")
+                continue
+            
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_pptx(file_item, filename, fileid, bio, start_time, time_limit)
@@ -548,9 +575,8 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
             traceback_with_variables.print_exc()
-        now = datetime.datetime.now()
-        if now - start_time > datetime.timedelta(minutes=time_limit):
-            print(f"process_files: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+        if _lambda_timelimit_exceeded():
+            print(f"process_files: More than {g_time_limit} minutes have passed when reading files from google drive. Breaking..")
             break
                 
     return done_embedding
@@ -597,7 +623,32 @@ def list_files_in_dropbox_folder(dbx, folder_path, dropbox_listing):
                 print(f"Unknown type {ff}. Ignoring and continuing..")
     except Exception as e: 
         print(str(e)) 
-  
+
+def _update_index_metadata_json_local(in_index_metadata:IndexMetadata, overwrite:bool=False):
+    # update the metadata file
+    index_metadata:IndexMetadata = None
+    if not overwrite:
+        with open(INDEX_METADATA_JSON, "r") as f:
+            index_metadata = jsons.load(json.load(f),IndexMetadata)
+            print(f"{INDEX_METADATA_JSON} before update = {index_metadata}")
+
+        if in_index_metadata.jsonl_last_modified: index_metadata.jsonl_last_modified = in_index_metadata.jsonl_last_modified
+        if in_index_metadata.index_flat_last_modified: index_metadata.index_flat_last_modified = in_index_metadata.index_flat_last_modified
+        if in_index_metadata.index_ivfadc_last_modified: index_metadata.index_ivfadc_last_modified = in_index_metadata.index_ivfadc_last_modified
+    else:
+        index_metadata = in_index_metadata
+    
+    with open(INDEX_METADATA_JSON, "w") as f:
+         json.dump(jsons.dump(index_metadata), f)
+         print(f"{INDEX_METADATA_JSON} after  update = {index_metadata}")
+
+def _read_index_metadata_json_local() -> IndexMetadata:
+    index_metadata:IndexMetadata = None
+    with open(INDEX_METADATA_JSON, "r") as f:
+        index_metadata = jsons.load(json.load(f),IndexMetadata)
+        print(f"read {INDEX_METADATA_JSON} = {index_metadata}")
+    return index_metadata
+    
 def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client):
     print(f"update_files_index_jsonl: Updating files_index.jsonl to s3://{bucket}/{user_prefix} with new embeddings for {len(done_embedding.items())} files and removing deleted files={len(deleted_files)}")
     # consolidate unmodified and done_embedding
@@ -607,33 +658,65 @@ def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, 
     for fileid, file_item in unmodified.items():
         unsorted_all_files.append(file_item)
     sorted_all_files = sorted(unsorted_all_files, key=lambda x: x['mtime'], reverse=True)
-    with open("/tmp/files_index.jsonl", "w") as wfp:
+    files_index_jsonl = FILES_INDEX_JSONL
+    with open(files_index_jsonl, "w") as wfp:
         for file_item in sorted_all_files:
             file_item['mtime'] = to_rfc3339(file_item['mtime'])
             wfp.write(json.dumps(file_item) + "\n")
-    files_index_jsonl = '/tmp/files_index.jsonl'
     print(f"Uploading  {files_index_jsonl}  Size of file={os.path.getsize(files_index_jsonl)}")
     s3client.upload_file(files_index_jsonl, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl)}")
-
+    os.remove(FILES_INDEX_JSONL)
+    
+    # update index_metadata_json
+    _update_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
+    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+    
 def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
     faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix, sub_prefix=sub_prefix)
     
     # save the created index
-    faiss_flat_fname = '/tmp/faiss_index_flat'
+    faiss_flat_fname = FAISS_INDEX_FLAT
     faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
     print(f"Uploading faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)}")
     s3client.upload_file(faiss_flat_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_flat_fname)}")
     os.remove(faiss_flat_fname)
-        
+    
+    # update index_metadata_json    
+    _update_index_metadata_json_local(IndexMetadata(index_flat_last_modified=time.time()))
+    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+    
     # save the created index
-    faiss_ivfadc_fname = '/tmp/faiss_index_ivfadc'
+    faiss_ivfadc_fname = FAISS_INDEX_IVFADC
     faiss.write_index(faiss_rm.get_index_ivfadc(), faiss_ivfadc_fname)
     print(f"Uploading faiss ivfadc index {faiss_ivfadc_fname}.  Size of index={os.path.getsize(faiss_ivfadc_fname)}")
     s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
     os.remove(faiss_ivfadc_fname)
 
+    # update index_metadata_json
+    _update_index_metadata_json_local(IndexMetadata(index_ivfadc_last_modified=time.time()))
+    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+
+def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
+    """  user_prefix == prefix + email + sub_prefix """
+    # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
+    index_metadata:IndexMetadata = _read_index_metadata_json_local()
+    # if faiss index needs to be updated and we have at least 5 minutes
+    if index_metadata.is_vdb_index_stale():
+        time_left:float = _lambda_time_left_seconds()
+        if time_left > 300:
+            print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
+            # we update the index only when we have 1 to 100 embeddings that need to be updated..
+            build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix)
+        else:
+            print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds")
+    else:
+        print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as it isn't stale: {index_metadata}")
+    
 def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
     print(f'update_index_for_user_dropbox: Entered. {item}')
     email:str = item['email']['S']
@@ -675,10 +758,12 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     done_embedding = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
         update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
-        build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix)
     else:
         print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
-
+        
+    # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
+    _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix )
+    
 FOLDER = 'application/vnd.google-apps.folder'
 
 def iterfiles(service:googleapiclient.discovery.Resource, name=None, *, is_folder=None, parent=None,
@@ -773,7 +858,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
     folder_id = item['folder_id']['S'] if item.get('folder_id') else None
     try:
         # user_prefix = 'index1/raj@yoja.ai' 
-        s3_index = get_s3_index(s3client, bucket, user_prefix)
+        s3_index:Dict[str, dict] = get_s3_index(s3client, bucket, user_prefix)
         
         # if index already exists and ask is to not update it (only create if not found), then return.
         if s3_index and only_create_index: 
@@ -835,10 +920,12 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         done_embedding = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
             update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
-            # we update the index only when we have 1 to 100 embeddings that need to be updated..
-            build_and_save_faiss(email, s3client, bucket, prefix, None, user_prefix)
         else:
             print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
+        
+        # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
+        _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix )
+            
     except HttpError as error:
         print(f"HttpError occurred: {error}")
         traceback.print_exc()
@@ -846,9 +933,22 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         print(f"Exception occurred: {ex}")
         traceback.print_exc()
 
-def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
-    update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index)
-    update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
+g_start_time:datetime.datetime = None # initialized further below
+g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))
+def _lambda_timelimit_exceeded() -> bool:
+    global g_start_time, g_time_limit
+    now = datetime.datetime.now()
+    return True if (now - g_start_time) > datetime.timedelta(minutes=g_time_limit) else False
+
+def _lambda_time_left_seconds() -> float:
+    global g_start_time, g_time_limit
+    return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
+
+def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime, only_create_index:bool=False):
+    global g_start_time, g_time_limit
+    g_start_time = start_time
+    if not _lambda_timelimit_exceeded(): update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index)
+    if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
 
 if __name__ == '__main__':
     files = [ '/home/dev/simple_memo.pdf', '/home/dev/tp_link_deco_e4_wifi_mesh_datasheet_Deco_E4_EU_US_3.pdf' ]
