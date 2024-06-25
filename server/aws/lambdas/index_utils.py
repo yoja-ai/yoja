@@ -24,6 +24,7 @@ import datetime
 import subprocess
 import dropbox
 import jsons
+import gzip
 
 from googleapiclient.http import MediaIoBaseDownload
 from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339
@@ -102,6 +103,7 @@ class IndexMetadata:
         return self.jsonl_last_modified > self.index_flat_last_modified or self.jsonl_last_modified > self.index_ivfadc_last_modified
 
 FILES_INDEX_JSONL = "/tmp/files_index.jsonl"    
+FILES_INDEX_JSONL_GZ = "/tmp/files_index.jsonl.gz"
 INDEX_METADATA_JSON = "/tmp/index_metadata.json"
 FAISS_INDEX_FLAT = "/tmp/faiss_index_flat"
 FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
@@ -109,12 +111,12 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index):
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)"""
     try:
-        files_index_jsonl = FILES_INDEX_JSONL
-        # index1/raj@yoja.ai/files_index.jsonl
-        print(f"Downloading {files_index_jsonl} from s3://{bucket}/{prefix}")
-        s3client.download_file(bucket, f"{prefix}/{os.path.basename(files_index_jsonl)}", files_index_jsonl)
+        files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
+        # index1/raj@yoja.ai/files_index.jsonl.gz
+        print(f"Downloading {files_index_jsonl_gz} from s3://{bucket}/{prefix}")
+        s3client.download_file(bucket, f"{prefix}/{os.path.basename(files_index_jsonl_gz)}", files_index_jsonl_gz)
     except Exception as ex:
-        print(f"Caught {ex} while downloading {files_index_jsonl} from s3://{bucket}/{prefix}")
+        print(f"Caught {ex} while downloading {files_index_jsonl_gz} from s3://{bucket}/{prefix}")
         return False
 
     try:
@@ -187,7 +189,7 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
     fls = {}
     # if the ask is to not build the faiss indexes, then try downloading it..
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
-        with open(FILES_INDEX_JSONL, "r") as rfp:
+        with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -263,7 +265,7 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
     """ download the jsonl that has a line for each file in the google drive; Return the dict {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, paragraphs:[{embedding:xxxxx, paragraph_text|aaaa:yyyy}], slides:[{embedding:xxxx, title:abc, text=xyz}] }   """
     rv = {}
     if download_files_index(s3client, bucket, prefix, False):
-        with open(FILES_INDEX_JSONL, "r") as rfp:
+        with gzip.open(FILES_INDEX_JSONL_GZ, "rb") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -658,14 +660,17 @@ def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, 
     for fileid, file_item in unmodified.items():
         unsorted_all_files.append(file_item)
     sorted_all_files = sorted(unsorted_all_files, key=lambda x: x['mtime'], reverse=True)
-    files_index_jsonl = FILES_INDEX_JSONL
-    with open(files_index_jsonl, "w") as wfp:
+    files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
+    with gzip.open(files_index_jsonl_gz, "wb") as wfp:
         for file_item in sorted_all_files:
             file_item['mtime'] = to_rfc3339(file_item['mtime'])
-            wfp.write(json.dumps(file_item) + "\n")
-    print(f"Uploading  {files_index_jsonl}  Size of file={os.path.getsize(files_index_jsonl)}")
-    s3client.upload_file(files_index_jsonl, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl)}")
-    os.remove(FILES_INDEX_JSONL)
+            wfp.write((json.dumps(file_item) + "\n").encode())
+    
+    print(f"Uploading  {files_index_jsonl_gz}  Size of file={os.path.getsize(files_index_jsonl_gz)}")
+    s3client.upload_file(files_index_jsonl_gz, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl_gz)}")
+    os.remove(FILES_INDEX_JSONL_GZ)
+    # remove stale files_index.jsonl
+    if os.path.exists(FILES_INDEX_JSONL): os.remove(FILES_INDEX_JSONL)
     
     # update index_metadata_json
     _update_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
