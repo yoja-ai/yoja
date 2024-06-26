@@ -25,6 +25,11 @@ import subprocess
 import dropbox
 import jsons
 import gzip
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mypy_boto3_s3.client import S3Client
+else:
+    S3Client = object
 
 from googleapiclient.http import MediaIoBaseDownload
 from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339
@@ -107,9 +112,11 @@ FILES_INDEX_JSONL_GZ = "/tmp/files_index.jsonl.gz"
 INDEX_METADATA_JSON = "/tmp/index_metadata.json"
 FAISS_INDEX_FLAT = "/tmp/faiss_index_flat"
 FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
-def download_files_index(s3client, bucket, prefix, download_faiss_index):
+def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool:
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
-        download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)"""
+        download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)
+        return True if all files can be downloaded.  Return False if any of the files cannot be downloaded.  
+        Note that files_index.jsonl.gz may exist but faiss_index_flat and faiss_index_ivfadc may not exist since the latter is sometimes built only after all the document embeddings are generated. """
     try:
         files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
         # index1/raj@yoja.ai/files_index.jsonl.gz
@@ -126,7 +133,7 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index):
     except Exception as ex:
         print(f"Caught {ex} while downloading {index_metadata_fname}.  Creating an empty {index_metadata_fname}")
         # create an empty metadata file
-        _update_index_metadata_json_local(IndexMetadata(), True)
+        _create_index_metadata_json_local(IndexMetadata())
 
     if download_faiss_index:
         try:
@@ -374,6 +381,7 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime,
         bio.seek(0)
         tfile.write(bio.read()); tfile.flush(); tfile.seek(0)
         # error: fitz.EmptyFileError: Cannot open empty file: filename='/tmp/tmpt6o3l__m'.
+        # error: FileDataError – if the document has an invalid structure for the given type – or is no file at all (but e.g. a folder). A subclass of RuntimeError. ( https://pymupdf.readthedocs.io/en/latest/document.html )
         docs:List[llama_index.core.Document] = pdf_reader.load(file_path=tfile.name)
     
     sent_split:llama_index.core.node_parser.SentenceSplitter = llama_index.core.node_parser.SentenceSplitter(chunk_size=512)
@@ -626,19 +634,20 @@ def list_files_in_dropbox_folder(dbx, folder_path, dropbox_listing):
     except Exception as e: 
         print(str(e)) 
 
-def _update_index_metadata_json_local(in_index_metadata:IndexMetadata, overwrite:bool=False):
-    # update the metadata file
-    index_metadata:IndexMetadata = None
-    if not overwrite:
-        with open(INDEX_METADATA_JSON, "r") as f:
-            index_metadata = jsons.load(json.load(f),IndexMetadata)
-            print(f"{INDEX_METADATA_JSON} before update = {index_metadata}")
+def _create_index_metadata_json_local(in_index_metadata:IndexMetadata):
+    with open(INDEX_METADATA_JSON, "w") as f:
+         json.dump(jsons.dump(in_index_metadata), f)
+         print(f"{INDEX_METADATA_JSON} after create = {in_index_metadata}")
 
-        if in_index_metadata.jsonl_last_modified: index_metadata.jsonl_last_modified = in_index_metadata.jsonl_last_modified
-        if in_index_metadata.index_flat_last_modified: index_metadata.index_flat_last_modified = in_index_metadata.index_flat_last_modified
-        if in_index_metadata.index_ivfadc_last_modified: index_metadata.index_ivfadc_last_modified = in_index_metadata.index_ivfadc_last_modified
-    else:
-        index_metadata = in_index_metadata
+def _update_index_metadata_json_local(in_index_metadata:IndexMetadata):
+    # update the metadata file
+    with open(INDEX_METADATA_JSON, "r") as f:
+        index_metadata = jsons.load(json.load(f),IndexMetadata)
+        print(f"{INDEX_METADATA_JSON} before update = {index_metadata}")
+
+    if in_index_metadata.jsonl_last_modified: index_metadata.jsonl_last_modified = in_index_metadata.jsonl_last_modified
+    if in_index_metadata.index_flat_last_modified: index_metadata.index_flat_last_modified = in_index_metadata.index_flat_last_modified
+    if in_index_metadata.index_ivfadc_last_modified: index_metadata.index_ivfadc_last_modified = in_index_metadata.index_ivfadc_last_modified
     
     with open(INDEX_METADATA_JSON, "w") as f:
          json.dump(jsons.dump(index_metadata), f)
@@ -672,10 +681,28 @@ def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, 
     # remove stale files_index.jsonl
     if os.path.exists(FILES_INDEX_JSONL): os.remove(FILES_INDEX_JSONL)
     
-    # update index_metadata_json
-    _update_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
+    # create an empty index_metadata_json if it doesn't already exist: this is needed when the index is first being created and none of the files files_index.jsonl.gz, index_metadata.json, faiss_index_flat and faiss_index_ivfadc exist.
+    if not os.path.exists(INDEX_METADATA_JSON):
+        _create_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
+    else:
+        # update index_metadata_json
+        _update_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
     print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
     s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+
+def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
+    """  user_prefix == prefix + email + sub_prefix """
+    for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC):
+        faiss_s3_key = f"{user_prefix}/{os.path.basename(faiss_index_fname)}"
+        if os.path.exists(faiss_index_fname): 
+            print(f"Deleting faiss index {faiss_index_fname} in local filesystem")
+            os.remove(faiss_index_fname)
+        try:
+            s3client.head_object(Bucket=bucket, Key=faiss_s3_key)
+            print(f"Deleting faiss index {faiss_index_fname} in S3 key={faiss_s3_key}")
+            s3client.delete_object(Bucket=bucket, Key=faiss_s3_key)
+        except Exception as e:
+            pass
     
 def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix):
     """ Note that user_prefix == prefix + email + sub_prefix """
@@ -718,7 +745,10 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
             # we update the index only when we have 1 to 100 embeddings that need to be updated..
             build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix)
         else:
-            print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds")
+            print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds.  Deleting stale faiss indexes if needed..")
+            # delete the existing faiss indexes since they are not in sync with files_index.jsonl.gz
+            _delete_faiss_index(email, s3client, bucket, prefix, sub_prefix, user_prefix)
+            
     else:
         print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as it isn't stale: {index_metadata}")
     
@@ -874,6 +904,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
             print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}")
+            traceback_with_variables.print_exc()
             return
         
         # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}, '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks': {'filename': 'Q&A', 'fileid': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 51, 962000, tzinfo=datetime.timezone.utc)}, '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y': {'filename': 'Extraction', 'fileid': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 36, 440000, tzinfo=datetime.timezone.utc)}, '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA': {'filename': 'Chatbots', 'fileid': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 27, 281000, tzinfo=datetime.timezone.utc)}, '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY': {'filename': 'Agents', 'fileid': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 16, 596000, tzinfo=datetime.timezone.utc)}}
