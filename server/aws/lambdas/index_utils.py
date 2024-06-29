@@ -278,6 +278,35 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
             index_map.append((fileid, para_index))
     return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
 
+def _calc_path(service, entry, folder_details):
+    # calculate path by walking up parents
+    path = ""
+    while True:
+        if not 'parents' in entry:
+            break
+        folder_id = entry['parents'][0]
+        if folder_id not in folder_details:
+            try:
+                res = service.files().get(fileId=folder_id, fields='name,parents').execute()
+                if 'parents' in res:
+                    folder_details[folder_id] = {'filename': res['name'], 'parents': res['parents']}
+                else:
+                    folder_details[folder_id] = {'filename': res['name']}
+            except Exception as ex:
+                print(f"_calc_path: Exception {ex} while getting shared drive name for id {folder_id}")
+        if folder_id in folder_details:
+            dir_entry = folder_details[folder_id]
+            path = dir_entry['filename'] + '/' + path
+            if 'parents' in dir_entry:
+                entry = dir_entry
+                continue
+            else:
+                break
+        else:
+            print(f"_calc_path: WARNING: Could not map folder id {folder_id} to folder_name for filename {entry['filename']}, path={path}")
+            break
+    return path
+
 def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[dict, dict, dict]:
     """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
     unmodified = {}
@@ -291,30 +320,7 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
             else:
                 unmodified[fileid] = s3_index[fileid]
         else:
-            path = ""
-            entry = gdrive_entry
-            while True:
-                if not 'parents' in entry:
-                    break
-                folder_id = entry['parents'][0]
-                if folder_id not in folder_details:
-                    # try shared drives
-                    try:
-                        shared_drive_name = service.files().get(fileId=folder_id).execute()['name']
-                        folder_details[folder_id] = {'filename': shared_drive_name}
-                    except Exception as ex:
-                        print(f"calc_file_lists: Exception {ex} while getting shared drive name for id {folder_id}")
-                if folder_id in folder_details:
-                    dir_entry = folder_details[folder_id]
-                    path = dir_entry['filename'] + '/' + path
-                    if 'parents' in dir_entry:
-                        entry = dir_entry
-                        continue
-                    else:
-                        break
-                else:
-                    print(f"WARNING: Could not map folder id {folder_id} to folder_name for filename {entry['filename']}, path={path}")
-                    break
+            path=_calc_path(service, gdrive_entry, folder_details)
             gdrive_entry['path'] = path
             needs_embedding[fileid] = gdrive_entry
     
@@ -995,7 +1001,6 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                         mtime = from_rfc3339(chg['time'])
                         mimetype = chg['file']['mimeType']
                         file_details = service.files().get(fileId=fileid, fields='size,parents').execute()
-                        print(f"AAAAAAAAAAAAAa file_details={file_details}")
                         if mimetype == 'application/vnd.google-apps.folder':
                             if 'parents' in file_details:
                                 folder_details[fileid] = {'filename': filename, 'parents': file_details['parents']}
@@ -1003,11 +1008,13 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                             size = file_details['size'] if 'size' in file_details else 0
                             if size: # ignore if size is not available
                                 if 'parents' in file_details:
-                                    gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                    entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
                                                             'mimetype': mimetype, 'size': size, 'parents': file_details['parents']}
                                 else:
-                                    gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                    entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
                                                             'mimetype': mimetype, 'size': size}
+                                entry['path']=_calc_path(service, entry, folder_details)
+                                gdrive_listing[fileid] = entry
             if 'newStartPageToken' in respj:
                 new_start_page_token = respj['newStartPageToken']
             else:
