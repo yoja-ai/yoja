@@ -984,8 +984,10 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
             print(f"respj={respj}")
             for chg in respj['changes']:
                 if chg['removed']:
-                    # XXX process removed
-                    removed=True
+                    if chg['changeType'] == 'file':
+                        fileid = chg['fileId']
+                        mtime = from_rfc3339(chg['time'])
+                        deleted_files[fileid] = {"fileid": fileid, "mtime": mtime}
                 else:
                     if chg['changeType'] == 'file':
                         filename = chg['file']['name']
@@ -1110,7 +1112,12 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id)
             unmodified = s3_index
         # remove deleted files from the index
-        for fileid in deleted_files: unmodified.pop(fileid)
+        for fileid in deleted_files:
+            if fileid in unmodified:
+                print(f"update_index_for_user_gdrive: removing deleted fileid {fileid} from s3_index")
+                unmodified.pop(fileid)
+            else:
+                print(f"update_index_for_user_gdrive: deleted fileid {fileid} not in unmodified index")
 
         done_embedding, time_limit_exceeded = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
