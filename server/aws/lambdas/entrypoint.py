@@ -9,6 +9,7 @@ from periodic import periodic
 from utils import respond
 from chat import chat_completions
 from table_qa_lambda import table_qa_handler
+from webhook_gdrive import webhook_gdrive
 
 fnxmap = {
         '/rest/entrypoint/getversion': getversion,
@@ -16,7 +17,8 @@ fnxmap = {
         '/rest/entrypoint/login': login,
         '/rest/entrypoint/periodic': periodic,
         '/rest/v1/chat/completions': chat_completions,
-        '/rest/entrypoint/tableqa': table_qa_handler
+        '/rest/entrypoint/tableqa': table_qa_handler,
+        '/rest/entrypoint/webhook_gdrive': webhook_gdrive
 }
 
 def entrypoint(event, context):

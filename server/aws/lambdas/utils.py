@@ -136,9 +136,69 @@ def get_user_table_entry(email):
         print(f"Caught {ex} while getting info for {email} from users table")
         return None
 
-def check_user(cookie_val:str, refresh_access_token, user_type):
+def init_gdrive_webhook(item, email, service_conf):
+    if 'gdrive_next_page_token' in item:
+        start_page_token = item['gdrive_next_page_token']['S']
+    else:
+        start_page_token = "1"
+    resp = None
+    e_email = encrypt_email(email, service_conf)
+    try:
+        resource_id = str(uuid.uuid4())
+        addr = f"{os.environ['OAUTH_REDIRECT_URI'][:-8]}webhook_gdrive"
+        headers = {"Authorization": f"Bearer {item['access_token']['S']}", "Content-Type": "application/json"}
+        print(f"check_webhook_gdrive: resource_id {resource_id}, address={addr} for email {email}")
+        postdata={'id': resource_id,
+                'type': 'web_hook',
+                'address': addr,
+                'token': e_email,
+                'expiration': (time.time_ns()//1_000_000+(7*24*60*60*1000))}
+        params={'includeCorpusRemovals': True,
+                'includeItemsFromAllDrives': True,
+                'includeRemoved': True,
+                'pageToken': start_page_token,
+                'pageSize': 100,
+                'restrictToMyDrive': False,
+                'spaces': 'drive',
+                'supportsAllDrives': True}
+        print(f"check_webhook_gdrive: watch. hdrs={json.dumps(headers)}, postdata={json.dumps(postdata)}, params={json.dumps(params)}")
+        resp = requests.post('https://www.googleapis.com/drive/v3/changes/watch', headers=headers, json=postdata, params=params)
+        resp.raise_for_status()
+        print(f"check_webhook_gdrive: post resp.text={resp.text}")
+    except Exception as ex:
+        if resp:
+            print(f"check_webhook_gdrive: In changes.watch for user {email}, caught {ex}. Response={resp.content}")
+        else:
+            print(f"check_webhook_gdrive: In changes.watch for user {email}, caught {ex}")
+        return False
+    try:
+        boto3.client('dynamodb').update_item(
+                        TableName=os.environ['USERS_TABLE'],
+                        Key={'email': {'S': email}},
+                        UpdateExpression="SET gdrive_next_page_token = :tk",
+                        ExpressionAttributeValues={':tk': {'S': start_page_token}}
+                    )
+    except Exception as ex:
+        print(f"check_webhook_gdrive: Error. Caught {ex} while saving nextPageToken in yoja-users")
+        return False
+    return True
+
+def check_webhook_gdrive(email, service_conf):
+    item = get_user_table_entry(email)
+    if 'gw_expires' in item:
+        gw_exp_time = datetime.datetime.strptime(item['gw_expires']['S'], '%a, %d %b %Y %H:%M:%S %Z')
+        now = datetime.datetime.now()
+        if now > gw_exp_time:
+            print(f"check_webhook_gdrive: now={now} after gdrive webhook expiry {gw_exp_time}. Initializing gdrive webhook")
+            init_gdrive_webhook(item, email, service_conf)
+        else:
+            print(f"check_webhook_gdrive: now={now} before gdrive webhook expiry {gw_exp_time}. Not initializing gdrive webhook")
+    else:
+        print(f"check_webhook_gdrive: gw_expires not present in user table. Initializing gdrive webhook")
+        init_gdrive_webhook(item, email, service_conf)
+
+def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
     print(f"check_user:= Entered. cookie_val={cookie_val}")
-    service_conf = get_service_conf()
     try:
         fky = Fernet(service_conf['key']['S'])
         email = fky.decrypt(cookie_val.encode() if isinstance(cookie_val,str) else cookie_val ).decode()
@@ -159,6 +219,7 @@ def check_user(cookie_val:str, refresh_access_token, user_type):
         return None
 
 def check_cookie(event, refresh_access_token):
+    service_conf = get_service_conf()
     rv = {'google': '', 'dropbox': ''}
     for hdr in event['headers']:
         if hdr.lower() == 'cookie':
@@ -174,11 +235,12 @@ def check_cookie(event, refresh_access_token):
                     print(f"check_cookie: key={cookie_name} val={cookie_val}")
                     cn = cookie_name.strip()
                     if cn == 'yoja-user':
-                        email = check_user(cookie_val.strip(), refresh_access_token, 'google')
+                        email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'google')
                         if email:
                             rv['google'] = email
+                            check_webhook_gdrive(email, service_conf)
                     elif cn == 'yoja-dropbox-user':
-                        dropbox_email = check_user(cookie_val.strip(), refresh_access_token, 'dropbox')
+                        dropbox_email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'dropbox')
                         if dropbox_email:
                             rv['dropbox'] = dropbox_email
     return rv

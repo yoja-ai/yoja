@@ -59,6 +59,63 @@ if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-pr
 else:
     vectorizer = MsmarcoDistilbertBaseDotProdV3()
     
+def lock_user(item, client):
+    email=item['email']['S']
+    print(f"lock_user: Entered. Trying to lock for email={email}")
+    gdrive_next_page_token = None
+    try:
+        now = time.time()
+        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
+        if not 'lambda_end_time' in item:
+            print(f"lock_user: no lambda_end_time in ddb. now={now}/{now_s}")
+        else:
+            l_e_t=int(item['lambda_end_time']['N'])
+            l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
+            print(f"lock_user: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+        response = client.update_item(
+            TableName=os.environ['USERS_TABLE'],
+            Key={'email': {'S': email}},
+            UpdateExpression="set #lm = :st",
+            ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
+            ExpressionAttributeNames={'#lm': 'lambda_end_time'},
+            ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(15*60))} },
+            ReturnValues="ALL_NEW"
+        )
+        if 'Attributes' in response and 'gdrive_next_page_token' in response['Attributes']:
+            gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
+        print(f"lock_user: conditional check success. No other instance of lambda is active for user {email}. gdrive_next_page_token={gdrive_next_page_token}")
+        return gdrive_next_page_token, True
+    except ClientError as e:
+        if e.response['Error']['Code'] == "ConditionalCheckFailedException":
+            print(f"lock_user: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
+            return gdrive_next_page_token, False
+        else:
+            raise
+
+def unlock_user(item, client, gdrive_next_page_token):
+    email=item['email']['S']
+    print(f"unlock_user: Entered. email={email}")
+    try:
+        if gdrive_next_page_token:
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression="SET gdrive_next_page_token = :pt REMOVE lambda_end_time",
+                ExpressionAttributeValues={':pt': {'S': gdrive_next_page_token}},
+                ReturnValues="UPDATED_NEW"
+            )
+        else:
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression= "REMOVE gdrive_next_page_token, lambda_end_time",
+                ReturnValues="UPDATED_NEW"
+            )
+    except ClientError as e:
+        print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
+        return False
+    return True
+
 def download_gdrive_file(service, file_id, filename) -> io.BytesIO:
   """Downloads a file
   Args:
@@ -472,7 +529,7 @@ class DropboxReader(StorageReader):
         file.seek(0, os.SEEK_SET)
         return file
 
-def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Dict[str, Dict[str, Any]] : 
+def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> (Dict[str, Dict[str, Any]], bool) : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
@@ -480,6 +537,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
     global g_start_time, g_time_limit
     start_time = g_start_time
     time_limit = g_time_limit
+    time_limit_exceeded = False
     done_embedding = {} # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     for fileid, file_item in needs_embedding.items():
         # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}
@@ -587,9 +645,10 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
             traceback_with_variables.print_exc()
         if _lambda_timelimit_exceeded():
             print(f"process_files: More than {g_time_limit} minutes have passed when reading files from google drive. Breaking..")
+            time_limit_exceeded = True
             break
                 
-    return done_embedding
+    return done_embedding, time_limit_exceeded
 
 def calc_file_lists_dropbox(s3_index, dropbox_listing) -> Tuple[dict, dict, dict]:
     """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
@@ -660,8 +719,8 @@ def _read_index_metadata_json_local() -> IndexMetadata:
         print(f"read {INDEX_METADATA_JSON} = {index_metadata}")
     return index_metadata
     
-def update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client):
-    print(f"update_files_index_jsonl: Updating files_index.jsonl to s3://{bucket}/{user_prefix} with new embeddings for {len(done_embedding.items())} files and removing deleted files={len(deleted_files)}")
+def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client):
+    print(f"update_files_index_jsonl: Updating files_index.jsonl to s3://{bucket}/{user_prefix} with new embeddings for {len(done_embedding.items())} files")
     # consolidate unmodified and done_embedding
     for fileid, file_item in done_embedding.items():
         unmodified[fileid] = file_item
@@ -790,9 +849,9 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     # remove deleted files from the index
     for fileid in deleted_files: s3_index.pop(fileid)
 
-    done_embedding = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
+    done_embedding, time_limit_exceeded = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
-        update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
+        update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
     else:
         print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
         
@@ -870,6 +929,141 @@ def _process_gdrive_items(gdrive_listing, folder_details, items):
                 gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime, 'mimetype': mimetype, 'size': size}
     return fileid
 
+def _get_start_page_token(item):
+    resp = None
+    try:
+        headers={"Authorization": f"Bearer {item['access_token']['S']}"}
+        params={'supportsAllDrives': True}
+        print(f"_get_start_page_token: startPageToken. hdrs={json.dumps(headers)}, params={json.dumps(params)}")
+        resp = requests.get('https://www.googleapis.com/drive/v3/changes/startPageToken', headers=headers, params=params)
+        resp.raise_for_status()
+        respj = resp.json()
+        print(f"_get_start_page_token: got {respj} from changes.getStartPageToken")
+        return respj['startPageToken']
+    except Exception as ex:
+        if resp:
+            print(f"_get_start_page_token: In changes.getStartPageToken for user {email}, caught {ex}. Response={resp.content}")
+        else:
+            print(f"_get_start_page_token: In changes.getStartPageToken for user {email}, caught {ex}")
+        return None
+
+def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id):
+    gdrive_listing = {}
+    folder_details = {}
+    deleted_files = {}
+
+    try:
+        driveid = service.files().get(fileId='root').execute()['id']
+        folder_details[driveid] = {'filename': 'My Drive'}
+    except Exception as ex:
+        print(f"_get_gdrive_listing_incremental: Exception {ex} while getting driveid")
+        return gdrive_listing, folder_details
+
+    new_start_page_token = None
+    next_token = gdrive_next_page_token
+    escape = 0
+    while not new_start_page_token:
+        escape += 1
+        if escape > 10:
+            break
+        resp = None
+        try:
+            headers = {"Authorization": f"Bearer {item['access_token']['S']}", "Content-Type": "application/json"}
+            params={'includeCorpusRemovals': True,
+                'includeItemsFromAllDrives': True,
+                'includeRemoved': True,
+                'pageToken': next_token,
+                'pageSize': 100,
+                'restrictToMyDrive': False,
+                'spaces': 'drive',
+                'supportsAllDrives': True}
+            print(f"_get_gdrive_listing_incremental: hdrs={json.dumps(headers)}, params={json.dumps(params)}")
+            resp = requests.get('https://www.googleapis.com/drive/v3/changes', headers=headers, params=params)
+            resp.raise_for_status()
+            respj = resp.json()
+            print(f"respj={respj}")
+            for chg in respj['changes']:
+                if chg['removed']:
+                    # XXX process removed
+                    removed=True
+                else:
+                    if chg['changeType'] == 'file':
+                        filename = chg['file']['name']
+                        fileid = chg['fileId']
+                        mtime = from_rfc3339(chg['time'])
+                        mimetype = chg['file']['mimeType']
+                        file_details = service.files().get(fileId=fileid, fields='size,parents').execute()
+                        print(f"AAAAAAAAAAAAAa file_details={file_details}")
+                        if mimetype == 'application/vnd.google-apps.folder':
+                            if 'parents' in file_details:
+                                folder_details[fileid] = {'filename': filename, 'parents': file_details['parents']}
+                        else:
+                            size = file_details['size'] if 'size' in file_details else 0
+                            if size: # ignore if size is not available
+                                if 'parents' in file_details:
+                                    gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                                            'mimetype': mimetype, 'size': size, 'parents': file_details['parents']}
+                                else:
+                                    gdrive_listing[fileid] = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                                            'mimetype': mimetype, 'size': size}
+            if 'newStartPageToken' in respj:
+                new_start_page_token = respj['newStartPageToken']
+            else:
+                next_token = respj['nextPageToken']
+        except Exception as ex:
+            if resp:
+                print(f"_get_gdrive_listing_incremental: caught {ex}")
+                print(f"_get_gdrive_listing_incremental: status={resp.status_code}")
+                print(f"_get_gdrive_listing_incremental: content={str(resp.content)}")
+                print(f"_get_gdrive_listing_incremental: headers={str(resp.headers)}")
+            else:
+                print(f"_get_gdrive_listing_incremental: caught {ex}")
+            return None
+    return gdrive_listing, deleted_files, new_start_page_token
+
+def _get_gdrive_listing_full(service, item, folder_id):
+    # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}, '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks': {'filename': 'Q&A', 'fileid': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 51, 962000, tzinfo=datetime.timezone.utc)}, '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y': {'filename': 'Extraction', 'fileid': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 36, 440000, tzinfo=datetime.timezone.utc)}, '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA': {'filename': 'Chatbots', 'fileid': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 27, 281000, tzinfo=datetime.timezone.utc)}, '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY': {'filename': 'Agents', 'fileid': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 16, 596000, tzinfo=datetime.timezone.utc)}}
+    gdrive_listing = {}
+    pageToken = None
+    kwargs = {}
+    folder_details = {}
+    gdrive_next_page_token = None
+    try:
+        driveid = service.files().get(fileId='root').execute()['id']
+        folder_details[driveid] = {'filename': 'My Drive'}
+    except Exception as ex:
+        print(f"_get_gdrive_listing_full: Exception {ex} while getting driveid")
+        return gdrive_listing, folder_details, gdrive_next_page_token
+    
+    # folder_id is specified, then only index the folder's contents
+    #if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
+    if folder_id:
+        _get_gdrive_rooted_at_folder_id(service, folder_id, gdrive_listing, folder_details)
+    else:
+        total_items = 0
+        while True:
+            # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
+            results = (
+                service.files()
+                .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
+                .execute()
+            )
+            # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
+            # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}
+            items = results.get("files", [])
+            total_items += len(items)
+            print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
+            # print(f"files = {[ item['name'] for item in items]}")
+            
+            _process_gdrive_items(gdrive_listing, folder_details, items)
+            
+            pageToken = results.get("nextPageToken", None)
+            kwargs['pageToken']=pageToken
+            if not pageToken:
+                gdrive_next_page_token = _get_start_page_token(item)
+                print(f"_get_gdrive_listing_full: no pageToken. next_page_token={gdrive_next_page_token}")
+                break
+    return gdrive_listing, folder_details, gdrive_next_page_token
 
 # for kwargs in [{'top': 'spam', 'by_name': True}, {}]:
 #     for path, root, dirs, files in walk(**kwargs):
@@ -884,9 +1078,9 @@ def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, 
         print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
         _process_gdrive_items(gdrive_listing, folder_details, files + dirs)
     
-def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
+def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, gdrive_next_page_token:str=None):
     """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
-    print(f'update_index_for_user_gdrive: Entered. {item}')
+    print(f'update_index_for_user_gdrive: Entered. {item}, gdrive_next_page_token={gdrive_next_page_token}')
     email:str = item['email']['S']
     # index1/xyz@abc.com
     user_prefix = f"{prefix}/{email}"
@@ -904,60 +1098,28 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
             print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}")
-            traceback_with_variables.print_exc()
             return
         
-        # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}, '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks': {'filename': 'Q&A', 'fileid': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 51, 962000, tzinfo=datetime.timezone.utc)}, '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y': {'filename': 'Extraction', 'fileid': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 36, 440000, tzinfo=datetime.timezone.utc)}, '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA': {'filename': 'Chatbots', 'fileid': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 27, 281000, tzinfo=datetime.timezone.utc)}, '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY': {'filename': 'Agents', 'fileid': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 16, 596000, tzinfo=datetime.timezone.utc)}}
-        gdrive_listing = {}
-        service:googleapiclient.discovery.Resource = build("drive", "v3", credentials=creds)
-        pageToken = None
-        kwargs = {}
-        folder_details = {}
-        try:
-            driveid = service.files().get(fileId='root').execute()['id']
-            folder_details[driveid] = {'filename': 'My Drive'}
-        except Exception as ex:
-            print(f"update_index_for_user_gdrive: Exception {ex} while getting driveid")
-        
-        # folder_id is specified, then only index the folder's contents
-        #if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
-        if folder_id:
-            _get_gdrive_rooted_at_folder_id(service, folder_id, gdrive_listing, folder_details)
-        else:
-            total_items = 0
-            while True:
-                # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
-                results = (
-                    service.files()
-                    .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
-                    .execute()
-                )
-                # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
-                # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}
-                items = results.get("files", [])
-                total_items += len(items)
-                print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
-                # print(f"files = {[ item['name'] for item in items]}")
-                
-                _process_gdrive_items(gdrive_listing, folder_details, items)
-                
-                pageToken = results.get("nextPageToken", None)
-                kwargs['pageToken']=pageToken
-                if not pageToken:
-                    break
-
         unmodified:dict; needs_embedding:dict;  deleted_files: dict
-        unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
-        print(f"Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
-
+        service:googleapiclient.discovery.Resource = build("drive", "v3", credentials=creds)
+        if not gdrive_next_page_token or gdrive_next_page_token == "1":
+            gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
+            unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
+            print(f"full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
+        else:
+            needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id)
+            unmodified = s3_index
         # remove deleted files from the index
-        for fileid in deleted_files: s3_index.pop(fileid)
+        for fileid in deleted_files: unmodified.pop(fileid)
 
-        done_embedding = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
-            update_files_index_jsonl(done_embedding, deleted_files, unmodified, bucket, user_prefix, s3client)
+            update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
         else:
             print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
+        if time_limit_exceeded:
+            print("update_index_for_user_gdrive: time limit exceeded. Forcing full listing next time..")
+            gdrive_next_page_token = None # force full scan next time
         
         # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
         _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix )
@@ -968,6 +1130,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
     except Exception as ex:
         print(f"Exception occurred: {ex}")
         traceback.print_exc()
+    return gdrive_next_page_token
 
 g_start_time:datetime.datetime = None # initialized further below
 g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))
@@ -980,11 +1143,32 @@ def _lambda_time_left_seconds() -> float:
     global g_start_time, g_time_limit
     return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
 
-def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime, only_create_index:bool=False):
+def invoke_periodic_lambda(function_arn, email):
+    bodydict={"username": email}
+    lambda_client = boto3.client('lambda')
+    run_params = {
+        "requestContext": {
+                    "http": {"method": "POST", "path": "/rest/entrypoint/periodic"}
+        },
+        "body": json.dumps(bodydict)
+    }
+    try:
+        print(f"invoke_periodic_lambda: invoking function {function_arn} with run_params {json.dumps(run_params)}")
+        lambda_client.invoke(FunctionName=function_arn,
+                        InvocationType='Event',
+                        Payload=json.dumps(run_params))
+        return True
+    except Exception as ex:
+        print(f"Caught {ex} while invoking periodic run lambda")
+        return False
+
+
+def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime, only_create_index:bool=False, gdrive_next_page_token:str=None):
     global g_start_time, g_time_limit
     g_start_time = start_time
-    if not _lambda_timelimit_exceeded(): update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index)
-    if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
+    if not _lambda_timelimit_exceeded(): gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
+    #XXX if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
+    return gdrive_next_page_token
 
 if __name__ == '__main__':
     files = [ '/home/dev/simple_memo.pdf', '/home/dev/tp_link_deco_e4_wifi_mesh_datasheet_Deco_E4_EU_US_3.pdf' ]
