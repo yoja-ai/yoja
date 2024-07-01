@@ -11,7 +11,7 @@ import datetime
 from urllib.parse import unquote
 import numpy as np
 from utils import respond, get_service_conf, check_cookie
-from index_utils import init_vdb
+from index_utils import init_vdb, invoke_periodic_lambda
 import boto3
 from openai_ner import OpenAiNer
 from openai import OpenAI
@@ -644,8 +644,9 @@ def chat_completions(event, context):
         faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False, sub_prefix=index)
         if faiss_rm_vdb: faiss_rm_vdbs.append(faiss_rm_vdb)
     if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
-        print(f"chat: no faiss index. Returning")
-        return respond({"error_msg": f"No document index found. Indexing occurs hourly. Please wait and try later.."}, status=403)
+        invoke_periodic_lambda(context.invoked_function_arn, email)
+        print(f"chat: no faiss index. Invoked periodic run and returning")
+        return respond({"error_msg": f"No document index found. Please wait and try later.."}, status=403)
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []
