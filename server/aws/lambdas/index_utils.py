@@ -1158,6 +1158,10 @@ def _lambda_time_left_seconds() -> float:
     return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
 
 def invoke_periodic_lambda(function_arn, email):
+    print(f"invoke_periodic_lambda: function disabled. Causes recursive invocation of lambda")
+    return True
+
+def invoke_periodic_lambda_old(function_arn, email):
     bodydict={"username": email}
     lambda_client = boto3.client('lambda')
     run_params = {
