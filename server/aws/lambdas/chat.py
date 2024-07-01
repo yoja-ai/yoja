@@ -304,6 +304,8 @@ class DocumentChunkDetails:
     para_dict:dict = None    # details of this paragraph
     para_text_formatted:str = None
     cross_encoder_score:float = None
+    retr_sorted_idx:int = None # the position of this chunk when sorted by the retriever
+    reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool,
@@ -332,22 +334,22 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         index_map = index_map_list[i]
         
         # dict of { index_in_faiss:[distance1, distance2] }
-        passage_scores:Dict[int, List] = {}
+        passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices = faiss_rm_vdb(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
-            for itr in range(len(indices[0])):
-                ind_in_faiss = indices[0][itr]
+            distances, indices_in_faiss = faiss_rm_vdb(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
+            for idx in range(len(indices_in_faiss[0])):
+                ind_in_faiss = indices_in_faiss[0][idx]
                 # the first query in queries[] is the actual user chat text. we give that twice the weight
-                dist = distances[0][itr] if qind == 0 else distances[0][itr]/2.0
-                if ind_in_faiss in passage_scores:
-                    passage_scores[ind_in_faiss].append(dist)
+                dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
+                if ind_in_faiss in passage_scores_dict:
+                    passage_scores_dict[ind_in_faiss].append(dist)
                 else:
-                    passage_scores[ind_in_faiss] = [dist]
+                    passage_scores_dict[ind_in_faiss] = [dist]
         print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Passage Scores**")
-        for ind_in_faiss, ps in passage_scores.items():
+        for ind_in_faiss, ps in passage_scores_dict.items():
             print(f"    index_in_faiss={ind_in_faiss}, file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, passage_score={ps}")
             if print_trace_context_choice:
                 tracebuf.append(f"file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, ps={ps}")
@@ -356,7 +358,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         # sum the passage scores
 
         summed_scores:List[DocumentChunkDetails] = [] # array of (summed_score, index_in_faiss)
-        for index_in_faiss, scores in passage_scores.items():
+        for index_in_faiss, scores in passage_scores_dict.items():
             summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, sum(scores), 
                                                       documents[index_map[index_in_faiss][0]]['filename'],
                                                       documents[index_map[index_in_faiss][0]]['fileid'],
@@ -385,8 +387,9 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     reranker_map = [] # array of index_in_faiss
     reranker_input = [] # array of (query, formatted_para)
-    for itr in range(min(len(sorted_summed_scores), 128)):
-        curr_chunk:DocumentChunkDetails = sorted_summed_scores[itr]
+    for idx in range(min(len(sorted_summed_scores), 128)):
+        curr_chunk:DocumentChunkDetails = sorted_summed_scores[idx]
+        curr_chunk.retr_sorted_idx = idx
         index_in_faiss = curr_chunk.index_in_faiss
         curr_chunk.para_dict = curr_chunk.faiss_rm_vdb.get_paragraph(index_in_faiss)
         # force an empty formatted_paragraph from format_paragraph() below, by using an empty dict
@@ -403,12 +406,15 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     # 
     # Negative Scores for cross-encoder/ms-marco-MiniLM-L-6-v2 #1058: https://github.com/UKPLab/sentence-transformers/issues/1058
     cross_scores:np.ndarray = g_cross_encoder.predict(reranker_input)
-    # Returns the indices that would sort an array.
+    # Returns the indices into the given cross_scores array, that would sort the given cross_scores array.
     # Perform an indirect sort along the given axis using the algorithm specified by the kind keyword. It returns an array of indices of the same shape as a that index data along the given axis in sorted order.
     reranked_indices = np.argsort(cross_scores)[::-1]
-    for idx in reranked_indices:
-        sorted_summed_scores[idx].cross_encoder_score = cross_scores[idx]
-        print(f"retrieve_and_rerank_using_faiss: reranked_index={idx}; cross_encoder_score={sorted_summed_scores[idx].cross_encoder_score}; vdb_similarity={sorted_summed_scores[idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[idx].file_name}; para_id={sorted_summed_scores[idx].para_id}")
+    reranker_sorted_idx:int = 0
+    for retr_sorted_idx in reranked_indices:
+        sorted_summed_scores[retr_sorted_idx].cross_encoder_score = cross_scores[retr_sorted_idx]
+        sorted_summed_scores[retr_sorted_idx].reranker_sorted_idx = reranker_sorted_idx
+        print(f"retrieve_and_rerank_using_faiss: reranker_sorted_idx={reranker_sorted_idx}; retr_sorted_idx={retr_sorted_idx}; cross_encoder_score={sorted_summed_scores[retr_sorted_idx].cross_encoder_score}; vdb_similarity={sorted_summed_scores[retr_sorted_idx].distance}; faiss_rm_vdb_id={sorted_summed_scores[retr_sorted_idx].faiss_rm_vdb_id}; file_name={sorted_summed_scores[retr_sorted_idx].file_name}; para_id={sorted_summed_scores[retr_sorted_idx].para_id}")
+        reranker_sorted_idx += 1
 
     if print_trace_context_choice:
         tracebuf.append(f"**{_prtime()}: Reranker Output**")
@@ -430,12 +436,12 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     for i in range(min(len(reranked_indices), 3)):
         chosen_reranked_index = reranked_indices[i]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
-        # if the cross encoder score is negative, skip.
-        if chunk_det.cross_encoder_score < 0: 
-            print(f"skipping reranked chunk in context since cross_encoder_score is -ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
-            continue
-        
-        print(f"using reranked chunk in context since cross_encoder_score is +ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
+        # # if the cross encoder score is negative, skip.
+        # if chunk_det.cross_encoder_score < 0: 
+        #     print(f"skipping reranked chunk in context since cross_encoder_score is -ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
+        #     continue
+        # 
+        # print(f"using reranked chunk in context since cross_encoder_score is +ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
@@ -456,8 +462,9 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         fparagraphs = []
         for para in finfo[key]:
             fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
-        if len(context) + len(". ".join(fparagraphs)) > 4096*3:  # each token on average is 3 bytes..
+        if len(context) + len(". ".join(fparagraphs)) > 4096*3*3:  # each token on average is 3 bytes..
             # if the document is too long, just use the top hit paragraph and some subseq paras
+            print(f"all paras in the file={chunk_det.file_name} > 4096*3: so retricting to paragraph number = {chunk_det.para_id} and 7 more")
             paras = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
             if not paras:
                 emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
@@ -466,6 +473,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             context = context + "\n" + ". ".join(paras)
             break
         else:
+            print(f"all paras in the file={chunk_det.file_name} included in the context")
             context = context + "\n" + ". ".join(fparagraphs)
     
     return context
