@@ -189,15 +189,13 @@ limitations under the License.
   }
   async function tryLogin() {
     const myJson = await this.getLoginJson();
-    if (typeof myJson.google === 'undefined' || myJson.google.length == 0) {
-        gdriveLoginSuccess = false;
-    } else {
+    gdriveLoginSuccess = false;
+    dropboxLoginSuccess = false;
+    if (myJson.google.length > 0) {
       gdriveLoginSuccess = true;
       gdriveEmail = myJson.google;
     }
-    if (typeof myJson.dropbox === 'undefined' || myJson.dropbox.length == 0) {
-        dropboxLoginSuccess = false;
-    } else {
+    if (myJson.dropbox.length > 0) {
       dropboxLoginSuccess = true;
       dropboxEmail = myJson.dropbox;
     }
