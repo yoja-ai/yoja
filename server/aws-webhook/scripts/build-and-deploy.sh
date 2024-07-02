@@ -29,6 +29,55 @@ echo "Using AWS Region $AWS_REGN"
 aws_account_id=`aws --profile ${AWS_CREDS} --region ${AWS_REGN} sts get-caller-identity --query "Account" --output text`
 echo "AWS Account ID= $aws_account_id"
 
+export AWS_PROFILE=${AWS_CREDS}
+export AWS_DEFAULT_REGION=${AWS_REGN}
+c=`cat <<EOF
+import boto3
+import sys
+
+client = boto3.client('lambda')
+result = client.list_layers(
+    CompatibleRuntime='python3.11',
+    MaxItems=50,
+    CompatibleArchitecture='x86_64'
+    )
+if 'Layers' in result:
+    for lyr in result['Layers']:
+        if lyr['LayerName'] == 'yoja-webhook-layer':
+            print(lyr['LayerArn'])
+            sys.exit(0)
+sys.exit(255)
+EOF`
+LAYER=`python3 -c "$c"`
+if [ $? != 0 ] ; then
+  echo "Could not determine layer ARN"
+  exit 255
+fi
+echo "Layer ARN is ${LAYER}"
+
+d=`cat <<EOF
+import boto3
+import sys
+
+client = boto3.client('lambda')
+result = client.list_functions()
+if 'Functions' in result:
+    for fnx in result['Functions']:
+        if fnx['FunctionName'].startswith('yoja-entrypoint-'):
+            print(fnx['FunctionArn'])
+            sys.exit(0)
+sys.exit(255)
+EOF`
+FUNCTION_ARN=`python3 -c "$d"`
+if [ $? != 0 ] ; then
+  echo "Could not determine Function ARN"
+  exit 255
+fi
+echo "Function ARN is ${FUNCTION_ARN}"
+
+/bin/rm -f template.yaml
+sed -e "s/BBBBBBBBBB/${LAYER}/" template.yaml.tmpl | sed -e "s/AAAAAAAAAA/${FUNCTION_ARN}/" > template.yaml
+
 aws --profile ${AWS_CREDS} --region ${AWS_REGN} s3 ls "s3://${scratch_bucket}" || { echo "Error: unable to access the specified s3 bucket ${scratch_bucket}.  Fix and try again"; exit 1; }
 
 sam build --profile ${AWS_CREDS} --region ${AWS_REGN} || exit 1 

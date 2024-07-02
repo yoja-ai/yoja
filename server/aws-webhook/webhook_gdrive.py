@@ -86,7 +86,7 @@ def process_sync(event, context, email):
 
 def process_msg(event, context, email, state):
     print(f"webhook_gdrive.process_msg: Entered. email={email}, state={state}")
-    invoke_periodic_lambda(context.invoked_function_arn, email)
+    invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
     return {
         'statusCode': 204,
         'headers': {
