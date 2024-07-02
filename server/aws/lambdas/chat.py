@@ -394,7 +394,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         curr_chunk.para_dict = curr_chunk.faiss_rm_vdb.get_paragraph(index_in_faiss)
         # force an empty formatted_paragraph from format_paragraph() below, by using an empty dict
         if not curr_chunk.para_dict: curr_chunk.para_dict = {}
-        curr_chunk.para_text_formatted = curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
+        curr_chunk.para_text_formatted = f"Name of the file is {curr_chunk.file_name}\n" + curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
         reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
     print(f"retrieve_and_rerank_using_faiss: reranker_input={reranker_input}")
@@ -462,6 +462,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         fparagraphs = []
         for para in finfo[key]:
             fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
+        prelude = f"Name of the file is {chunk_det.file_name}"
         if len(context) + len(". ".join(fparagraphs)) > 4096*3*3:  # each token on average is 3 bytes..
             # if the document is too long, just use the top hit paragraph and some subseq paras
             print(f"all paras in the file={chunk_det.file_name} > 4096*3: so retricting to paragraph number = {chunk_det.para_id} and 7 more")
@@ -470,11 +471,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                 emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
                 print(emsg)
                 return respond({"error_msg": emsg}, status=500)
-            context = context + "\n" + ". ".join(paras)
+            context = context + "\n" + prelude + "\n" + ". ".join(paras)
             break
         else:
             print(f"all paras in the file={chunk_det.file_name} included in the context")
-            context = context + "\n" + ". ".join(fparagraphs)
+            context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
     
     return context
 
