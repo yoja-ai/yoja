@@ -44,7 +44,7 @@ result = client.list_layers(
 if 'Layers' in result:
     for lyr in result['Layers']:
         if lyr['LayerName'] == 'yoja-webhook-layer':
-            print(lyr['LayerArn'])
+            print(lyr['LatestMatchingVersion']['LayerVersionArn'])
             sys.exit(0)
 sys.exit(255)
 EOF`

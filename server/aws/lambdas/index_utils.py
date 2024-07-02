@@ -100,7 +100,7 @@ def unlock_user(item, client, gdrive_next_page_token):
             response = client.update_item(
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
-                UpdateExpression="SET gdrive_next_page_token = :pt REMOVE lambda_end_time",
+                UpdateExpression="SET gdrive_next_page_token = :pt",
                 ExpressionAttributeValues={':pt': {'S': gdrive_next_page_token}},
                 ReturnValues="UPDATED_NEW"
             )
@@ -108,7 +108,7 @@ def unlock_user(item, client, gdrive_next_page_token):
             response = client.update_item(
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
-                UpdateExpression= "REMOVE gdrive_next_page_token, lambda_end_time",
+                UpdateExpression= "REMOVE gdrive_next_page_token",
                 ReturnValues="UPDATED_NEW"
             )
     except ClientError as e:
@@ -1157,35 +1157,11 @@ def _lambda_time_left_seconds() -> float:
     global g_start_time, g_time_limit
     return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
 
-def invoke_periodic_lambda(function_arn, email):
-    print(f"invoke_periodic_lambda: function disabled. Causes recursive invocation of lambda")
-    return True
-
-def invoke_periodic_lambda_old(function_arn, email):
-    bodydict={"username": email}
-    lambda_client = boto3.client('lambda')
-    run_params = {
-        "requestContext": {
-                    "http": {"method": "POST", "path": "/rest/entrypoint/periodic"}
-        },
-        "body": json.dumps(bodydict)
-    }
-    try:
-        print(f"invoke_periodic_lambda: invoking function {function_arn} with run_params {json.dumps(run_params)}")
-        lambda_client.invoke(FunctionName=function_arn,
-                        InvocationType='Event',
-                        Payload=json.dumps(run_params))
-        return True
-    except Exception as ex:
-        print(f"Caught {ex} while invoking periodic run lambda")
-        return False
-
-
 def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime, only_create_index:bool=False, gdrive_next_page_token:str=None):
     global g_start_time, g_time_limit
     g_start_time = start_time
     if not _lambda_timelimit_exceeded(): gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
-    #XXX if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
+    if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
     return gdrive_next_page_token
 
 if __name__ == '__main__':

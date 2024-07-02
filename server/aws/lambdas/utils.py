@@ -145,7 +145,7 @@ def init_gdrive_webhook(item, email, service_conf):
     e_email = encrypt_email(email, service_conf)
     try:
         resource_id = str(uuid.uuid4())
-        addr = f"{os.environ['OAUTH_REDIRECT_URI'][:-8]}webhook_gdrive"
+        addr = f"{os.environ['OAUTH_REDIRECT_URI'][:-24]}webhook/webhook_gdrive"
         headers = {"Authorization": f"Bearer {item['access_token']['S']}", "Content-Type": "application/json"}
         print(f"check_webhook_gdrive: resource_id {resource_id}, address={addr} for email {email}")
         postdata={'id': resource_id,

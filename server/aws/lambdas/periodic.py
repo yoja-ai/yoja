@@ -13,7 +13,7 @@ import boto3
 from utils import respond, get_service_conf
 import os.path
 import io
-from index_utils import update_index_for_user, lock_user, unlock_user, invoke_periodic_lambda
+from index_utils import update_index_for_user, lock_user, unlock_user
 import jsons
 import dataclasses
 from typing import List, Dict, Optional, Any
@@ -81,8 +81,6 @@ def periodic(event:dict, context) -> dict:
                                                                     gdrive_next_page_token=gdrive_next_page_token)
                             print(f"periodic: after updating index. gdrive_next_page_token={gdrive_next_page_token}")
                             unlock_user(item, client, gdrive_next_page_token)
-                            if not gdrive_next_page_token:
-                                invoke_periodic_lambda(context.invoked_function_arn, item['email']['S'])
                 if 'LastEvaluatedKey' in resp:
                     last_evaluated_key = resp['LastEvaluatedKey']
                 else:
