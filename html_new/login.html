@@ -1,0 +1,245 @@
+<!--
+Copyright 2018 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<!-- [START picker_hello_world] -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Yoja</title>
+  <meta charset="utf-8" />
+  <script src="serviceconfig.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/promise-polyfill@7/dist/polyfill.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/2.0.3/fetch.js"></script>
+  <script src="Dropbox-sdk.min.js"></script>
+  <style>
+    body, html {
+      height: 100%;
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: Arial, sans-serif;
+    }
+    .button-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .button-container button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="button-container">
+    <button id="authorize_gdrive_button" onclick="handleAuthGoogleClick()">Authorize Gdrive</button>
+    <button id="authorize_dropbox_button" onclick="handleAuthDropboxClick()">Authorize Dropbox</button>
+    <button id="skiptochat_button" onclick="handleSkiptochatClick()">Proceed to chat</button>
+    <button id="signout_button" onclick="handleSignoutClick()">Sign Out</button>
+  </div>
+<div id="waitingFlyout">
+  <p>Initializing Yoja. Please wait ...</p>
+</div>
+
+<pre id="content" style="white-space: pre-wrap;"></pre>
+
+<script type="text/javascript">
+  /* exported gisLoaded */
+  /* exported handleAuthGoogleClick */
+  /* exported handleAuthDropboxClick */
+  /* exported handleSignoutClick */
+  /* exported handleSkiptochatClick */
+
+  // Authorization scopes required by the API; multiple scopes can be
+  // included, separated by spaces.
+  const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email';
+  const DROPBOX_SCOPES = ['account_info.read', 'files.metadata.read', 'files.content.read', 'openid', 'email'];
+
+  // client ID and API key from the Developer Console
+  const GOOGLE_CLIENT_ID = ServiceConfig.GOOGLE_CLIENT_ID;
+  const DROPBOX_CLIENT_ID = ServiceConfig.DROPBOX_CLIENT_ID;
+
+  let primaryEmail = null;
+
+  let codeClient;
+  let accessToken = null;
+  let gisInited = false;
+
+  let loginRestFinished = false;
+  let gdriveLoginSuccess = false;
+  let gdriveEmail = "";
+  let dropboxLoginSuccess = false;
+  let dropboxEmail = "";
+
+  document.getElementById('authorize_gdrive_button').style.visibility = 'hidden';
+  document.getElementById('authorize_dropbox_button').style.visibility = 'hidden';
+  document.getElementById('skiptochat_button').style.visibility = 'hidden';
+  document.getElementById('signout_button').style.visibility = 'hidden';
+
+  /**
+   * Callback after Google Identity Services are loaded.
+   */
+  function gisLoaded() {
+    codeClient = google.accounts.oauth2.initCodeClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: SCOPES,
+      ux_mode: 'redirect',
+      redirect_uri: ServiceConfig.OAUTH_REDIRECT_URI,
+      state: "xyzzy",
+      include_granted_scopes: false,
+      prompt: "none"
+    });
+    gisInited = true;
+    maybeEnableButtons();
+  }
+
+  /**
+   * Enables user interaction after all libraries are loaded.
+   */
+  function maybeEnableButtons() {
+    if (gisInited && loginRestFinished) {
+      if (!gdriveLoginSuccess && !dropboxLoginSuccess) {
+        document.getElementById('authorize_gdrive_button').innerText = 'Login using Google and allow us to index your Gdrive';
+        document.getElementById('authorize_dropbox_button').innerText = 'Login using Dropbox and allow us to index your Dropbox';
+        document.getElementById('authorize_gdrive_button').style.visibility = 'visible';
+        document.getElementById('authorize_dropbox_button').style.visibility = 'visible';
+        document.getElementById('skiptochat_button').style.visibility = 'hidden';
+        document.getElementById('signout_button').style.visibility = 'hidden';
+      } else {
+        if (gdriveLoginSuccess) {
+          document.getElementById('authorize_dropbox_button').innerText = 'Allow us to index your Dropbox';
+          document.getElementById('authorize_dropbox_button').style.visibility = 'visible';
+          document.getElementById('skiptochat_button').innerText = 'Skip and proceed to chat';
+          document.getElementById('skiptochat_button').style.visibility = 'visible';
+        } else {
+          document.getElementById('authorize_gdrive_button').innerText = 'Allow us to index your Gdrive';
+          document.getElementById('authorize_gdrive_button').style.visibility = 'visible';
+          document.getElementById('skiptochat_button').innerText = 'Skip and proceed to chat';
+          document.getElementById('skiptochat_button').style.visibility = 'visible';
+        }
+      }
+    }
+  }
+
+  function handleSkiptochatClick() {
+    window.location.href = "chatindex.html";
+  }
+
+  /**
+   *  Sign in the user upon button click.
+   */
+  function handleAuthGoogleClick() {
+    codeClient.requestCode();
+  }
+
+  /**
+   *  Sign out the user upon button click.
+   */
+  function handleSignoutClick() {
+    if (accessToken) {
+      accessToken = null;
+      google.accounts.oauth2.revoke(accessToken);
+      document.getElementById('content').innerText = '';
+      document.getElementById('authorize_gdrive_button').innerText = 'Authorize Gdrive';
+      document.getElementById('authorize_dropbox_button').innerText = 'Authorize Dropbox';
+      document.getElementById('signout_button').style.visibility = 'hidden';
+    }
+  }
+
+  function handleAuthDropboxClick() {
+    var dbx = new Dropbox.Dropbox({ clientId: DROPBOX_CLIENT_ID });
+    var authUrl = dbx.auth.getAuthenticationUrl(ServiceConfig.OAUTH_REDIRECT_URI,
+                        "dropbox",
+                        "code",
+                        "offline",
+                        DROPBOX_SCOPES,
+                        "none",
+                        false)
+      .then((authUrl) => {
+        console.log("login success++++++++++++")
+        window.location.href = authUrl;
+      })
+  }
+
+  async function getLoginJson() {
+    return fetch('/rest/entrypoint/login', {
+      method: 'POST',
+      body: "initial login",
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+      .then((response)=>response.json())
+      .then((responseJson)=>{return responseJson});
+  }
+  async function tryLogin() {
+    const myJson = await this.getLoginJson();
+    if (typeof myJson.google === 'undefined' || myJson.google.length == 0) {
+        gdriveLoginSuccess = false;
+    } else {
+      gdriveLoginSuccess = true;
+      gdriveEmail = myJson.google;
+    }
+    if (typeof myJson.dropbox === 'undefined' || myJson.dropbox.length == 0) {
+        dropboxLoginSuccess = false;
+    } else {
+      dropboxLoginSuccess = true;
+      dropboxEmail = myJson.dropbox;
+    }
+    console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
+        + ", gdriveEmail=" + gdriveEmail
+        + ", dropboxLoginSuccess=" + dropboxLoginSuccess
+        + ", dropboxEmail=" + dropboxEmail);
+    loginRestFinished = true;
+  }
+
+  function showWaitingFlyout() {
+    const waitingFlyout = document.getElementById('waitingFlyout');
+    waitingFlyout.style.display = 'block';
+  }
+
+  async function waitForVariableChange() {
+    showWaitingFlyout();
+
+    tryLogin();
+
+    while (!loginRestFinished) {
+      // Simulate a short delay before checking again
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // Hide the waiting flyout when the variable changes
+    document.getElementById('waitingFlyout').style.display = 'none';
+    
+    // Perform actions after the variable changes
+    console.log('loginRestFinished is true!');
+
+    if (gdriveLoginSuccess && dropboxLoginSuccess) {
+      console.log("login of gdrive and dropbox success!!!!!!!!!!!!")
+      window.location.href = "chatindex.html";
+    } else {
+      maybeEnableButtons();
+    }
+  }
+
+  waitForVariableChange();
+</script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+</html>
+<!-- [END picker_hello_world] -->
