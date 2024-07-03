@@ -22,6 +22,7 @@ from typing import Tuple, List, Dict, Any
 import faiss_rm
 import re
 import dataclasses
+import enum
 
 def _prtime():
     nw=datetime.datetime.now()
@@ -40,6 +41,20 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
             return thread_id
     return None
 
+class RetrieverStrategyEnum(enum.Enum):
+    FullDocStrategy = 1
+    PreAndPostChunkStrategy = 2
+    
+@dataclasses.dataclass
+class ChatConfiguration:
+    print_trace:bool
+    use_ivfadc:bool
+    cross_encoder_10:bool
+    use_ner:bool
+    print_trace_context_choice:bool
+    file_details:bool
+    retreiver_strategy:RetrieverStrategyEnum
+    
 def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat'):
     """
     documents is a dict like {fileid: finfo}; 
@@ -56,13 +71,13 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     # get the user message, which is the last line
     last_msg:str = body['messages'][-1]['content']
     tracebuf = ['**Begin Trace**']; context_srcs=[]; srp:str
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg = _debug_flags(last_msg, tracebuf)
+    chat_config:ChatConfiguration; last_msg:str
+    chat_config, last_msg = _debug_flags(last_msg, tracebuf)
     srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
-                        tracebuf, context_srcs, thread_id, use_ivfadc, cross_encoder_10,
-                        use_ner, print_trace_context_choice, last_msg)
+                        tracebuf, context_srcs, thread_id, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
-    if print_trace:
+    if chat_config.print_trace:
         tstr = ""
         for tt in tracebuf:
             tstr += f"  \n{tt}"
@@ -98,9 +113,9 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     }
     return respond(None, res=res)
 
-def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool, bool, str]:
+def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice = (False, False, False, False, False, False)
+    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey = (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -110,7 +125,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
         # '^': print_trace with info about choice of context
         # '!': print details of file
         c = query[idx]
-        if c not in ['+','@','#','$', '^', '!']: break
+        if c not in ['+','@','#','$', '^', '!', '/']: break
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = True
@@ -118,17 +133,19 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[bool, bool, bool, bool,
         if c == '$': use_ner = True
         if c == '^': print_trace_context_choice = True
         if c == '!': file_details = True
+        if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
     
     # strip the debug flags from the question
     last_msg = query[idx:]
-    logmsg = f"**{_prtime()}: Debug Flags**: print_trace={print_trace}; use_ivfadc={use_ivfadc}; cross_encoder_10={cross_encoder_10}; use_ner={use_ner}; print_trace_context_choice={print_trace_context_choice}; file_details={file_details}, last_={last_msg}"
-    print(logmsg);
-    return (print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg)
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_stratgey)
+    logmsg = f"**{_prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
+    print(logmsg)
+
+    return (chat_config, last_msg)
 
 def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
-                                    context_srcs:List[str], assistants_thread_id:str, use_ivfadc:bool,
-                                    cross_encoder_10:bool, use_ner:bool, print_trace_context_choice:bool, last_msg:str) -> Tuple[str, str]:
+                                    context_srcs:List[str], assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
@@ -260,8 +277,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 args_dict:dict = json.loads(tool.function.arguments)
                 tool_arg_question = args_dict.get('question')
                 context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                context_srcs, use_ivfadc, cross_encoder_10, use_ner,
-                                                                print_trace_context_choice, tool_arg_question)
+                                                                context_srcs, chat_config, tool_arg_question)
                 print(f"**{_prtime()}: Tool output:** context={context}")
                 tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                 tool_outputs.append({
@@ -308,13 +324,15 @@ class DocumentChunkDetails:
     reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], context_srcs:List[str], use_ivfadc:bool,
-                                    cross_encoder_10:bool, use_ner:bool, print_trace_context_choice:bool, last_msg:str) -> str:
+                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> str:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
     
     returns the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context """
+    use_ivfadc:bool; cross_encoder_10:bool; use_ner:bool; print_trace_context_choice:bool; retreiver_strategy:RetrieverStrategyEnum
+    use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.cross_encoder_10, chat_config.use_ner, chat_config.print_trace_context_choice, chat_config.retreiver_strategy)
+    
     if use_ner:
         openai_ner = OpenAiNer()
         ner_result = openai_ner(last_msg)
@@ -433,7 +451,10 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
     # instead of just the top document, try the ones, upto 3
     context:str = ''
-    for i in range(min(len(reranked_indices), 3)):
+    all_docs_token_count = 0
+    max_token_limit:int = 6000
+    max_pre_and_post_token_limit = 512
+    for i in range(len(reranked_indices)):
         chosen_reranked_index = reranked_indices[i]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
         # # if the cross encoder score is negative, skip.
@@ -459,23 +480,49 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         else:
             context_srcs.append(f"**Context Source: {finfo['filename']}**\t<!-- ID={fileid}/{para_index} ; index_id={chunk_det.faiss_rm_vdb_id} -->")
         
-        fparagraphs = []
-        for para in finfo[key]:
-            fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
-        prelude = f"Name of the file is {chunk_det.file_name}"
-        if len(context) + len(". ".join(fparagraphs)) > 4096*3*3:  # each token on average is 3 bytes..
-            # if the document is too long, just use the top hit paragraph and some subseq paras
-            print(f"all paras in the file={chunk_det.file_name} > 4096*3: so retricting to paragraph number = {chunk_det.para_id} and 7 more")
-            paras = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
-            if not paras:
-                emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
-                print(emsg)
-                return respond({"error_msg": emsg}, status=500)
-            context = context + "\n" + prelude + "\n" + ". ".join(paras)
-            break
+        if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
+            fparagraphs = []
+            for para in finfo[key]:
+                fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
+            prelude = f"Name of the file is {chunk_det.file_name}"
+            if len(context) + len(". ".join(fparagraphs)) > max_token_limit*3:  # each token on average is 3 bytes..
+                # if the document is too long, just use the top hit paragraph and some subseq paras
+                print(f"all paras in the file={chunk_det.file_name} > {max_token_limit} tokens: so retricting to paragraph number = {chunk_det.para_id} and 7 more")
+                paras = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
+                if not paras:
+                    emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
+                    print(emsg)
+                    return respond({"error_msg": emsg}, status=500)
+                context = context + "\n" + prelude + "\n" + ". ".join(paras)
+                break
+            else:
+                print(f"all paras in the file={chunk_det.file_name} included in the context")
+                context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
         else:
-            print(f"all paras in the file={chunk_det.file_name} included in the context")
+            fparagraphs = []
+            token_count:int = 0            
+            for idx in range(chunk_det.para_id, -1, -1):
+                formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+                fparagraphs.insert(0,formatted_para)
+                print(f"including prior     chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
+                token_count += int(len(formatted_para) / 3)
+                all_docs_token_count += int(len(formatted_para) / 3)
+                if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
+
+            token_count:int = 0
+            for idx in range(chunk_det.para_id + 1, len(finfo[key])):
+                formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+                fparagraphs.append(formatted_para)
+                print(f"including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
+                
+                token_count += int(len(formatted_para) / 3)
+                all_docs_token_count += int(len(formatted_para) / 3)
+                if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
+            
+            prelude = f"Name of the file is {chunk_det.file_name}"
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
+            
+            if all_docs_token_count >= max_token_limit: break
     
     return context
 
@@ -557,18 +604,19 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     print(f"new_chat: Last Message = {last_msg}")
     
     tracebuf = ['**Begin Trace**']; context_srcs=[]
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, last_msg = _debug_flags(last_msg, tracebuf)
+    chat_config:ChatConfiguration; last_msg:str
+    chat_config, last_msg = _debug_flags(last_msg, tracebuf)
 
-    if file_details:
-        return print_file_details(event, faiss_rms, documents_list, last_msg, use_ivfadc)
+    if chat_config.file_details:
+        return print_file_details(event, faiss_rms, documents_list, last_msg, chat_config.use_ivfadc)
 
     # string response??
     srp:str = ""; thread_id:str 
     srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    context_srcs, None, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, last_msg)
+                                    context_srcs, None, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
-    if print_trace:
+    if chat_config.print_trace:
         tstr = ""
         for tt in tracebuf:
             tstr += f"  \n{tt}"
