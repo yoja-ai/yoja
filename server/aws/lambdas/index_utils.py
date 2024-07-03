@@ -948,9 +948,9 @@ def _get_start_page_token(item):
         return respj['startPageToken']
     except Exception as ex:
         if resp:
-            print(f"_get_start_page_token: In changes.getStartPageToken, caught {ex}. Response={resp.content}")
+            print(f"_get_start_page_token: In changes.getStartPageToken for user {item['email']['S']}, caught {ex}. Response={resp.content}")
         else:
-            print(f"_get_start_page_token: In changes.getStartPageToken, caught {ex}")
+            print(f"_get_start_page_token: In changes.getStartPageToken for user {item['email']['S']}, caught {ex}")
         return None
 
 def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id):
