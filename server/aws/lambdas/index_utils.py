@@ -1106,7 +1106,8 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         try:
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
-            print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}")
+            traceback.print_exc()
+            print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}. Exception={ex}")
             return
         
         unmodified:dict; needs_embedding:dict;  deleted_files: dict

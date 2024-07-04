@@ -147,7 +147,7 @@ def init_gdrive_webhook(item, email, service_conf):
         resource_id = str(uuid.uuid4())
         addr = f"{os.environ['OAUTH_REDIRECT_URI'][:-24]}webhook/webhook_gdrive"
         headers = {"Authorization": f"Bearer {item['access_token']['S']}", "Content-Type": "application/json"}
-        print(f"check_webhook_gdrive: resource_id {resource_id}, address={addr} for email {email}")
+        print(f"init_gdrive_webhook: resource_id {resource_id}, address={addr} for email {email}")
         postdata={'id': resource_id,
                 'type': 'web_hook',
                 'address': addr,
@@ -161,15 +161,15 @@ def init_gdrive_webhook(item, email, service_conf):
                 'restrictToMyDrive': False,
                 'spaces': 'drive',
                 'supportsAllDrives': True}
-        print(f"check_webhook_gdrive: watch. hdrs={json.dumps(headers)}, postdata={json.dumps(postdata)}, params={json.dumps(params)}")
+        print(f"init_gdrive_webhook: watch. hdrs={json.dumps(headers)}, postdata={json.dumps(postdata)}, params={json.dumps(params)}")
         resp = requests.post('https://www.googleapis.com/drive/v3/changes/watch', headers=headers, json=postdata, params=params)
         resp.raise_for_status()
-        print(f"check_webhook_gdrive: post resp.text={resp.text}")
+        print(f"init_gdrive_webhook: post resp.text={resp.text}")
     except Exception as ex:
         if resp:
-            print(f"check_webhook_gdrive: In changes.watch for user {email}, caught {ex}. Response={resp.content}")
+            print(f"init_gdrive_webhook: In changes.watch for user {email}, caught {ex}. Response={resp.content}")
         else:
-            print(f"check_webhook_gdrive: In changes.watch for user {email}, caught {ex}")
+            print(f"init_gdrive_webhook: In changes.watch for user {email}, caught {ex}")
         return False
     try:
         boto3.client('dynamodb').update_item(
@@ -179,11 +179,12 @@ def init_gdrive_webhook(item, email, service_conf):
                         ExpressionAttributeValues={':tk': {'S': start_page_token}}
                     )
     except Exception as ex:
-        print(f"check_webhook_gdrive: Error. Caught {ex} while saving nextPageToken in yoja-users")
+        print(f"init_gdrive_webhook: Error. Caught {ex} while saving nextPageToken in yoja-users")
         return False
     return True
 
-def check_webhook_gdrive(email, service_conf):
+def check_webhook_gdrive(email):
+    service_conf = get_service_conf()
     item = get_user_table_entry(email)
     if 'gw_expires' in item:
         gw_exp_time = datetime.datetime.strptime(item['gw_expires']['S'], '%a, %d %b %Y %H:%M:%S %Z')
@@ -238,7 +239,6 @@ def check_cookie(event, refresh_access_token):
                         email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'google')
                         if email:
                             rv['google'] = email
-                            check_webhook_gdrive(email, service_conf)
                     elif cn == 'yoja-dropbox-user':
                         dropbox_email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'dropbox')
                         if dropbox_email:
@@ -286,6 +286,7 @@ def refresh_user_google(item) -> Credentials:
         raise Exception("Creds not valid!")
     print(f"creds after refresh={creds.to_json()}")
     update_users_table(email, json.loads(creds.to_json()))
+    check_webhook_gdrive(email)
     return creds
 
 def refresh_user_dropbox(item):
