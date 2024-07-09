@@ -223,12 +223,12 @@ def webhook_dropbox(event, context):
             return respond(None, res={})
         body = event['body']
         signature = event['headers']['x-dropbox-signature']
-        if not hmac.compare_digest(signature, hmac.new(service_conf['key']['S'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()):
-            print(f"webhook_dropbox: Signature Error. from_header={signature}, calc={hmac.new(service_conf['key']['S'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()}")
+        if not hmac.compare_digest(signature, hmac.new(os.environ['DROPBOX_OAUTH_CLIENT_SECRET'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()):
+            print(f"webhook_dropbox: Signature Error. from_header={signature}, calc={hmac.new(os.environ['DROPBOX_OAUTH_CLIENT_SECRET'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()}")
             return respond({"error_msg": f"Signature error"}, status=403)
         bodyj = json.loads(body)
         print(f"webhook_dropbox: bodyj={bodyj}")
-        for account in bodyj['delta']['list_folder']['accounts']:
+        for account in bodyj['list_folder']['accounts']:
             print(f"need to invoke for account {account}")
         return respond(None, res={})
     else:

@@ -120,8 +120,10 @@ def oauth2cb_dropbox(qs):
         if 'id_token' in rj:
             id_token=rj['id_token']
             id_token_dct=parse_id_token(id_token)
+            print(f"oauth2cb_dropbox: id_token={id_token_dct}")
             email=id_token_dct['email']
-            print(f"email={email}")
+            sub=id_token_dct['sub']
+            print(f"oauth2cb_dropbox: email={email}")
     except Exception as ex:
         print(f"while getting access token, post caught {ex}")
         return respond({"error_msg": f"Exception {ex} exchanging code for access_token"}, status=403)
@@ -147,8 +149,15 @@ def oauth2cb_dropbox(qs):
         boto3.client('dynamodb').update_item(
                         TableName=os.environ['USERS_TABLE'],
                         Key={'email': {'S': email}},
-                        UpdateExpression="SET dropbox_refresh_token = :rt, dropbox_access_token = :at, dropbox_id_token = :idt, dropbox_created = :ct, dropbox_expires_in = :exp",
-                        ExpressionAttributeValues={':rt': {'S': refresh_token}, ':at': {'S': access_token}, ':idt':{'S': id_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} }
+                        UpdateExpression="SET dropbox_refresh_token = :rt, dropbox_access_token = :at, dropbox_id_token = :idt, dropbox_created = :ct, dropbox_expires_in = :exp, dropbox_sub = :ds",
+                        ExpressionAttributeValues={
+                            ':rt': {'S': refresh_token},
+                            ':at': {'S': access_token},
+                            ':idt':{'S': id_token},
+                            ':ct': {'N': str(int(time.time()))},
+                            ':exp':{'N': str(expires_in)},
+                            ':ds': {'S': sub}
+                        }
                     )
     except Exception as ex:
         print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
