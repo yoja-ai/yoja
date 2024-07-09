@@ -124,11 +124,11 @@ Resources:
           AllowCredentials: true
           AllowHeaders:
             - authorization
-          AllowMethods: 
+          AllowMethods:
             - '*'
-          AllowOrigins: 
+          AllowOrigins:
             - '*'
-          ExposeHeaders: 
+          ExposeHeaders:
             - access-control-allow-origin
             - access-control-allow-headers
             - access-control-allow-methods
@@ -140,4 +140,42 @@ Resources:
           Properties:
             RestApiId: !Ref YojaWebhookApi
             Path: /webhook_gdrive
+            Method: ANY
+  webhookdropbox:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      CodeUri: .
+      Layers:
+        - BBBBBBBBBB
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 10
+      Runtime: python3.11
+      Handler: webhook_dropbox.webhook_dropbox
+      Description: Yoja Webhook for Dropbox
+      Role: !GetAtt YojaWebhookLambdaRole.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+        Cors:
+          AllowCredentials: true
+          AllowHeaders:
+            - authorization
+          AllowMethods:
+            - '*'
+          AllowOrigins:
+            - '*'
+          ExposeHeaders:
+            - access-control-allow-origin
+            - access-control-allow-headers
+            - access-control-allow-methods
+            - access-control-allow-credentials
+          MaxAge: 30
+      Events:
+        Api1:
+          Type: Api
+          Properties:
+            RestApiId: !Ref YojaWebhookApi
+            Path: /webhook_dropbox
             Method: ANY

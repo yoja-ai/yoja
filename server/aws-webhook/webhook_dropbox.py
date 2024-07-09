@@ -12,6 +12,8 @@ from cryptography.fernet import Fernet
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from typing import Union, Dict, List, Any, Tuple
+from hashlib import sha256
+import hmac
 
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly",
           "https://www.googleapis.com/auth/drive.readonly",
@@ -54,60 +56,6 @@ def invoke_periodic_lambda(function_arn, email):
     except Exception as ex:
         print(f"Caught {ex} while invoking periodic run lambda")
         return False
-
-def process_sync(event, context, email):
-    print(f"webhook_gdrive.process_sync: Entered. email={email}")
-    resource_id = event['headers']['x-goog-resource-id']
-    channel_id = event['headers']['x-goog-channel-id']
-    expires = event['headers']['x-goog-channel-expiration']
-    print(f"webhook_gdrive.process_sync: email={email}, resource_id={resource_id}, channel_id={channel_id}")
-    try:
-        boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="SET gw_resource_id = :ri, gw_channel_id = :ci, gw_expires = :ge",
-                        ExpressionAttributeValues={':ri': {'S': resource_id}, ':ci': {'S': channel_id}, ':ge': {'S': expires}}
-                    )
-        invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
-        return {
-            'statusCode': 204,
-            'headers': {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*',
-                'Access-Control-Allow-Credentials': '*'
-            },
-        }
-    except Exception as ex:
-        print(f"webhook_gdrive.process_sync: Caught {ex} while updating users table for {email}")
-        traceback.print_exc()
-        print("webhook_gdrive.process_sync: Error updating users table")
-        return respond(None, res={})
-
-def process_msg(event, context, email, lambda_end_time, state):
-    print(f"webhook_gdrive.process_msg: Entered. email={email}, state={state}, lambda_end_time={lambda_end_time}")
-    if lambda_end_time:
-        l_e_t = int(lambda_end_time)
-        l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
-        now = time.time()
-        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
-        if l_e_t < now:
-            print(f"webhook_gdrive.process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
-            invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
-        else:
-            print(f"webhook_gdrive.process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
-    else:
-        print(f"process_msg: lambda_end_time not present. Invoking yoja lambda...")
-        invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
-    return {
-        'statusCode': 204,
-        'headers': {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Methods': '*',
-            'Access-Control-Allow-Credentials': '*'
-        },
-    }
 
 cached_service_conf = None
 def get_service_conf():
@@ -241,47 +189,48 @@ def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
         print(f"check_user: cookie={cookie_val}, refresh_access_token={refresh_access_token}, user_type={user_type}: caught {ex}")
         return None
 
-def webhook_gdrive(event, context):
+def webhook_dropbox(event, context):
     print('## ENVIRONMENT VARIABLES')
     print(os.environ)
     print('## EVENT')
     print(event)
     service_conf = get_service_conf()
     operation = event['requestContext']['http']['method']
-    if not 'headers' in event:
-        print("webhook_gdrive: Error. No headers?")
+    if operation == "GET": # verification
+        print("webhook_dropbox: Received verification")
+        if not 'queryStringParameters' in event:
+            print("webhook_dropbox: verification error. No params?")
+            return respond(None, res={})
+        qsp=event['queryStringParameters']
+        print(f"webhook_dropbox: queryStringParameters={qsp}")
+        if not 'challenge' in qsp:
+            print("webhook_dropbox: verification error. No challenge?")
+            return respond(None, res={})
+        return {
+            'statusCode': 200,
+            'body': qsp['challenge'],
+            'headers': {
+                'Content-Type': 'text/plain',
+                'X-Content-Type-Options': 'nosniff'
+            }
+        }
+    elif operation == "POST": # notification request
+        if not 'headers' in event:
+            print("webhook_dropbox: Error. No headers?")
+            return respond(None, res={})
+        if not 'x-dropbox-signature' in event['headers']:
+            print("webhook_dropbox: Error. No x-dropbox-signature?")
+            return respond(None, res={})
+        body = event['body']
+        signature = event['headers']['x-dropbox-signature']
+        if not hmac.compare_digest(signature, hmac.new(service_conf['key']['S'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()):
+            print(f"webhook_dropbox: Signature Error. from_header={signature}, calc={hmac.new(service_conf['key']['S'].encode('utf-8'), body.encode('utf-8'), sha256).hexdigest()}")
+            return respond({"error_msg": f"Signature error"}, status=403)
+        bodyj = json.loads(body)
+        print(f"webhook_dropbox: bodyj={bodyj}")
+        for account in bodyj['delta']['list_folder']['accounts']:
+            print(f"need to invoke for account {account}")
         return respond(None, res={})
-
-    if 'x-goog-channel-token' in event['headers']:
-        token = event['headers']['x-goog-channel-token']
     else:
-        print("webhook_gdrive: Error. x-goog-channel-token not present")
-        return respond(None, res={})
-    email, lambda_end_time = check_user(service_conf, token.strip(), True, 'google')
-    if not email:
-        print("webhook_gdrive: Error. Unable to process token")
-        return respond(None, res={})
-
-    if 'x-goog-resource-state' in event['headers']:
-        resource_state = event['headers']['x-goog-resource-state']
-    else:
-        print("webhook_gdrive: Error. x-goog-resource-state not present")
-        return respond(None, res={})
-
-    if resource_state == 'sync':
-        return process_sync(event, context, email)
-    elif resource_state == 'add':
-        return process_msg(event, context, email, lambda_end_time, 'add')
-    elif resource_state == 'remove':
-        return process_msg(event, context, email, lambda_end_time, 'remove')
-    elif resource_state == 'update':
-        return process_msg(event, context, email, lambda_end_time, 'update')
-    elif resource_state == 'trash':
-        return process_msg(event, context, email, lambda_end_time, 'trash')
-    elif resource_state == 'untrash':
-        return process_msg(event, context, email, lambda_end_time, 'untrash')
-    elif resource_state == 'change':
-        return process_msg(event, context, email, lambda_end_time, 'change')
-    else:
-        print(f"webhook_gdrive: Unknown resource state {resource_state}")
+        print(f"webhook_dropbox: Error. op={operation} not GET or POST?")
         return respond(None, res={})
