@@ -84,6 +84,8 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
     else:
         srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
+    print(f"ongoing_chat: srp={srp}")
+        
     res = {}
     res['id'] = event['requestContext']['requestId']
     res['object'] = 'chat.completion.chunk'
@@ -313,6 +315,7 @@ class DocumentChunkDetails:
     faiss_rm_vdb:faiss_rm.FaissRM
     faiss_rm_vdb_id:int   # currently the index of the vdb in a list of VDBs.  TODO: we need to store this ID in the DB or maintain an ordered list in the DB or similar
     distance:float           # similarity score from vdb
+    file_path:str = None
     file_name:str = None
     file_id:str = None
     file_info:dict = None    # finfo or details about the file
@@ -322,6 +325,9 @@ class DocumentChunkDetails:
     cross_encoder_score:float = None
     retr_sorted_idx:int = None # the position of this chunk when sorted by the retriever
     reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
+    
+    def _get_file_key(self):
+        return f"{self.faiss_rm_vdb_id}/{self.file_id}"
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> str:
@@ -378,6 +384,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         summed_scores:List[DocumentChunkDetails] = [] # array of (summed_score, index_in_faiss)
         for index_in_faiss, scores in passage_scores_dict.items():
             summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, sum(scores), 
+                                                      documents[index_map[index_in_faiss][0]].get('path') if documents[index_map[index_in_faiss][0]].get('path') else None,
                                                       documents[index_map[index_in_faiss][0]]['filename'],
                                                       documents[index_map[index_in_faiss][0]]['fileid'],
                                                       documents[index_map[index_in_faiss][0]],
@@ -454,6 +461,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     all_docs_token_count = 0
     max_token_limit:int = 6000
     max_pre_and_post_token_limit = 512
+    context_chunk_det_list:List[DocumentChunkDetails] = []
     for i in range(len(reranked_indices)):
         chosen_reranked_index = reranked_indices[i]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
@@ -475,10 +483,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             print(emsg)
             return respond({"error_msg": emsg}, status=500)
         
-        if 'path' in finfo:
-            context_srcs.append(f"**Context Source: {finfo['path']}{finfo['filename']}**\t<!-- ID={fileid}/{para_index} ; index_id={chunk_det.faiss_rm_vdb_id} -->")
-        else:
-            context_srcs.append(f"**Context Source: {finfo['filename']}**\t<!-- ID={fileid}/{para_index} ; index_id={chunk_det.faiss_rm_vdb_id} -->")
+        context_chunk_det_list.append(chunk_det)
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
             fparagraphs = []
@@ -523,6 +528,25 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
             
             if all_docs_token_count >= max_token_limit: break
+
+    # file --> [ DocumentChunkDetails ]; dict of file to all chunks in the file that need to go into the context
+    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
+    for chunk_det in context_chunk_det_list:
+        file_key:str = chunk_det._get_file_key()
+        if filekey_to_file_chunks_dict.get(file_key):
+            filekey_to_file_chunks_dict.get(file_key).append(chunk_det)
+        else:
+            filekey_to_file_chunks_dict[file_key] = [chunk_det]
+
+    for file_key, chunks in filekey_to_file_chunks_dict.items():
+        para_indexes_str = ""
+        for chunk_det in chunks:
+            #chunk_det = chunks[0]
+            para_indexes_str += f"ID={chunk_det.file_id}/{chunk_det.para_id}; "
+        if chunk_det.file_path:
+            context_srcs.append(f"**Context Source: {chunk_det.file_path}{chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
+        else:
+            context_srcs.append(f"**Context Source: {chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
     
     return context
 
