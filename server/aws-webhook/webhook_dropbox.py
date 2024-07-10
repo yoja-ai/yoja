@@ -9,15 +9,9 @@ from urllib.parse import unquote
 import boto3
 from botocore.exceptions import ClientError
 from cryptography.fernet import Fernet
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 from typing import Union, Dict, List, Any, Tuple
 from hashlib import sha256
 import hmac
-
-SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly",
-          "https://www.googleapis.com/auth/drive.readonly",
-          "https://www.googleapis.com/auth/userinfo.email"]
 
 def respond(err, status=None, res=None):
     if status:
@@ -38,8 +32,8 @@ def respond(err, status=None, res=None):
         },
     }
 
-def invoke_periodic_lambda(function_arn, email):
-    bodydict={"username": email}
+def invoke_periodic_lambda(function_arn, dropbox_sub):
+    bodydict={"dropbox_sub": dropbox_sub}
     lambda_client = boto3.client('lambda')
     run_params = {
         "requestContext": {
@@ -56,6 +50,42 @@ def invoke_periodic_lambda(function_arn, email):
     except Exception as ex:
         print(f"Caught {ex} while invoking periodic run lambda")
         return False
+
+def get_user_table_entry_dropbox_sub(dropbox_sub):
+    try:
+        client = boto3.client('dynamodb')
+        result = client.query(TableName=os.environ['USERS_TABLE'],
+                            IndexName="dropbox_sub-index",
+                            KeyConditionExpression = 'dropbox_sub = :ds',
+                            ExpressionAttributeValues={':ds': {'S': dropbox_sub}})
+        if (result and 'Items' in result and len(result['Items']) == 1):
+            return result['Items'][0]
+        else:
+            print(f"Error getting info for dropbox_sub {dropbox_sub}, result={result}")
+            return None
+    except Exception as ex:
+        print(f"Caught {ex} while getting info for dropbox_sub {dropbox_sub} from users table")
+        return None
+
+def test_invoke(dropbox_sub):
+    item = get_user_table_entry_dropbox_sub(dropbox_sub)
+    if not item:
+        print(f"test_invoke: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
+        return False
+    email=item['email']['S']
+    if 'lambda_end_time' in  item:
+        l_e_t = int(item['lambda_end_time']['N'])
+        l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
+        now = time.time()
+        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
+        if l_e_t < now:
+            print(f"test_invoke: email={email}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
+            invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], dropbox_sub)
+        else:
+            print(f"test_invoke: email={email}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
+    else:
+        print(f"test_invoke: lambda_end_time not present. Invoking yoja lambda...")
+        invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], dropbox_sub)
 
 cached_service_conf = None
 def get_service_conf():
@@ -83,111 +113,6 @@ def get_service_conf():
     except Exception as ex:
         print(f"get_service_conf: caught {ex}")
     raise Exception("Unknown error looking up service conf")
-
-def get_user_table_entry(email):
-    try:
-        client = boto3.client('dynamodb')
-        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}})
-        return response['Item']
-    except Exception as ex:
-        print(f"Caught {ex} while getting info for {email} from users table")
-        return None
-
-def update_users_table(email, crds):
-    try:
-        # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html
-        boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="SET refresh_token = :rt, access_token = :at, created = :ct",
-                        ExpressionAttributeValues={':rt': {'S': crds['refresh_token']}, ':at': {'S': crds['token']}, ':ct': {'N': str(int(time.time()))}}
-                    )
-    except Exception as ex:
-        print(f"Caught {ex} while updating users table")
-        traceback.print_exc()
-
-def refresh_user_google(item) -> Credentials:
-    email = item['email']['S']
-    refresh_token = item['refresh_token']['S']
-    access_token = item['access_token']['S']
-    id_token = item['id_token']['S']
-    created = int(item['created']['N'])
-    expires_in = int(item['expires_in']['N'])
-    print(f"refresh_user_google: user_type=google, email={email}, access token created={datetime.datetime.fromtimestamp(created)}")
-    token={"access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "Bearer",
-            "scope": " ".join(SCOPES),
-            "created": created,
-            "expires_in": expires_in,
-            "client_id": os.environ['OAUTH_CLIENT_ID'],
-            "client_secret": os.environ['OAUTH_CLIENT_SECRET']}
-    with open("/tmp/token.json", "w") as fp:
-        fp.write(json.dumps(token))
-    creds = Credentials.from_authorized_user_file("/tmp/token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-    if not creds or not creds.valid:
-        print("Creds not valid!")
-        raise Exception("Creds not valid!")
-    print(f"creds after refresh={creds.to_json()}")
-    update_users_table(email, json.loads(creds.to_json()))
-    return creds
-
-def refresh_user_dropbox(item):
-    try:
-        email = item['email']['S']
-        refresh_token = item['dropbox_refresh_token']['S']
-        postdata={'client_id': os.environ['DROPBOX_OAUTH_CLIENT_ID'],
-                'client_secret': os.environ['DROPBOX_OAUTH_CLIENT_SECRET'], 
-                'refresh_token': refresh_token,
-                'grant_type': 'refresh_token'}
-        resp = requests.post('https://www.dropbox.com/oauth2/token', data=postdata)
-        resp.raise_for_status()
-        print(f"refresh access token post resp.text={resp.text}")
-        rj = json.loads(resp.text)
-        created=int(time.time())
-        expires_in = rj['expires_in']
-        access_token=rj['access_token']
-    except Exception as ex:
-        print(f"while refreshing dropbox access token, post caught {ex}")
-        return None
-    try:
-        boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="SET dropbox_access_token = :at, dropbox_created = :ct, dropbox_expires_in = :exp",
-                        ExpressionAttributeValues={':at': {'S': access_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} }
-                    )
-    except Exception as ex:
-        print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
-        return None
-    return access_token
-
-def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
-    print(f"check_user:= Entered. cookie_val={cookie_val}")
-    try:
-        fky = Fernet(service_conf['key']['S'])
-        email = fky.decrypt(cookie_val.encode() if isinstance(cookie_val,str) else cookie_val ).decode()
-        print(f"check_user: decrypted email={email}")
-        if refresh_access_token:
-            print(f"check_user: refreshing access token")
-            item = get_user_table_entry(email)
-            if not item:
-                print(f"check_user: weird error - Cannot find user {email} in user table")
-                return None
-            if user_type == 'google':
-                refresh_user_google(item)
-            elif user_type == 'dropbox':
-                refresh_user_dropbox(item)
-        if 'lambda_end_time' in  item:
-            return email, item['lambda_end_time']['N']
-        else:
-            return email, None
-    except Exception as ex:
-        print(f"check_user: cookie={cookie_val}, refresh_access_token={refresh_access_token}, user_type={user_type}: caught {ex}")
-        return None
 
 def webhook_dropbox(event, context):
     print('## ENVIRONMENT VARIABLES')
@@ -230,6 +155,7 @@ def webhook_dropbox(event, context):
         print(f"webhook_dropbox: bodyj={bodyj}")
         for account in bodyj['list_folder']['accounts']:
             print(f"need to invoke for account {account}")
+            test_invoke(account)
         return respond(None, res={})
     else:
         print(f"webhook_dropbox: Error. op={operation} not GET or POST?")

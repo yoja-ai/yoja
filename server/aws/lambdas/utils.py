@@ -136,6 +136,22 @@ def get_user_table_entry(email):
         print(f"Caught {ex} while getting info for {email} from users table")
         return None
 
+def get_user_table_entry_dropbox_sub(dropbox_sub):
+    try:
+        client = boto3.client('dynamodb')
+        result = client.query(TableName=os.environ['USERS_TABLE'],
+                            IndexName="dropbox_sub-index",
+                            KeyConditionExpression = 'dropbox_sub = :ds',
+                            ExpressionAttributeValues={':ds': {'S': dropbox_sub}})
+        if (result and 'Items' in result and len(result['Items']) == 1):
+            return result['Items'][0]
+        else:
+            print(f"Error getting info for dropbox_sub {dropbox_sub}, result={result}")
+            return None
+    except Exception as ex:
+        print(f"Caught {ex} while getting info for dropbox_sub {dropbox_sub} from users table")
+        return None
+
 def init_gdrive_webhook(item, email, service_conf):
     if 'gdrive_next_page_token' in item:
         start_page_token = item['gdrive_next_page_token']['S']

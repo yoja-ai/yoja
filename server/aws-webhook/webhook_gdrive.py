@@ -85,17 +85,17 @@ def process_sync(event, context, email):
         return respond(None, res={})
 
 def process_msg(event, context, email, lambda_end_time, state):
-    print(f"webhook_gdrive.process_msg: Entered. email={email}, state={state}, lambda_end_time={lambda_end_time}")
+    print(f"process_msg: Entered. email={email}, state={state}, lambda_end_time={lambda_end_time}")
     if lambda_end_time:
         l_e_t = int(lambda_end_time)
         l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
         if l_e_t < now:
-            print(f"webhook_gdrive.process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
+            print(f"process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
             invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
         else:
-            print(f"webhook_gdrive.process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
+            print(f"process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
     else:
         print(f"process_msg: lambda_end_time not present. Invoking yoja lambda...")
         invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)

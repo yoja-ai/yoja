@@ -109,6 +109,7 @@ Resources:
               - dynamodb:UpdateItem
               Resource:
               - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-users
+              - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-users/index/dropbox_sub-index
               - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-ServiceConf
         - PolicyName: AllowS3Pylaprof
           PolicyDocument:
