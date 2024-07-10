@@ -23,6 +23,7 @@ import datetime
 @dataclasses.dataclass
 class PeriodicBody:
     username:Optional[str] = ''
+    dropbox_sub:Optional[str] = ''
 
 def upd(client, item, s3client, bucket, prefix, start_time):
     gdrive_next_page_token, status = lock_user(item, client)
