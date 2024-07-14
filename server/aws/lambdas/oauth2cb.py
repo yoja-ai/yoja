@@ -8,20 +8,15 @@ import time
 import base64
 import zlib
 import datetime
-from urllib.parse import unquote
+from urllib.parse import unquote, urlencode
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 import requests
 import boto3
-from utils import parse_id_token, get_service_conf, encrypt_email, respond
+from utils import parse_id_token, get_service_conf, encrypt_email, respond, get_user_table_entry, update_users_table
 
 def oauth2cb(event, context):
-    print('## ENVIRONMENT VARIABLES')
-    print(os.environ)
-    print('## EVENT')
-    print(event)
-
     operation = event['requestContext']['http']['method']
     if (operation != 'GET'):
         print(f"Error: unsupported method: operation={operation}")
@@ -68,16 +63,42 @@ def oauth2cb_google(qs):
     except Exception as ex:
         print(f"while refreshing access token, post caught {ex}")
         return respond({"error_msg": f"Exception {ex} refreshing access_token"}, status=403)
-    try:
-        boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="SET refresh_token = :rt, access_token = :at, id_token = :idt, created = :ct, expires_in = :exp",
-                        ExpressionAttributeValues={':rt': {'S': refresh_token}, ':at': {'S': access_token}, ':idt':{'S': id_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} }
-                    )
-    except Exception as ex:
-        print(f"Caught {ex} while saving access_token, refresh_token for {email}")
-        return respond({"error_msg": f"Exception {ex} while saving access_token, refresh_token for {email}"}, status=403)
+
+    # if the yoja-users row does not contain fullname, then try to get the name and profile picture URL
+    fullname = None
+    picture = None
+    item = get_user_table_entry(email)
+    if 'fullname' not in item:
+        try:
+            params={'access_token': access_token}
+            ui_url = f"https://www.googleapis.com/oauth2/v3/userinfo"
+            resp = requests.get(ui_url, params=params)
+            resp.raise_for_status()
+            rj = json.loads(resp.text)
+            print(f"oauth2cb_google: userinfo resp={rj}")
+            if 'name' in rj:
+                fullname = rj['name']
+            else:
+                given_name = ''
+                family_name = ''
+                if 'given_name' in rj:
+                    given_name = rj['given_name']
+                if 'family_name' in rj:
+                    family_name = rj['family_name']
+                fullname = f"{given_name} {family_name}".strip()
+            if 'picture' in rj:
+                picture = rj['picture']
+            if not update_users_table(email, refresh_token, access_token, expires_in, id_token=id_token, fullname=fullname, picture=picture):
+                return respond({"error_msg": f"Error while updating users table for {email}"}, status=403)
+        except Exception as ex:
+            print(f"while getting fullname, post caught {ex}")
+            return respond({"error_msg": f"Exception {ex} getting fullname"}, status=403)
+    else:
+        if not update_users_table(email, refresh_token, access_token, expires_in, id_token=id_token):
+            return respond({"error_msg": f"Error while updating users table for {email}"}, status=403)
+        fullname = item['fullname']['S']
+        if 'picture' in item:
+            picture = item['picture']['S']
 
     try:
         service_conf = get_service_conf()
@@ -85,6 +106,14 @@ def oauth2cb_google(qs):
         e_email = encrypt_email(email, service_conf)
         cookie = f"yoja-user={e_email}; domain={os.environ['COOKIE_DOMAIN']}; Path=/; Secure; Max-Age=604800"
         print(f"email={email}, cookie={cookie}")
+        get_params={'google': email, 'dropbox': '', 'fullname': '', 'picture': ''}
+        if fullname:
+            get_params['fullname'] = fullname
+        if picture:
+            get_params['picture'] = picture
+        encoded_get_params=urlencode(get_params)
+        redir_location=f"/index.html?{encoded_get_params}"
+        print(f"oauth2cb_google: Redirect URL is {redir_location}")
         return {
             'statusCode': 302,
             'body': f"<html>{email} logged in to software version {os.environ['LAMBDA_VERSION']}</html>",
@@ -95,7 +124,7 @@ def oauth2cb_google(qs):
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': '*',
                 'Access-Control-Allow-Credentials': '*',
-                'Location': "/chatindex.html"
+                'Location': redir_location
             }
         }
     except Exception as ex:
@@ -163,6 +192,7 @@ def oauth2cb_dropbox(qs):
         print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
         return respond({"error_msg": f"Exception {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}"}, status=403)
 
+    # XXX Need to get fullname and picture URL from dropbox and add as GET params to /index.html below
     try:
         service_conf = get_service_conf()
         print(f"service_conf={service_conf}")
@@ -179,7 +209,7 @@ def oauth2cb_dropbox(qs):
                 'Access-Control-Allow-Headers': '*',
                 'Access-Control-Allow-Methods': '*',
                 'Access-Control-Allow-Credentials': '*',
-                'Location': "/chatindex.html"
+                'Location': "/index.html"
             }
         }
     except Exception as ex:

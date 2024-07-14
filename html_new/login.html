@@ -67,7 +67,7 @@ limitations under the License.
 
   // Authorization scopes required by the API; multiple scopes can be
   // included, separated by spaces.
-  const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email';
+  const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
   const DROPBOX_SCOPES = ['account_info.read', 'files.metadata.read', 'files.content.read', 'openid', 'email'];
 
   // client ID and API key from the Developer Console
@@ -85,6 +85,8 @@ limitations under the License.
   let gdriveEmail = "";
   let dropboxLoginSuccess = false;
   let dropboxEmail = "";
+  let fullname = "";
+  let picture = "";
 
   document.getElementById('authorize_gdrive_button').style.visibility = 'hidden';
   document.getElementById('authorize_dropbox_button').style.visibility = 'hidden';
@@ -137,7 +139,9 @@ limitations under the License.
   }
 
   function handleSkiptochatClick() {
-    window.location.href = "chatindex.html";
+    const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
+                                + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
+    window.location.href = "index.html?" + params;
   }
 
   /**
@@ -189,22 +193,24 @@ limitations under the License.
   }
   async function tryLogin() {
     const myJson = await this.getLoginJson();
-    if (typeof myJson.google === 'undefined' || myJson.google.length == 0) {
-        gdriveLoginSuccess = false;
-    } else {
+    gdriveLoginSuccess = false;
+    dropboxLoginSuccess = false;
+    if (myJson.google.length > 0) {
       gdriveLoginSuccess = true;
       gdriveEmail = myJson.google;
     }
-    if (typeof myJson.dropbox === 'undefined' || myJson.dropbox.length == 0) {
-        dropboxLoginSuccess = false;
-    } else {
+    if (myJson.dropbox.length > 0) {
       dropboxLoginSuccess = true;
       dropboxEmail = myJson.dropbox;
     }
+    if (myJson.fullname.length > 0) {
+        fullname = myJson.fullname;
+    }
+    if (myJson.picture.length > 0) {
+        picture = myJson.picture;
+    }
     console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
-        + ", gdriveEmail=" + gdriveEmail
-        + ", dropboxLoginSuccess=" + dropboxLoginSuccess
-        + ", dropboxEmail=" + dropboxEmail);
+        + ", dropboxLoginSuccess=" + dropboxLoginSuccess);
     loginRestFinished = true;
   }
 
@@ -230,8 +236,11 @@ limitations under the License.
     console.log('loginRestFinished is true!');
 
     if (gdriveLoginSuccess && dropboxLoginSuccess) {
-      console.log("login of gdrive and dropbox success!!!!!!!!!!!!")
-      window.location.href = "chatindex.html";
+      console.log("login of gdrive and dropbox success!!!!!!!!!!!!. gdriveEmail=" + gdriveEmail
+                                                                + ", dropboxEmail=" + dropboxEmail);
+      const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
+                                + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
+      window.location.href = "index.html?" + params;
     } else {
       maybeEnableButtons();
     }

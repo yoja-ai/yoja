@@ -24,7 +24,8 @@ from typing import Union, Dict, List, Any, Tuple
 
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly",
           "https://www.googleapis.com/auth/drive.readonly",
-          "https://www.googleapis.com/auth/userinfo.email"]
+          "https://www.googleapis.com/auth/userinfo.email",
+          "https://www.googleapis.com/auth/userinfo.profile"]
 
 def is_lambda_debug_enabled() -> bool:
      return os.getenv('LAMBDA_LOG_LEVEL', 'INFO').lower() == 'debug'
@@ -233,11 +234,12 @@ def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
         return email
     except Exception as ex:
         print(f"check_user: cookie={cookie_val}, refresh_access_token={refresh_access_token}, user_type={user_type}: caught {ex}")
+        traceback.print_exc()
         return None
 
 def check_cookie(event, refresh_access_token):
     service_conf = get_service_conf()
-    rv = {'google': '', 'dropbox': ''}
+    rv = {'google': '', 'dropbox': '', 'fullname': '', 'picture': ''}
     for hdr in event['headers']:
         if hdr.lower() == 'cookie':
             cookies = event['headers'][hdr].split(';')
@@ -255,24 +257,50 @@ def check_cookie(event, refresh_access_token):
                         email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'google')
                         if email:
                             rv['google'] = email
+                            item = get_user_table_entry(email)
+                            print(f"check_cookie: item={item}")
+                            if 'fullname' in item:
+                                rv['fullname'] = item['fullname']['S']
+                            if 'picture' in item:
+                                rv['picture'] = item['picture']['S']
                     elif cn == 'yoja-dropbox-user':
                         dropbox_email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'dropbox')
                         if dropbox_email:
                             rv['dropbox'] = dropbox_email
     return rv
 
-def update_users_table(email, crds):
+def update_users_table(email, refresh_token, access_token, expires_in, id_token=None, fullname=None, picture=None):
+    print(f"update_users_table: Entered. email={email}, ref={refresh_token},"
+            f" acc={access_token}, expires_in={expires_in}, id_token={id_token},"
+            f" fullname={fullname}, picture={picture}")
     try:
-        # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateItem.html
+        ue="SET refresh_token = :rt, access_token = :at, created = :ct, expires_in = :exp"
+        eav={
+            ':rt': {'S': refresh_token},
+            ':at': {'S': access_token},
+            ':ct': {'N': str(int(time.time()))},
+            ':exp':{'N': str(expires_in)}
+            }
+        if id_token:
+            ue = f"{ue}, id_token = :idt"
+            eav[':idt'] = {'S': id_token}
+        if fullname:
+            ue = f"{ue}, fullname = :fn"
+            eav[':fn'] = {'S': fullname}
+        if picture:
+            ue = f"{ue}, picture = :pc"
+            eav[':pc'] = {'S': picture}
         boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="SET refresh_token = :rt, access_token = :at, created = :ct",
-                        ExpressionAttributeValues={':rt': {'S': crds['refresh_token']}, ':at': {'S': crds['token']}, ':ct': {'N': str(int(time.time()))}}
-                    )
+                    TableName=os.environ['USERS_TABLE'],
+                    Key={'email': {'S': email}},
+                    UpdateExpression=ue,
+                    ExpressionAttributeValues=eav
+                )
+        return True
     except Exception as ex:
         print(f"Caught {ex} while updating users table")
         traceback.print_exc()
+        return False
 
 def refresh_user_google(item) -> Credentials:
     """ refresh the credentials of the user stored in 'item' if necessary.  Also updates the credentials in the yoja-users table, if refreshed """
@@ -301,7 +329,11 @@ def refresh_user_google(item) -> Credentials:
         print("Creds not valid!")
         raise Exception("Creds not valid!")
     print(f"creds after refresh={creds.to_json()}")
-    update_users_table(email, json.loads(creds.to_json()))
+    cj = json.loads(creds.to_json())
+    now = datetime.datetime.utcnow()
+    expiry = datetime.datetime.strptime(cj['expiry'], "%Y-%m-%dT%H:%M:%S.%fZ")
+    expires_in = (expiry - now).total_seconds()
+    update_users_table(email, cj['refresh_token'], cj['token'], int(expires_in))
     check_webhook_gdrive(email)
     return creds
 

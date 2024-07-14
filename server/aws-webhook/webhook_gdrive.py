@@ -15,7 +15,8 @@ from typing import Union, Dict, List, Any, Tuple
 
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly",
           "https://www.googleapis.com/auth/drive.readonly",
-          "https://www.googleapis.com/auth/userinfo.email"]
+          "https://www.googleapis.com/auth/userinfo.email",
+          "https://www.googleapis.com/auth/userinfo.profile"]
 
 def respond(err, status=None, res=None):
     if status:

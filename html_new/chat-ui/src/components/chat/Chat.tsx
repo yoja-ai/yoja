@@ -6,6 +6,8 @@ import { Avatar, AvatarImage } from "../ui/avatar";
 import { EllipsisVertical, Files, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 import { ThreeDots } from "react-loader-spinner";
 
+declare var window: any
+
 interface ChatProps {
   messages?: Message[];
   userInfo: UserInfo;
@@ -86,7 +88,7 @@ export function Chat({
                   </div>
                   <Avatar className="flex justify-center items-center">
                     <AvatarImage
-                      src="./user.png"
+                      src={window.picture}
                       width={6}
                       height={6}
                     />

@@ -13,15 +13,11 @@ import numpy as np
 from utils import respond, check_cookie
 
 def login(event, context):
-    print('## ENVIRONMENT VARIABLES')
-    print(os.environ)
-    print('## EVENT')
-    print(event)
-
     operation = event['requestContext']['http']['method']
     if (operation != 'POST'):
         print(f"Error: unsupported method: operation={operation}")
         return respond({"error_msg": str(ValueError('Unsupported method ' + str(operation)))}, status=400)
     rv = check_cookie(event, True)
     rv['version'] = os.environ['LAMBDA_VERSION']
+    print(f"login: rv={rv}")
     return respond(None, res=rv)

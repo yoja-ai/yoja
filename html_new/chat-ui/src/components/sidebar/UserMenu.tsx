@@ -7,6 +7,7 @@ import SubMenu from "antd/es/menu/SubMenu";
 import SettingsModel from "./SettingsModel";
 import { Avatar, AvatarImage } from "../ui/avatar";
 
+declare var window: any
 const { useState, useEffect, useRef } = React
 
 const UserMenu = ({isCollapsed}: any) => {
@@ -114,45 +115,47 @@ const UserMenu = ({isCollapsed}: any) => {
     window.location.href="login.html"
   }
   
-  return (
-    <>
-      <div className="popup-menu-container">
-        <Menu key="user">
-          <SubMenu
-            title={
-              <Fragment>
-                <div className='sidebar-user-avatar'>
-                <Avatar className="flex justify-center items-center">
-                  <AvatarImage
-                    src="./user.png"
-                    width={6}
-                    height={6}
-                  />
-                </Avatar>
-              </div>
-                {!isCollapsed && (
-                <div className='sidebar-user-info'>
-                  <span className='sidebar-username'> Adhitya Vadivel </span>
-                  <span className='sidebar-user-eamil'> vadivel.adhitya@gmail.com </span>
-                </div>
-              )}
-              </Fragment>
-            }
-          >
-            <Menu.Item key="Settings" onClick={showModal}>
-              <span> Setting </span>
-            </Menu.Item>
-            <Menu.Item key="SignOut"  onClick={handleSignoutClick}>
-              <div> SignOut </div>
-            </Menu.Item>
-          </SubMenu>
-        </Menu>
-      </div> 
-      <Modal title="Settings" open={isModalOpen} onOk={handleOk} onCancel={handleCancel} footer={null} width={660} height={600}>
-        <SettingsModel />
-      </Modal>
-    </>
-  )
+  if (!isCollapsed) {
+    return (
+      <>
+        <div className="popup-menu-container">
+          <Menu key="user">
+            <SubMenu
+              title={
+                <Fragment>
+                  <div className='sidebar-user-avatar'>
+                  <Avatar className="flex justify-center items-center">
+                    <AvatarImage
+                      src={window.picture}
+                      width={6}
+                      height={6}
+                    />
+                  </Avatar>
+                  </div>
+                  <div className='sidebar-user-info'>
+                    <span className='sidebar-username'> {window.fullname} </span>
+                    <span className='sidebar-user-eamil'> {window.google} </span>
+                  </div>
+                </Fragment>
+              }
+            >
+              <Menu.Item key="Settings" onClick={showModal}>
+                <span> Setting </span>
+              </Menu.Item>
+              <Menu.Item key="SignOut"  onClick={handleSignoutClick}>
+                <div> SignOut </div>
+              </Menu.Item>
+            </SubMenu>
+          </Menu>
+        </div> 
+        <Modal title="Settings" open={isModalOpen} onOk={handleOk} onCancel={handleCancel} footer={null} width={660} height={600}>
+          <SettingsModel />
+        </Modal>
+      </>
+    )
+  } else {
+    return null
+  }
 }
 
 
