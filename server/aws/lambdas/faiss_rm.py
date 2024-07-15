@@ -132,7 +132,8 @@ class FaissRM():
             return None
         return finfo[key][para_index]
 
-    def get_paragraphs(self, index_in_faiss, num_subsequent_paragraphs) -> List[str]:
+    def get_paragraphs(self, index_in_faiss, num_paragraphs) -> Tuple[List[str],int, int]:
+        """ returns the paragraph starting from index_in_faiss and subsequent paragraphs, for a total of num_paragraphs.  returns the tuple (list of paragraph text, start_para_index, end_para_index).  end_para_index is inclusive. """
         fileid, para_index = self._index_map[index_in_faiss]
         finfo = self._documents[fileid]
         if 'slides' in finfo:
@@ -140,12 +141,17 @@ class FaissRM():
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
         else:
-            return None
+            return None, None, None
         rv = []
-        for ind in range(num_subsequent_paragraphs):
+        start_para_index:int = None; end_para_index:int = None
+        for ind in range(num_paragraphs):
             if para_index+ind >= 0 and para_index+ind < len(finfo[key]):
                 rv.append(self.format_paragraph(finfo[key][para_index+ind]))
-        return rv
+                if start_para_index == None: 
+                    start_para_index = para_index + ind
+                end_para_index = para_index + ind
+                
+        return rv, start_para_index, end_para_index
 
     def get_index_map(self):
         """ index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index """

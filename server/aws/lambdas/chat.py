@@ -18,11 +18,13 @@ from openai import OpenAI
 import traceback_with_variables
 import cryptography.fernet 
 from sentence_transformers.cross_encoder import CrossEncoder
-from typing import Tuple, List, Dict, Any
+# https://stackoverflow.com/questions/33533148/how-do-i-type-hint-a-method-with-the-type-of-the-enclosing-class
+from typing import Tuple, List, Dict, Any, Self
 import faiss_rm
 import re
 import dataclasses
 import enum
+import copy
 
 def _prtime():
     nw=datetime.datetime.now()
@@ -318,16 +320,120 @@ class DocumentChunkDetails:
     file_path:str = None
     file_name:str = None
     file_id:str = None
-    file_info:dict = None    # finfo or details about the file
+    file_info:dict = dataclasses.field(default=None, repr=False)    # finfo or details about the file
     para_id:int = None       # the paragraph number
-    para_dict:dict = None    # details of this paragraph
-    para_text_formatted:str = None
+    para_dict:dict = dataclasses.field(default=None, repr=False) # details of this paragraph
+    para_text_formatted:str = dataclasses.field(default=None, repr=False)
     cross_encoder_score:float = None
     retr_sorted_idx:int = None # the position of this chunk when sorted by the retriever
     reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
     
     def _get_file_key(self):
         return f"{self.faiss_rm_vdb_id}/{self.file_id}"
+
+@dataclasses.dataclass
+class DocumentChunkRange:
+    """ end_para_id is inclusive """
+    doc_chunk:DocumentChunkDetails
+    start_para_id:int = None
+    end_para_id:int = None
+    """ end_para_id is inclusive """
+    chunk_overlap_processed = False
+
+    def _get_file_key(self):
+        return self.doc_chunk._get_file_key()
+    
+    def isChunkRangeInsideRangeList(self, chunk_range_list:List[Self]):
+        for chunk_range in chunk_range_list:
+            if chunk_range._get_file_key() == self._get_file_key() and chunk_range.start_para_id <= self.start_para_id and chunk_range.end_para_id >= self.end_para_id:
+                return chunk_range
+        
+        return None
+    
+    @classmethod
+    def _get_merged_chunk_ranges(clz, context_chunk_range_list:List[Self]) -> List[Self]:
+        merged_chunks:List[Self] = []
+        for curr_chunk_range in context_chunk_range_list:
+            # check if we have already created merged chunks for this file.
+            curr_file_key:str = curr_chunk_range.doc_chunk._get_file_key()
+            merged_chunks_curr_file = [ merged_chunk for merged_chunk in merged_chunks if merged_chunk.doc_chunk._get_file_key() == curr_file_key ]
+            # if so, skip this chunk range.
+            if len(merged_chunks_curr_file): continue
+            
+            all_chunks_curr_file:List[Self] = [ chunk_range for chunk_range in context_chunk_range_list if chunk_range.doc_chunk._get_file_key() == curr_file_key ]
+            
+            sorted_all_chunks_curr_file:List[Self] = sorted(all_chunks_curr_file, key= lambda elem_chunk_range: elem_chunk_range.start_para_id )
+            
+            curr_merged_chunk:Self = None
+            for sorted_elem in sorted_all_chunks_curr_file:
+                if not curr_merged_chunk: 
+                    # we only do a shallow copy.  ok, since we only modify non reference data
+                    curr_merged_chunk = copy.copy(sorted_elem)
+                    continue
+                
+                # check if there is a overlap between chunks
+                if curr_merged_chunk.end_para_id >= sorted_elem.start_para_id:
+                    if curr_merged_chunk.end_para_id <= sorted_elem.end_para_id:
+                        curr_merged_chunk.end_para_id = sorted_elem.end_para_id
+                # there is no overlap
+                else:  
+                    merged_chunks.append(curr_merged_chunk)
+                    curr_merged_chunk = copy.copy(sorted_elem)
+            merged_chunks.append(curr_merged_chunk)
+        
+        return merged_chunks
+            
+    @classmethod
+    # https://stackoverflow.com/questions/33533148/how-do-i-type-hint-a-method-with-the-type-of-the-enclosing-class
+    def process_overlaps(clz, context_chunk_range_list:List[Self]) -> List[Self]:
+        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
+
+        out_chunk_range_list:List[Self] = []
+        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
+        for chunk_range in context_chunk_range_list:
+            merged_chunk_range = chunk_range.isChunkRangeInsideRangeList(merged_chunk_range_list)
+            if not merged_chunk_range: 
+                print(f"Raising exception: {chunk_range} not found in {merged_chunk_range_list}")
+                raise Exception(f"Unable to find chunk range with vbd_id={chunk_range.doc_chunk.faiss_rm_vdb_id} file_name={chunk_range.doc_chunk.file_name} para_id={chunk_range.doc_chunk.para_id} start_para_id={chunk_range.start_para_id} end_para_id={chunk_range.end_para_id}")
+            if merged_chunk_range.isChunkRangeInsideRangeList(out_chunk_range_list):
+                continue
+            else:
+                out_chunk_range_list.append(merged_chunk_range)
+                
+        return out_chunk_range_list
+                
+    
+def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
+    """returns the tupe (error_dict, context)"""
+    
+    print(f"_get_context(): context_chunk_range_list={context_chunk_range_list}")
+    if handle_overlaps: 
+        context_chunk_range_list = DocumentChunkRange.process_overlaps(context_chunk_range_list)
+        print(f"_get_context(): context_chunk_range_list after overlapping merge={context_chunk_range_list}")
+    
+    # generate the context
+    new_context:str = ''    
+    for chunk_range in context_chunk_range_list:
+        chunk_det = chunk_range.doc_chunk
+        fparagraphs = []
+        finfo = chunk_range.doc_chunk.file_info
+        if 'slides' in finfo:
+            key = 'slides'
+        elif 'paragraphs' in finfo:
+            key = 'paragraphs'
+        else:
+            emsg = f"ERROR! Could not get key in document for {finfo}"
+            print(emsg)
+            return respond({"error_msg": emsg}, status=500), None
+        for idx in range(chunk_range.start_para_id, chunk_range.end_para_id+1):
+            formatted_para:str = chunk_range.doc_chunk.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+            fparagraphs.append(formatted_para)
+            print(f"Context: Included chunk from file_name={chunk_det.file_name} para_id={idx} faiss_rm_vdb_id={chunk_det.faiss_rm_vdb_id}")
+        prelude = f"Name of the file is {chunk_det.file_name}"
+        new_context = new_context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
+        
+    return None, new_context
+
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> str:
@@ -422,7 +528,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         curr_chunk.para_text_formatted = f"Name of the file is {curr_chunk.file_name}\n" + curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
         reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
-    print(f"retrieve_and_rerank_using_faiss: reranker_input={reranker_input}")
+    print(f"retrieve_and_rerank_using_faiss: reranker_input={[ [i[0], i[1][:128] + '...' ] for i in reranker_input]}")
     global g_cross_encoder
     # https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-2-v2
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -461,10 +567,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     all_docs_token_count = 0
     max_token_limit:int = 6000
     max_pre_and_post_token_limit = 512
-    context_chunk_det_list:List[DocumentChunkDetails] = []
+    context_chunk_range_list:List[DocumentChunkRange] = []
     for i in range(len(reranked_indices)):
         chosen_reranked_index = reranked_indices[i]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
+        chunk_range:DocumentChunkRange = DocumentChunkRange(chunk_det)
         # # if the cross encoder score is negative, skip.
         # if chunk_det.cross_encoder_score < 0: 
         #     print(f"skipping reranked chunk in context since cross_encoder_score is -ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
@@ -483,7 +590,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             print(emsg)
             return respond({"error_msg": emsg}, status=500)
         
-        context_chunk_det_list.append(chunk_det)
+        context_chunk_range_list.append(chunk_range)
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
             fparagraphs = []
@@ -492,16 +599,21 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             prelude = f"Name of the file is {chunk_det.file_name}"
             if len(context) + len(". ".join(fparagraphs)) > max_token_limit*3:  # each token on average is 3 bytes..
                 # if the document is too long, just use the top hit paragraph and some subseq paras
-                print(f"all paras in the file={chunk_det.file_name} > {max_token_limit} tokens: so retricting to paragraph number = {chunk_det.para_id} and 7 more")
-                paras = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
+                paras:List[str]; start_para_idx:int; end_para_idx:int
+                paras, start_para_idx, end_para_idx = chunk_det.faiss_rm_vdb.get_paragraphs(index_in_faiss, 8)
+                print(f"all paras in the file={chunk_det.file_name} > {max_token_limit} tokens in vdb_id={chunk_det.faiss_rm_vdb_id}: so retricting to paragraph number = {chunk_det.para_id} and max 7 more: start_para_idx={start_para_idx}; end_para_idx={end_para_idx}")
                 if not paras:
                     emsg = f"ERROR! Could not get paragraph for reranked index {reranked_indices[0]}"
                     print(emsg)
                     return respond({"error_msg": emsg}, status=500)
+                chunk_range.start_para_id = start_para_idx
+                chunk_range.end_para_id = end_para_idx
                 context = context + "\n" + prelude + "\n" + ". ".join(paras)
                 break
             else:
-                print(f"all paras in the file={chunk_det.file_name} included in the context")
+                print(f"all paras in the file={chunk_det.file_name} para_id={chunk_det.para_id} vdb_id={chunk_det.faiss_rm_vdb_id} included in the context")
+                chunk_range.start_para_id = 0
+                chunk_range.end_para_id = len(finfo[key]) - 1
                 context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
         else:
             fparagraphs = []
@@ -509,29 +621,43 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             for idx in range(chunk_det.para_id, -1, -1):
                 formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
                 fparagraphs.insert(0,formatted_para)
+                chunk_range.start_para_id = idx
                 print(f"including prior     chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
                 token_count += int(len(formatted_para) / 3)
                 all_docs_token_count += int(len(formatted_para) / 3)
                 if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
 
             token_count:int = 0
-            for idx in range(chunk_det.para_id + 1, len(finfo[key])):
-                formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
-                fparagraphs.append(formatted_para)
-                print(f"including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
-                
-                token_count += int(len(formatted_para) / 3)
-                all_docs_token_count += int(len(formatted_para) / 3)
-                if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
+            chunk_range.end_para_id = chunk_det.para_id
+            # if there are chunks after the current para_id
+            if not (chunk_det.para_id + 1) == len(finfo[key]):
+                for idx in range(chunk_det.para_id + 1, len(finfo[key])):
+                    formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+                    fparagraphs.append(formatted_para)
+                    chunk_range.end_para_id = idx
+                    print(f"including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
+                    
+                    token_count += int(len(formatted_para) / 3)
+                    all_docs_token_count += int(len(formatted_para) / 3)
+                    if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
             
             prelude = f"Name of the file is {chunk_det.file_name}"
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
             
             if all_docs_token_count >= max_token_limit: break
 
+    err_dict, new_context = _gen_context(context_chunk_range_list)
+    # TODO: fix this; caller doesn't handle returned err_dict
+    if err_dict: return err_dict
+    # if not context == new_context: 
+    #     print(f"*** contexts are not the same:\ncontext=\n{context}\nnew_context=\n{new_context}")
+    # else:
+    #     print(f"*** contexts are the same")
+
     # file --> [ DocumentChunkDetails ]; dict of file to all chunks in the file that need to go into the context
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
-    for chunk_det in context_chunk_det_list:
+    for chunk_range in context_chunk_range_list:
+        chunk_det = chunk_range.doc_chunk
         file_key:str = chunk_det._get_file_key()
         if filekey_to_file_chunks_dict.get(file_key):
             filekey_to_file_chunks_dict.get(file_key).append(chunk_det)
