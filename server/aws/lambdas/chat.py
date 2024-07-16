@@ -153,6 +153,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
+    Returns the tuple (output, thread_id).  REturns (None, NOne) on failure.
     """
     import openai
     import openai.types
@@ -189,6 +190,27 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     "required": ["question"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_of_files_for_given_question",
+                    "description": "Search confidential and private information and return file names that can answer the given question",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question for which file names need to be listed"
+                            },
+                            "number_of_files": {
+                                "type":"integer",
+                                "description":"The number of file names to return.  Default is to return 10 file names"
+                            }
+                        },
+                    "required": ["question"] #, "number_of_files"]
+                    }
+                }
             }
         ]
     )
@@ -202,7 +224,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         role="user",
         content=last_msg,
     )
-    print(f"**{_prtime()}: Adding message to openai thread and running the thread:** message=message")
+    print(f"**{_prtime()}: Adding message to openai thread and running the thread:** message={message}")
     logmsgs = [f"**{_prtime()}: Adding message to openai thread and running the thread:**"]
     logmsgs.append(f"**role=** {message.role}")
     if message.content:
@@ -240,9 +262,10 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             retries += 1
             if retries >= 5:
                 return None, None
+        # run.status='requires_action'
         else:
-            print(f"**{_prtime()}: run result after running openai thread with messages:** run={run}")
-            logmsgs = [f"**{_prtime()}: run result after running openai thread with messages:**"]
+            print(f"**{_prtime()}: run incomplete:** run result after running thread with above messages: run={run}")
+            logmsgs = [f"**{_prtime()}: run incomplete:** run result after running thread with above messages"]
             logmsgs.append(f"**instructions=** {run.instructions}")
             if run.required_action and run.required_action.submit_tool_outputs and run.required_action.submit_tool_outputs.tool_calls:
                 for tool_call in run.required_action.submit_tool_outputs.tool_calls:
@@ -271,16 +294,20 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
+
+        print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
+        tracebuf.append(f"**{_prtime()}: run incomplete:**")
     
         # Define the list to store tool outputs
         tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
         # Loop through each tool in the required action section        
         for tool in run.required_action.submit_tool_outputs.tool_calls:
             # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
+            args_dict:dict = json.loads(tool.function.arguments)
+            print(f"**{_prtime()}: Running tool tool.function.name={tool.function.name} with tool.function.arguments={args_dict}")
             if tool.function.name == "search_question_in_db":
-                args_dict:dict = json.loads(tool.function.arguments)
                 tool_arg_question = args_dict.get('question')
-                context:str = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                                 context_srcs, chat_config, tool_arg_question)
                 print(f"**{_prtime()}: Tool output:** context={context}")
                 tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
@@ -288,6 +315,15 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     "tool_call_id": tool.id,
                     "output": context
                 })
+            elif tool.function.name == "list_of_files_for_given_question":
+                args_dict:dict = json.loads(tool.function.arguments)
+                tool_arg_question = args_dict.get('question')
+                num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
+                tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                                                context_srcs, chat_config, tool_arg_question, num_files)
+                print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
+                tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
+                tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
             else:
                 raise Exception(f"**Unknown function call:** {tool.function.name}")
   
@@ -308,8 +344,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             logmsg = "**{_prtime()}: No tool outputs to submit.**"
             print(logmsg); tracebuf.append(logmsg)
     
-        print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
-        tracebuf.append(f"**{_prtime()}: run incomplete:**")
+    return None, None
 
 @dataclasses.dataclass
 class DocumentChunkDetails:
@@ -436,7 +471,7 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
 
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> str:
+                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -561,8 +596,15 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         
         # if we asked to only print the 10 cross encoded outputs
         if cross_encoder_10 and i >= 10: break
+    
+    return reranked_indices, sorted_summed_scores
 
-    # instead of just the top document, try the ones, upto 3
+def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str):
+
+    reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, chat_config, last_msg)
+    
     context:str = ''
     all_docs_token_count = 0
     max_token_limit:int = 6000
@@ -675,6 +717,25 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             context_srcs.append(f"**Context Source: {chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
     
     return context
+
+def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10):
+
+    reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, chat_config, last_msg)
+    
+    files_dict:Dict[str,DocumentChunkDetails] = {}
+    for i in range(len(reranked_indices)):
+        chosen_reranked_index = reranked_indices[i]
+        chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
+    
+        if not files_dict.get(chunk_det._get_file_key()):
+            files_dict[chunk_det._get_file_key()] = chunk_det
+        
+        if len(files_dict) >= number_of_files: break
+    
+    return ",".join([  f"[{val.file_path}/{val.file_name}]({val.file_path}/{val.file_name})" for key, val in files_dict.items() ])
+        
 
 def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], last_msg:str, use_ivfadc:bool):
     """ Returns the details of the filename specified in the query.  The format of the query is <filename>|<query>.  Looks up the query in the vector db, and only returns matches from the specified file, including details of the file and the matches in the file (paragraph_num and distance)    """
