@@ -63,6 +63,7 @@ def lock_user(item, client):
     email=item['email']['S']
     print(f"lock_user: Entered. Trying to lock for email={email}")
     gdrive_next_page_token = None
+    dropbox_next_page_token = None
     try:
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
@@ -81,36 +82,43 @@ def lock_user(item, client):
             ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(15*60))} },
             ReturnValues="ALL_NEW"
         )
-        if 'Attributes' in response and 'gdrive_next_page_token' in response['Attributes']:
-            gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
-        print(f"lock_user: conditional check success. No other instance of lambda is active for user {email}. gdrive_next_page_token={gdrive_next_page_token}")
-        return gdrive_next_page_token, True
+        if 'Attributes' in response:
+            if 'gdrive_next_page_token' in response['Attributes']:
+                gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
+            if 'dropbox_next_page_token' in response['Attributes']:
+                dropbox_next_page_token = response['Attributes']['dropbox_next_page_token']['S']
+        print(f"lock_user: conditional check success. No other instance of lambda is active for user {email}. "
+                f"gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+        return gdrive_next_page_token, dropbox_next_page_token, True
     except ClientError as e:
         if e.response['Error']['Code'] == "ConditionalCheckFailedException":
             print(f"lock_user: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
-            return gdrive_next_page_token, False
+            return gdrive_next_page_token, dropbox_next_page_token, False
         else:
             raise
 
-def unlock_user(item, client, gdrive_next_page_token):
+def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
     email=item['email']['S']
     print(f"unlock_user: Entered. email={email}")
     try:
-        if gdrive_next_page_token:
-            response = client.update_item(
-                TableName=os.environ['USERS_TABLE'],
-                Key={'email': {'S': email}},
-                UpdateExpression="SET gdrive_next_page_token = :pt",
-                ExpressionAttributeValues={':pt': {'S': gdrive_next_page_token}},
-                ReturnValues="UPDATED_NEW"
-            )
+        if gdrive_next_page_token and dropbox_next_page_token:
+            ue="SET gdrive_next_page_token = :pt, dropbox_next_page_token = :db"
+            eav={':pt': {'S': gdrive_next_page_token}, ':db': {'S': dropbox_next_page_token}}
+        elif gdrive_next_page_token and not dropbox_next_page_token:
+            ue="SET gdrive_next_page_token = :pt REMOVE dropbox_next_page_token"
+            eav={':pt': {'S': gdrive_next_page_token}}
+        elif not gdrive_next_page_token and dropbox_next_page_token:
+            ue="REMOVE gdrive_next_page_token SET dropbox_next_page_token = :db"
+            eav={':db': {'S': dropbox_next_page_token}}
         else:
-            response = client.update_item(
-                TableName=os.environ['USERS_TABLE'],
-                Key={'email': {'S': email}},
-                UpdateExpression= "REMOVE gdrive_next_page_token",
-                ReturnValues="UPDATED_NEW"
-            )
+            ue = "REMOVE gdrive_next_page_token REMOVE dropbox_next_page_token"
+            eav = {}
+        response = client.update_item(
+            TableName=os.environ['USERS_TABLE'],
+            Key={'email': {'S': email}},
+            UpdateExpression=ue, ExpressionAttributeValues=eav,
+            ReturnValues="UPDATED_NEW"
+        )
     except ClientError as e:
         print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
         return False
@@ -248,8 +256,6 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
     """
     print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
-    # each line in files_index.jsonl has the structure below.  In fls, it is stored as { file_id: <dict_from_each_line_of_jsonl_file>}
-    # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     fls = {}
     # if the ask is to not build the faiss indexes, then try downloading it..
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
@@ -311,7 +317,6 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
     """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
     unmodified = {}
     deleted = {}
-    # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
     needs_embedding = {}
     for fileid, gdrive_entry in gdrive_listing.items():
         if fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
@@ -346,7 +351,7 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
 
 
 def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
-    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     doc = docx.Document(file_io)
     prelude = f"The filename is {filename} and the paragraphs are:"
@@ -398,7 +403,7 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
 
 def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, time_limit, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
     prs = Presentation(file_io)
-    ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}  # {'filename': 'S6O4HowToSewAButton.pptx', 'fileid': '11anl03mkvhqmeOGEhX50JYnG8jwZZO8z', 'mtime': datetime.datetime(2024, 4, 10, 7, 42, 6, 750000, tzinfo=datetime.timezone.utc), 'slides': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}]}
+    ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}
     ind = 0
     for slide in prs.slides:
         title=None
@@ -415,10 +420,10 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, ti
                         txt.append(run.text)
         slide_text = ','.join(txt)
         if title:
-            slide_dct = {"title": title, "text": slide_text}  # {'title': 'References', 'text': 'http://www.wikihow.com/Sew-a-Button,Video Clips,http://www.youtube.com/watch?v=Gg0pfdIRBgw,http://www.youtube.com/watch?v=hrSs_DiJ-ZA,[[Image:Sew_button_1.jpg|thumb|description]] ', 'embedding': 'gASVCBsAAAAAAABdlF2UKEe/wtm+YAAAAEc/...'}
+            slide_dct = {"title": title, "text": slide_text}
             chu = f"The title of this slide is {title} and the content of the slide is {slide_text}"
         else:
-            slide_dct = {"text": slide_text} # {'text': 'http://www.wikihow.com/Sew-a-Button,Video Clips,http://www.youtube.com/watch?v=Gg0pfdIRBgw,http://www.youtube.com/watch?v=hrSs_DiJ-ZA,[[Image:Sew_button_1.jpg|thumb|description]] ', 'embedding': 'gASVCBsAAAAAAABdlF2UKEe/wtm+YAAAAEc/...'}
+            slide_dct = {"text": slide_text}
             chu = f"The content of the slide is {slide_text}"
         if ind >= len(prev_slides): # skip past prev_slides
             embedding = vectorizer([chu])
@@ -453,7 +458,6 @@ def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime,
     for doc in docs:
         chunks.extend(sent_split.split_text(doc.text))
 
-    # {'filename': 'module2_fall-prevention.docx', 'fileid': '11ehUfwX2Hn85qaPEcP7p-6UnYRE7IbWt', 'mtime': datetime.datetime(2024, 4, 10, 7, 49, 21, 574000, tzinfo=datetime.timezone.utc), 'paragraphs': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...]}    
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
     for ind in range(len(prev_paras), len(chunks)):
         chunk = chunks[ind]
@@ -544,9 +548,8 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
     start_time = g_start_time
     time_limit = g_time_limit
     time_limit_exceeded = False
-    done_embedding = {} # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, ... }
+    done_embedding = {}
     for fileid, file_item in needs_embedding.items():
-        # {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}
         filename = file_item['filename']
         path = file_item['path'] if 'path' in file_item else ''
         mimetype = file_item['mimetype'] if 'mimetype' in file_item else ''
@@ -655,49 +658,6 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
             break
                 
     return done_embedding, time_limit_exceeded
-
-def calc_file_lists_dropbox(s3_index, dropbox_listing) -> Tuple[dict, dict, dict]:
-    """ returns a tuple of (unmodified:dict, needs_embedding:dict, deleted:dict).  Each dict has the format { fileid: {filename:abc, fileid:xyz, mtime:mno}}"""
-    unmodified = {}
-    deleted = {}
-    # dropbox_entry: FileMetadata(client_modified=datetime.datetime(2019, 6, 11, 21, 21, 35), content_hash='90ee4e86a091c6ba45cf374f8e33a3780eb741cab580035d954956d884fee147', export_info=NOT_SET, file_lock_info=NOT_SET, has_explicit_shared_members=NOT_SET, id='id:ArlZLN2U56oAAAAAAANyVQ', is_downloadable=True, media_info=NOT_SET, name='20190611_125301.jpg', parent_shared_folder_id='4413072912', path_display='/Cambridge/Copenhagen/20190611_125301.jpg', path_lower='/cambridge/copenhagen/20190611_125301.jpg', preview_url=NOT_SET, property_groups=NOT_SET, rev='011af00000001070a2610', server_modified=datetime.datetime(2019, 6, 11, 21, 21, 36), sharing_info=FileSharingInfo(modified_by='dbid:AAAbiiHTEGeOdngb129-TLbsQ3XqU877psI', parent_shared_folder_id='4413072912', read_only=True), size=2148185, symlink_info=NOT_SET)
-    needs_embedding = {}
-    for fileid, dropbox_entry in dropbox_listing.items():
-        if fileid in s3_index and s3_index[fileid]['mtime'] == dropbox_entry.client_modified:
-            if 'partial' in s3_index[fileid]:
-                needs_embedding[fileid] = s3_index[fileid]
-            else:
-                unmodified[fileid] = s3_index[fileid]
-        else:
-            needs_embedding[fileid] = {'filename': dropbox_entry.name, 'fileid': fileid,
-                                        'path': dropbox_entry.path_display,
-                                        'mtime': dropbox_entry.client_modified}
-
-    # detect deleted files
-    for fileid in s3_index:
-        if not ( unmodified.get(fileid) or needs_embedding.get(fileid) ): 
-            deleted[fileid] = s3_index[fileid]
-            
-    return unmodified, needs_embedding, deleted
-
-def list_files_in_dropbox_folder(dbx, folder_path, dropbox_listing):
-    print(f"list_files_in_dropbox_folder: Entered {folder_path}")
-    try: 
-        files = dbx.files_list_folder(folder_path).entries 
-        print(f"------------Listing Files in Folder {folder_path} ------------ ") 
-        for ff in files: 
-            # listing 
-            #print(file.name) 
-            if isinstance(ff, dropbox.files.FolderMetadata):
-                print(f"dir={ff.path_display}") 
-                list_files_in_dropbox_folder(dbx, ff.path_display, dropbox_listing)
-            elif isinstance(ff, dropbox.files.FileMetadata):
-                print(f"file={ff}") 
-                dropbox_listing[ff.id] = ff
-            else:
-                print(f"Unknown type {ff}. Ignoring and continuing..")
-    except Exception as e: 
-        print(str(e)) 
 
 def _create_index_metadata_json_local(in_index_metadata:IndexMetadata):
     with open(INDEX_METADATA_JSON, "w") as f:
@@ -816,8 +776,70 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
             
     else:
         print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as it isn't stale: {index_metadata}")
-    
-def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False):
+
+# Returns entries, dropbox_next_page_token
+def _get_dropbox_listing(dbx, dropbox_next_page_token):
+    print(f"_get_dropbox_listing: Entered dropbox_next_page_token={dropbox_next_page_token}")
+    try: 
+        all_entries = []
+        cursor = dropbox_next_page_token
+        has_more = True
+        while has_more:
+            if not cursor:
+                res = dbx.files_list_folder("", recursive=True)
+            else:
+                res = dbx.files_list_folder_continue(cursor=cursor)
+            all_entries.extend(res.entries)
+            has_more = res.has_more
+            cursor = res.cursor
+        return all_entries, cursor
+    except Exception as e: 
+        print(str(e)) 
+        traceback.print_exc()
+        return None
+
+# returns unmodified, needs_embedding
+def _calc_filelists_dropbox(entries, s3_index):
+    unmodified = {}
+    needs_embedding = {}
+    num_deleted_files = 0
+    for entry in entries:
+        if isinstance(entry, dropbox.files.FolderMetadata):
+            print(f"_calc_filelists_dropbox: DIR id={entry.id} path_display={entry.path_display}, name={entry.name}")
+        elif isinstance(entry, dropbox.files.FileMetadata):
+            print(f"_calc_filelists_dropbox: FILE id={entry.id} path_display={entry.path_display}, name={entry.name}")
+            if entry.id in s3_index and s3_index[entry.id]['mtime'] == entry.client_modified:
+                if 'partial' in s3_index[entry.id]:
+                    needs_embedding[entry.id] = s3_index[entry.id]
+                else:
+                    unmodified[entry.id] = s3_index[entry.id]
+            else:
+                needs_embedding[entry.id] = {'filename': entry.name,
+                                            'fileid': entry.id,
+                                            'path': entry.path_display,
+                                            'mtime': entry.client_modified}
+        elif isinstance(entry, dropbox.files.DeletedMetadata):
+            print(f"_calc_filelists_dropbox: DELETED id={entry.id} path_display={entry.path_display}, name={entry.name}")
+            to_delete = []
+            for s3entry in s3_index:
+                if s3entry['path'].startswith(entry.path_display):
+                    print(f"_calc_filelists_dropbox: DELETED Yes! deleted={entry.path_display}. s3entry={s3entry['path']}")
+                    to_delete.append(s3entry['fileid'])
+                else:
+                    print(f"_calc_filelists_dropbox: DELETED No! deleted={entry.path_display}. s3entry={s3entry['path']}")
+            for td in to_delete:
+                s3_index.pop(td)
+                if td in unmodified:
+                    unmodified.pop(td)
+                if td in needs_embedding:
+                    needs_embedding.pop(td)
+            num_deleted_files += len(to_delete)
+        else:
+            print(f"_calc_filelists_dropbox: Unknown entry type {entry}. Ignoring and continuing..")
+    print(f"_calc_filelists_dropbox: return. unmodified={unmodified}, needs_embedding={needs_embedding}, num_deleted_files={num_deleted_files}")
+    return unmodified, needs_embedding, num_deleted_files
+
+def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
     print(f'update_index_for_user_dropbox: Entered. {item}')
     email:str = item['email']['S']
     sub_prefix = "dropbox"
@@ -840,29 +862,24 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     if not access_token:
         print(f"Error. Failed to create access token. Not updating dropbox index")
         return
+
     try: 
         dbx = dropbox.Dropbox(access_token) 
-        print('Successfully connected to Dropbox') 
-        dropbox_listing = {}
-        list_files_in_dropbox_folder(dbx, "", dropbox_listing)
+        entries, dropbox_next_page_token = _get_dropbox_listing(dbx, dropbox_next_page_token)
+        unmodified, needs_embedding, num_deleted_files = _calc_filelists_dropbox(entries, s3_index)
     except Exception as ex:
         print(f"Exception occurred: {ex}")
         traceback.print_exc()
 
-    unmodified, needs_embedding, deleted_files = calc_file_lists_dropbox(s3_index, dropbox_listing)
-    print(f"Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
-
-    # remove deleted files from the index
-    for fileid in deleted_files: s3_index.pop(fileid)
-
     done_embedding, time_limit_exceeded = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
-    if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
+    if len(done_embedding.items()) > 0 or num_deleted_files > 0:
         update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
     else:
         print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
         
     # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
     _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix )
+    return dropbox_next_page_token
     
 FOLDER = 'application/vnd.google-apps.folder'
 
@@ -1031,7 +1048,6 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
     return gdrive_listing, deleted_files, new_start_page_token
 
 def _get_gdrive_listing_full(service, item, folder_id):
-    # {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc)}, '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks': {'filename': 'Q&A', 'fileid': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 51, 962000, tzinfo=datetime.timezone.utc)}, '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y': {'filename': 'Extraction', 'fileid': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 36, 440000, tzinfo=datetime.timezone.utc)}, '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA': {'filename': 'Chatbots', 'fileid': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 27, 281000, tzinfo=datetime.timezone.utc)}, '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY': {'filename': 'Agents', 'fileid': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'mtime': datetime.datetime(2024, 3, 4, 16, 26, 16, 596000, tzinfo=datetime.timezone.utc)}}
     gdrive_listing = {}
     pageToken = None
     kwargs = {}
@@ -1057,8 +1073,6 @@ def _get_gdrive_listing_full(service, item, folder_id):
                 .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
                 .execute()
             )
-            # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
-            # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}
             items = results.get("files", [])
             total_items += len(items)
             print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
@@ -1074,14 +1088,8 @@ def _get_gdrive_listing_full(service, item, folder_id):
                 break
     return gdrive_listing, folder_details, gdrive_next_page_token
 
-# for kwargs in [{'top': 'spam', 'by_name': True}, {}]:
-#     for path, root, dirs, files in walk(**kwargs):
-#         print('/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
-
 def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, folder_id:str, gdrive_listing:dict, folder_details:dict):
     total_items = 0
-    # [{'id': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'name': 'Multimodal', 'modifiedTime': '2024-03-04T16:27:01.169Z'}, {'id': '1SZLHxQO0CIkRADeb0yCjuTtNh-uNy8CLT7HR4kuvZks', 'name': 'Q&A', 'modifiedTime': '2024-03-04T16:26:51.962Z'}, {'id': '19HNNCPaO-NGGCMHqTUtRvYOtFe-vG61ltTUMbQgHJ9Y', 'name': 'Extraction', 'modifiedTime': '2024-03-04T16:26:36.440Z'}, {'id': '11cZc_vN-5NUBoW3XZYKUjfwEarmOPiOKbN5Xvc1U3pA', 'name': 'Chatbots', 'modifiedTime': '2024-03-04T16:26:27.281Z'}, {'id': '158NNowMCrbTFd_28OnLBwO6GZJ50NwaBa9seHQsVaWY', 'name': 'Agents', 'modifiedTime': '2024-03-04T16:26:16.596Z'}]
-    # # {'mimeType': 'application/vnd.google-apps.folder', 'parents': ['1rQIULPUAMYJCUp0mpbdIKdbvRn5mfdw0'], 'id': '1gnLXbCJHgSm5aK2E8OF_gcAv3pE-5eoc', 'name': 'Equipment', 'modifiedTime': '2024-06-17T15:08:40.187Z'}    
     for path, root, dirs, files in walk(service, top=folder_id, by_name=False):
         total_items += (len(dirs) + len(files))
         print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
@@ -1115,7 +1123,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         if not gdrive_next_page_token or gdrive_next_page_token == "1":
             gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
-            print(f"full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
+            print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
         else:
             needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id)
             unmodified = s3_index
@@ -1158,12 +1166,15 @@ def _lambda_time_left_seconds() -> float:
     global g_start_time, g_time_limit
     return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
 
-def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime, only_create_index:bool=False, gdrive_next_page_token:str=None):
+def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
+                            only_create_index:bool=False, gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
     global g_start_time, g_time_limit
     g_start_time = start_time
-    if not _lambda_timelimit_exceeded(): gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
-    if not _lambda_timelimit_exceeded(): update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index)
-    return gdrive_next_page_token
+    if not _lambda_timelimit_exceeded():
+        gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
+    if not _lambda_timelimit_exceeded():
+        dropbox_next_page_token = update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
+    return gdrive_next_page_token, dropbox_next_page_token
 
 if __name__ == '__main__':
     files = [ '/home/dev/simple_memo.pdf', '/home/dev/tp_link_deco_e4_wifi_mesh_datasheet_Deco_E4_EU_US_3.pdf' ]
