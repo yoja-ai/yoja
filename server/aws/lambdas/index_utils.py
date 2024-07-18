@@ -982,7 +982,7 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
         folder_details[driveid] = {'filename': 'My Drive'}
     except Exception as ex:
         print(f"_get_gdrive_listing_incremental: Exception {ex} while getting driveid")
-        return gdrive_listing, folder_details
+        return gdrive_listing, deleted_files, new_start_page_token
 
     new_start_page_token = None
     next_token = gdrive_next_page_token
@@ -1046,7 +1046,6 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                 print(f"_get_gdrive_listing_incremental: headers={str(resp.headers)}")
             else:
                 print(f"_get_gdrive_listing_incremental: caught {ex}")
-            return None
     return gdrive_listing, deleted_files, new_start_page_token
 
 def _get_gdrive_listing_full(service, item, folder_id):
