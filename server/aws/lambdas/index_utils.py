@@ -44,7 +44,7 @@ from pptx import Presentation
 
 from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
-from faiss_rm import FaissRM
+from faiss_rm import FaissRM, DocStorageType
 
 import llama_index
 import llama_index.core
@@ -250,7 +250,7 @@ def populate_embeddings_file_cache(embeddings_file_uri, s3client, index_bucket, 
         print(f"Caught {ex} while parsing tmp_embeddings_file.jsonl")
         return False
 
-def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
+def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
     """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
     """
@@ -282,7 +282,7 @@ def init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=True, sub_pref
             para = finfo[key][para_index]
             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
             index_map.append((fileid, para_index))
-    return FaissRM(fls, index_map, embeddings, vectorizer, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
+    return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents
@@ -539,7 +539,7 @@ class DropboxReader(StorageReader):
         file.seek(0, os.SEEK_SET)
         return file
 
-def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> (Dict[str, Dict[str, Any]], bool) : 
+def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
@@ -729,10 +729,10 @@ def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, su
         except Exception as e:
             pass
     
-def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix):
+def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
-    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix, sub_prefix=sub_prefix)
+    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix, sub_prefix=sub_prefix, doc_storage_type=doc_storage_type)
     
     # save the created index
     faiss_flat_fname = FAISS_INDEX_FLAT
@@ -758,8 +758,10 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
     s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
 
-def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
-    """  user_prefix == prefix + email + sub_prefix """
+def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str, doc_storage_type:DocStorageType ):
+    """  user_prefix == prefix + email + sub_prefix 
+    """
+    
     # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
     index_metadata:IndexMetadata = _read_index_metadata_json_local()
     # if faiss index needs to be updated and we have at least 5 minutes
@@ -768,7 +770,7 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
             # we update the index only when we have 1 to 100 embeddings that need to be updated..
-            build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix)
+            build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type)
         else:
             print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds.  Deleting stale faiss indexes if needed..")
             # delete the existing faiss indexes since they are not in sync with files_index.jsonl.gz
@@ -877,8 +879,8 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     else:
         print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
         
-    # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
-    _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix )
+    # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)    
+    _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix, DocStorageType.DropBox )
     return dropbox_next_page_token
     
 FOLDER = 'application/vnd.google-apps.folder'
@@ -1145,7 +1147,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             gdrive_next_page_token = None # force full scan next time
         
         # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
-        _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix )
+        _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix, DocStorageType.GoogleDrive)
             
     except HttpError as error:
         print(f"HttpError occurred: {error}")

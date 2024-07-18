@@ -7,9 +7,15 @@ from typing import List, Dict, Any, Tuple
 import os
 import tempfile
 import math
+import enum
+
+class DocStorageType(enum.Enum):
+    GoogleDrive = 1
+    DropBox = 2
+
 
 class FaissRM():
-    def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]], pre_calc_embeddings:List[List[float]], vectorizer, k: int = 3, flat_index_fname=None, ivfadc_index_fname:str=None):
+    def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]], pre_calc_embeddings:List[List[float]], vectorizer, doc_storage_type:DocStorageType, k: int = 3, flat_index_fname=None, ivfadc_index_fname:str=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
         The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
@@ -75,7 +81,11 @@ class FaissRM():
 
         self._documents = documents  # save the input document chunks
         self.k = k
+        self.doc_storage_type = doc_storage_type
 
+    def get_doc_storage_type(self) -> DocStorageType:
+        return self.doc_storage_type
+    
     #@staticmethod
     @classmethod
     def _get_memory(cls, index:faiss.Index) -> int:

@@ -25,6 +25,7 @@ import re
 import dataclasses
 import enum
 import copy
+import jsons
 
 def _prtime():
     nw=datetime.datetime.now()
@@ -43,6 +44,38 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
             return thread_id
     return None
 
+class DocumentType(enum.Enum):
+    DOCX = 1
+    PPTX = 2
+    PDF = 3
+    TXT = 4
+
+    @classmethod
+    def fromString(clz, doc_type_str:str):
+        str_to_type_dict:Dict[str, Self] = { 'pptx':clz.PPTX, 'docx':clz.DOCX, 'pdf':clz.PDF, 'txt':clz.TXT }
+        
+        if not str_to_type_dict.get(doc_type_str):
+            raise Exception(f"Unknown document type:  {doc_type_str}")
+            
+        return str_to_type_dict.get(doc_type_str)
+
+    def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_id:str) -> str:
+        if doc_storage_type == faiss_rm.DocStorageType.GoogleDrive:
+            # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
+            # if a pdf file (ends with pdf), use the link https://drive.google.com/file/d/<file_id>
+            # if pptx file (ends with ppt or pptx) https://docs.google.com/presentation/d/<file_id>
+            doc_type_to_link:Dict[Self, str] = { self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}', self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}', self.__class__.PDF:'https://drive.google.com/file/d/{file_id}', self.__class__.TXT:'https://drive.google.com/file/d/{file_id}' }
+            if not doc_type_to_link.get(self):
+                raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
+            return doc_type_to_link[self].format(file_id=file_id)
+        elif doc_storage_type == faiss_rm.DocStorageType.DropBox:
+            doc_type_to_link:Dict[Self, str] = { self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}', self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}', self.__class__.PDF:'https://drive.google.com/file/d/{file_id}', self.__class__.TXT:'https://drive.google.com/file/d/{file_id}' }
+            if not doc_type_to_link.get(self):
+                raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
+            return doc_type_to_link[self].format(file_id=file_id)
+        else:
+            raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
+    
 class RetrieverStrategyEnum(enum.Enum):
     FullDocStrategy = 1
     PreAndPostChunkStrategy = 2
@@ -56,7 +89,101 @@ class ChatConfiguration:
     print_trace_context_choice:bool
     file_details:bool
     retreiver_strategy:RetrieverStrategyEnum
+
+
+@dataclasses.dataclass
+class DocumentChunkDetails:
+    index_in_faiss:int
+    faiss_rm_vdb:faiss_rm.FaissRM
+    faiss_rm_vdb_id:int   # currently the index of the vdb in a list of VDBs.  TODO: we need to store this ID in the DB or maintain an ordered list in the DB or similar
+    doc_storage_type:faiss_rm.DocStorageType
+    distance:float           # similarity score from vdb
+    file_type:DocumentType 
+    file_path:str = None
+    file_name:str = None
+    file_id:str = None
+    file_info:dict = dataclasses.field(default=None, repr=False)    # finfo or details about the file
+    para_id:int = None       # the paragraph number
+    para_dict:dict = dataclasses.field(default=None, repr=False) # details of this paragraph
+    para_text_formatted:str = dataclasses.field(default=None, repr=False)
+    cross_encoder_score:float = None
+    retr_sorted_idx:int = None # the position of this chunk when sorted by the retriever
+    reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
     
+    def _get_file_key(self):
+        return f"{self.faiss_rm_vdb_id}/{self.file_id}"
+
+@dataclasses.dataclass
+class DocumentChunkRange:
+    """ end_para_id is inclusive """
+    doc_chunk:DocumentChunkDetails
+    start_para_id:int = None
+    end_para_id:int = None
+    """ end_para_id is inclusive """
+    chunk_overlap_processed = False
+
+    def _get_file_key(self):
+        return self.doc_chunk._get_file_key()
+    
+    def isChunkRangeInsideRangeList(self, chunk_range_list:List[Self]):
+        for chunk_range in chunk_range_list:
+            if chunk_range._get_file_key() == self._get_file_key() and chunk_range.start_para_id <= self.start_para_id and chunk_range.end_para_id >= self.end_para_id:
+                return chunk_range
+        
+        return None
+    
+    @classmethod
+    def _get_merged_chunk_ranges(clz, context_chunk_range_list:List[Self]) -> List[Self]:
+        merged_chunks:List[Self] = []
+        for curr_chunk_range in context_chunk_range_list:
+            # check if we have already created merged chunks for this file.
+            curr_file_key:str = curr_chunk_range.doc_chunk._get_file_key()
+            merged_chunks_curr_file = [ merged_chunk for merged_chunk in merged_chunks if merged_chunk.doc_chunk._get_file_key() == curr_file_key ]
+            # if so, skip this chunk range.
+            if len(merged_chunks_curr_file): continue
+            
+            all_chunks_curr_file:List[Self] = [ chunk_range for chunk_range in context_chunk_range_list if chunk_range.doc_chunk._get_file_key() == curr_file_key ]
+            
+            sorted_all_chunks_curr_file:List[Self] = sorted(all_chunks_curr_file, key= lambda elem_chunk_range: elem_chunk_range.start_para_id )
+            
+            curr_merged_chunk:Self = None
+            for sorted_elem in sorted_all_chunks_curr_file:
+                if not curr_merged_chunk: 
+                    # we only do a shallow copy.  ok, since we only modify non reference data
+                    curr_merged_chunk = copy.copy(sorted_elem)
+                    continue
+                
+                # check if there is a overlap between chunks
+                if curr_merged_chunk.end_para_id >= sorted_elem.start_para_id:
+                    if curr_merged_chunk.end_para_id <= sorted_elem.end_para_id:
+                        curr_merged_chunk.end_para_id = sorted_elem.end_para_id
+                # there is no overlap
+                else:  
+                    merged_chunks.append(curr_merged_chunk)
+                    curr_merged_chunk = copy.copy(sorted_elem)
+            merged_chunks.append(curr_merged_chunk)
+        
+        return merged_chunks
+            
+    @classmethod
+    # https://stackoverflow.com/questions/33533148/how-do-i-type-hint-a-method-with-the-type-of-the-enclosing-class
+    def process_overlaps(clz, context_chunk_range_list:List[Self]) -> List[Self]:
+        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
+
+        out_chunk_range_list:List[Self] = []
+        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
+        for chunk_range in context_chunk_range_list:
+            merged_chunk_range = chunk_range.isChunkRangeInsideRangeList(merged_chunk_range_list)
+            if not merged_chunk_range: 
+                print(f"Raising exception: {chunk_range} not found in {merged_chunk_range_list}")
+                raise Exception(f"Unable to find chunk range with vbd_id={chunk_range.doc_chunk.faiss_rm_vdb_id} file_name={chunk_range.doc_chunk.file_name} para_id={chunk_range.doc_chunk.para_id} start_para_id={chunk_range.start_para_id} end_para_id={chunk_range.end_para_id}")
+            if merged_chunk_range.isChunkRangeInsideRangeList(out_chunk_range_list):
+                continue
+            else:
+                out_chunk_range_list.append(merged_chunk_range)
+                
+        return out_chunk_range_list
+        
 def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat'):
     """
     documents is a dict like {fileid: finfo}; 
@@ -72,13 +199,16 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 
     # get the user message, which is the last line
     last_msg:str = body['messages'][-1]['content']
-    tracebuf = ['**Begin Trace**']; context_srcs=[]; srp:str
+    tracebuf = ['**Begin Trace**']; filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}; srp:str
     chat_config:ChatConfiguration; last_msg:str
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
     srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
-                        tracebuf, context_srcs, thread_id, chat_config, last_msg)
+                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
+    
+    context_srcs:List[str]; context_srcs_links:List[ContextSource]
+    context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
     if chat_config.print_trace:
         tstr = ""
         for tt in tracebuf:
@@ -100,7 +230,8 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
             "delta": {
                 "role": "assistant",
                 "content": f"\n\n{srp}"
-                }
+                },
+            "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
     res_str = json.dumps(res)
@@ -149,7 +280,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
 
 def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
-                                    context_srcs:List[str], assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str) -> Tuple[str, str]:
+                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
@@ -308,7 +439,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             if tool.function.name == "search_question_in_db":
                 tool_arg_question = args_dict.get('question')
                 context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                context_srcs, chat_config, tool_arg_question)
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question)
                 print(f"**{_prtime()}: Tool output:** context={context}")
                 tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                 tool_outputs.append({
@@ -320,7 +451,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 tool_arg_question = args_dict.get('question')
                 num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
                 tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                context_srcs, chat_config, tool_arg_question, num_files)
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
                 print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
                 tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
                 tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
@@ -346,98 +477,6 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     
     return None, None
 
-@dataclasses.dataclass
-class DocumentChunkDetails:
-    index_in_faiss:int
-    faiss_rm_vdb:faiss_rm.FaissRM
-    faiss_rm_vdb_id:int   # currently the index of the vdb in a list of VDBs.  TODO: we need to store this ID in the DB or maintain an ordered list in the DB or similar
-    distance:float           # similarity score from vdb
-    file_path:str = None
-    file_name:str = None
-    file_id:str = None
-    file_info:dict = dataclasses.field(default=None, repr=False)    # finfo or details about the file
-    para_id:int = None       # the paragraph number
-    para_dict:dict = dataclasses.field(default=None, repr=False) # details of this paragraph
-    para_text_formatted:str = dataclasses.field(default=None, repr=False)
-    cross_encoder_score:float = None
-    retr_sorted_idx:int = None # the position of this chunk when sorted by the retriever
-    reranker_sorted_idx:int = None # the position of this chunk when sorted by the reranker
-    
-    def _get_file_key(self):
-        return f"{self.faiss_rm_vdb_id}/{self.file_id}"
-
-@dataclasses.dataclass
-class DocumentChunkRange:
-    """ end_para_id is inclusive """
-    doc_chunk:DocumentChunkDetails
-    start_para_id:int = None
-    end_para_id:int = None
-    """ end_para_id is inclusive """
-    chunk_overlap_processed = False
-
-    def _get_file_key(self):
-        return self.doc_chunk._get_file_key()
-    
-    def isChunkRangeInsideRangeList(self, chunk_range_list:List[Self]):
-        for chunk_range in chunk_range_list:
-            if chunk_range._get_file_key() == self._get_file_key() and chunk_range.start_para_id <= self.start_para_id and chunk_range.end_para_id >= self.end_para_id:
-                return chunk_range
-        
-        return None
-    
-    @classmethod
-    def _get_merged_chunk_ranges(clz, context_chunk_range_list:List[Self]) -> List[Self]:
-        merged_chunks:List[Self] = []
-        for curr_chunk_range in context_chunk_range_list:
-            # check if we have already created merged chunks for this file.
-            curr_file_key:str = curr_chunk_range.doc_chunk._get_file_key()
-            merged_chunks_curr_file = [ merged_chunk for merged_chunk in merged_chunks if merged_chunk.doc_chunk._get_file_key() == curr_file_key ]
-            # if so, skip this chunk range.
-            if len(merged_chunks_curr_file): continue
-            
-            all_chunks_curr_file:List[Self] = [ chunk_range for chunk_range in context_chunk_range_list if chunk_range.doc_chunk._get_file_key() == curr_file_key ]
-            
-            sorted_all_chunks_curr_file:List[Self] = sorted(all_chunks_curr_file, key= lambda elem_chunk_range: elem_chunk_range.start_para_id )
-            
-            curr_merged_chunk:Self = None
-            for sorted_elem in sorted_all_chunks_curr_file:
-                if not curr_merged_chunk: 
-                    # we only do a shallow copy.  ok, since we only modify non reference data
-                    curr_merged_chunk = copy.copy(sorted_elem)
-                    continue
-                
-                # check if there is a overlap between chunks
-                if curr_merged_chunk.end_para_id >= sorted_elem.start_para_id:
-                    if curr_merged_chunk.end_para_id <= sorted_elem.end_para_id:
-                        curr_merged_chunk.end_para_id = sorted_elem.end_para_id
-                # there is no overlap
-                else:  
-                    merged_chunks.append(curr_merged_chunk)
-                    curr_merged_chunk = copy.copy(sorted_elem)
-            merged_chunks.append(curr_merged_chunk)
-        
-        return merged_chunks
-            
-    @classmethod
-    # https://stackoverflow.com/questions/33533148/how-do-i-type-hint-a-method-with-the-type-of-the-enclosing-class
-    def process_overlaps(clz, context_chunk_range_list:List[Self]) -> List[Self]:
-        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
-
-        out_chunk_range_list:List[Self] = []
-        merged_chunk_range_list = DocumentChunkRange._get_merged_chunk_ranges(context_chunk_range_list)
-        for chunk_range in context_chunk_range_list:
-            merged_chunk_range = chunk_range.isChunkRangeInsideRangeList(merged_chunk_range_list)
-            if not merged_chunk_range: 
-                print(f"Raising exception: {chunk_range} not found in {merged_chunk_range_list}")
-                raise Exception(f"Unable to find chunk range with vbd_id={chunk_range.doc_chunk.faiss_rm_vdb_id} file_name={chunk_range.doc_chunk.file_name} para_id={chunk_range.doc_chunk.para_id} start_para_id={chunk_range.start_para_id} end_para_id={chunk_range.end_para_id}")
-            if merged_chunk_range.isChunkRangeInsideRangeList(out_chunk_range_list):
-                continue
-            else:
-                out_chunk_range_list.append(merged_chunk_range)
-                
-        return out_chunk_range_list
-                
-    
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
     """returns the tupe (error_dict, context)"""
     
@@ -471,12 +510,12 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
 
     
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
+                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
     
-    returns the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context """
+    returns the reranked indices (index into list of documentChunkDetails) and the list of DocumentChunkDetails  """
     use_ivfadc:bool; cross_encoder_10:bool; use_ner:bool; print_trace_context_choice:bool; retreiver_strategy:RetrieverStrategyEnum
     use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.cross_encoder_10, chat_config.use_ner, chat_config.print_trace_context_choice, chat_config.retreiver_strategy)
     
@@ -524,7 +563,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
         summed_scores:List[DocumentChunkDetails] = [] # array of (summed_score, index_in_faiss)
         for index_in_faiss, scores in passage_scores_dict.items():
-            summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, sum(scores), 
+            summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, faiss_rm_vdb.get_doc_storage_type(), sum(scores), 
+                                                      DocumentType.fromString(documents[index_map[index_in_faiss][0]]['filetype']),
                                                       documents[index_map[index_in_faiss][0]].get('path') if documents[index_map[index_in_faiss][0]].get('path') else None,
                                                       documents[index_map[index_in_faiss][0]]['filename'],
                                                       documents[index_map[index_in_faiss][0]]['fileid'],
@@ -600,10 +640,15 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     return reranked_indices, sorted_summed_scores
 
 def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str):
-
+                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str):
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
+    
+    the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context
+    """
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, chat_config, last_msg)
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
     
     context:str = ''
     all_docs_token_count = 0
@@ -696,8 +741,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     # else:
     #     print(f"*** contexts are the same")
 
-    # file --> [ DocumentChunkDetails ]; dict of file to all chunks in the file that need to go into the context
-    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
+    # file --> [ DocumentChunkDetails ]; dict of file to all chunks in the file that need to go into the context    
     for chunk_range in context_chunk_range_list:
         chunk_det = chunk_range.doc_chunk
         file_key:str = chunk_det._get_file_key()
@@ -705,24 +749,38 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             filekey_to_file_chunks_dict.get(file_key).append(chunk_det)
         else:
             filekey_to_file_chunks_dict[file_key] = [chunk_det]
+    
+    return new_context
 
+@dataclasses.dataclass
+class ContextSource:
+    file_path:str
+    file_name:str
+    file_url:str
+    
+def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]]) -> Tuple[List[str],List[ContextSource]] :
+
+    context_srcs:List[str] = []; context_srcs_links:List[str] = []
     for file_key, chunks in filekey_to_file_chunks_dict.items():
         para_indexes_str = ""
         for chunk_det in chunks:
             #chunk_det = chunks[0]
             para_indexes_str += f"ID={chunk_det.file_id}/{chunk_det.para_id}; "
+        # "<content...>.  \n**Context Source: My Drive/Castle/Castle/Learning/Body/Tight Hamstrings Solutions – Low Back Pain Program.pdf**\t<!-- ID=1p3VhQOv_opCCWxaaYknduz-WepUDifH3/5; ID=1p3VhQOv_opCCWxaaYknduz-WepUDifH3/3;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Learning/Body/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=1KEJF5ttZCCsJqM7pSia7BAGbf-sxgAWB/41;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=1-ACwOCTIT13K2DeceIotn7St2q8raC7S/41;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=10FAzdHpUBIjtodPL-f1EtnIiAXKsSwM7/41;   index_id=0 --><!-- ; thread_id=thread_RVWHBSftNlpsXdyI0H44Gtmu -->"
         if chunk_det.file_path:
             context_srcs.append(f"**Context Source: {chunk_det.file_path}{chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
+            # generate context src hrefs
+            context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name, chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id)))
         else:
             context_srcs.append(f"**Context Source: {chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
     
-    return context
+    return context_srcs, context_srcs_links
 
 def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], context_srcs:List[str], chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10):
+                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10):
 
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, context_srcs, chat_config, last_msg)
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
     
     files_dict:Dict[str,DocumentChunkDetails] = {}
     for i in range(len(reranked_indices)):
@@ -814,7 +872,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     last_msg = messages[len(messages) - 1]['content']
     print(f"new_chat: Last Message = {last_msg}")
     
-    tracebuf = ['**Begin Trace**']; context_srcs=[]
+    tracebuf = ['**Begin Trace**']; filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
     chat_config:ChatConfiguration; last_msg:str
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
 
@@ -824,9 +882,13 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     # string response??
     srp:str = ""; thread_id:str 
     srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    context_srcs, None, chat_config, last_msg)
+                                    filekey_to_file_chunks_dict, None, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
+    
+    context_srcs:List[str]; context_srcs_links:List[ContextSource]
+    context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
+    
     if chat_config.print_trace:
         tstr = ""
         for tt in tracebuf:
@@ -848,7 +910,8 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
             "delta": {
                 "role": "assistant",
                 "content": f"\n\n{srp}"
-                }
+                },
+            "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
     res_str = json.dumps(res)
@@ -908,8 +971,8 @@ def chat_completions(event, context):
     print(f"body={body}")
 
     faiss_rm_vdbs:List[faiss_rm.FaissRM] = []
-    for index in (None, 'dropbox'):
-        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, build_faiss_indexes=False, sub_prefix=index)
+    for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive], ['dropbox', faiss_rm.DocStorageType.DropBox] ):
+        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, doc_storage_type, build_faiss_indexes=False, sub_prefix=index)
         if faiss_rm_vdb: faiss_rm_vdbs.append(faiss_rm_vdb)
     if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
         print(f"chat: no faiss index. Returning 403")
