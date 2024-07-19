@@ -21,6 +21,7 @@ from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
 import datetime
+from datetime import timezone
 import subprocess
 import dropbox
 import jsons
@@ -688,7 +689,7 @@ def _read_index_metadata_json_local() -> IndexMetadata:
     return index_metadata
     
 def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client):
-    print(f"update_files_index_jsonl: Updating files_index.jsonl to s3://{bucket}/{user_prefix} with new embeddings for {len(done_embedding.items())} files")
+    print(f"update_files_index_jsonl: Entered dest=s3://{bucket}/{user_prefix} . new embeddings={len(done_embedding.items())}, unmodified={len(unmodified.items())}")
     # consolidate unmodified and done_embedding
     for fileid, file_item in done_embedding.items():
         unmodified[fileid] = file_item
@@ -804,24 +805,18 @@ def _get_dropbox_listing(dbx, dropbox_next_page_token):
 
 # returns unmodified, needs_embedding
 def _calc_filelists_dropbox(entries, s3_index):
-    unmodified = {}
     needs_embedding = {}
     num_deleted_files = 0
     for entry in entries:
         if isinstance(entry, dropbox.files.FolderMetadata):
             print(f"_calc_filelists_dropbox: type=DIR id={entry.id} path_display={entry.path_display}, name={entry.name}")
         elif isinstance(entry, dropbox.files.FileMetadata):
-            print(f"_calc_filelists_dropbox: type=FILE id={entry.id} path_display={entry.path_display}, name={entry.name}")
-            if entry.id in s3_index and s3_index[entry.id]['mtime'] == entry.client_modified:
-                if 'partial' in s3_index[entry.id]:
-                    needs_embedding[entry.id] = s3_index[entry.id]
-                else:
-                    unmodified[entry.id] = s3_index[entry.id]
-            else:
-                needs_embedding[entry.id] = {'filename': entry.name,
-                                            'fileid': entry.id,
-                                            'path': entry.path_display,
-                                            'mtime': entry.client_modified}
+            print(f"_calc_filelists_dropbox: type=FILE id={entry.id} path_display={entry.path_display}, name={entry.name}, mtime={entry.server_modified}")
+            mtime = entry.server_modified.replace(tzinfo=timezone.utc)
+            needs_embedding[entry.id] = {'filename': entry.name,
+                                        'fileid': entry.id,
+                                        'path': entry.path_display,
+                                        'mtime': mtime}
         elif isinstance(entry, dropbox.files.DeletedMetadata):
             print(f"_calc_filelists_dropbox: type=DELETED path_display={entry.path_display}, name={entry.name}")
             to_delete = []
@@ -833,15 +828,21 @@ def _calc_filelists_dropbox(entries, s3_index):
                     print(f"_calc_filelists_dropbox: DELETED No! deleted={entry.path_display}. s3entry={s3entry['path']}")
             for td in to_delete:
                 del s3_index[td]
-                if td in unmodified:
-                    del unmodified[td]
                 if td in needs_embedding:
                     del needs_embedding[td]
             num_deleted_files += len(to_delete)
         else:
             print(f"_calc_filelists_dropbox: Unknown entry type {entry}. Ignoring and continuing..")
-    print(f"_calc_filelists_dropbox: return. unmodified={unmodified}, needs_embedding={needs_embedding}, num_deleted_files={num_deleted_files}")
-    return unmodified, needs_embedding, num_deleted_files
+    # if there is any partial entry in s3_index, move it to needs_embedding
+    to_move = []
+    for fid, entry in s3_index.items():
+        if 'partial' in entry:
+            to_move.append(fid)
+    for tm in to_move:
+        needs_embedding[tm] = s3_index[tm]
+        del s3_index[tm]
+    print(f"_calc_filelists_dropbox: return. s3_index={s3_index}, needs_embedding={needs_embedding}, num_deleted_files={num_deleted_files}")
+    return s3_index, needs_embedding, num_deleted_files
 
 def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
     print(f'update_index_for_user_dropbox: Entered. {item}')
@@ -979,15 +980,16 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
     folder_details = {}
     deleted_files = {}
 
+    new_start_page_token = None
+    next_token = gdrive_next_page_token
     try:
         driveid = service.files().get(fileId='root').execute()['id']
         folder_details[driveid] = {'filename': 'My Drive'}
     except Exception as ex:
         print(f"_get_gdrive_listing_incremental: Exception {ex} while getting driveid")
         return gdrive_listing, deleted_files, new_start_page_token
+        return gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
 
-    new_start_page_token = None
-    next_token = gdrive_next_page_token
     escape = 0
     while not new_start_page_token:
         escape += 1
@@ -1048,7 +1050,7 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                 print(f"_get_gdrive_listing_incremental: headers={str(resp.headers)}")
             else:
                 print(f"_get_gdrive_listing_incremental: caught {ex}")
-    return gdrive_listing, deleted_files, new_start_page_token
+    return gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
 
 def _get_gdrive_listing_full(service, item, folder_id):
     gdrive_listing = {}

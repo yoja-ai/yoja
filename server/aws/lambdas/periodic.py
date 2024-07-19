@@ -28,12 +28,12 @@ class PeriodicBody:
 def upd(client, item, s3client, bucket, prefix, start_time):
     gdrive_next_page_token, dropbox_next_page_token, status = lock_user(item, client)
     if status:
-        print(f"periodic.upd: before updating index. gdrive_next_page_token={gdrive_next_page_token}")
+        print(f"periodic.upd: before updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
         gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(item, s3client,
                                                 bucket=bucket, prefix=prefix,
                                                 start_time=start_time, only_create_index=False,
                                                 gdrive_next_page_token=gdrive_next_page_token, dropbox_next_page_token=dropbox_next_page_token)
-        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}")
+        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
 
         unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token)
     return
