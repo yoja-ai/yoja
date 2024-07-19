@@ -33,17 +33,20 @@ class FaissRM():
             print(f"faiss_rm: Entered. Document chunks=")
             for ch in documents:
                 print(f"\t{ch}")
-        
+
         if not flat_index_fname:
-            print(f"Computing flat index using embedding vectors")
-            embeddings = pre_calc_embeddings
-            xb:np.array = np.array(embeddings, dtype=np.float32)
-            faiss.normalize_L2(xb)
-            # dimension
-            d = xb.shape[1]
-            print(f"FaissRM: embedding dimension={d}")
-            self._faiss_index:faiss.IndexFlatL2 = faiss.index_factory(d, "Flat", faiss.METRIC_INNER_PRODUCT)
-            self._faiss_index.add(xb)
+            if len(pre_calc_embeddings) == 0:
+                raise Exception(f"faiss_rm: Error. Neither pre-calculated embeddings nor flat_index_fname present")
+            else:
+                print(f"Computing flat index using embedding vectors")
+                embeddings = pre_calc_embeddings
+                xb:np.array = np.array(embeddings, dtype=np.float32)
+                faiss.normalize_L2(xb)
+                # dimension
+                d = xb.shape[1]
+                print(f"FaissRM: embedding dimension={d}")
+                self._faiss_index:faiss.IndexFlatL2 = faiss.index_factory(d, "Flat", faiss.METRIC_INNER_PRODUCT)
+                self._faiss_index.add(xb)
         else:
             print(f"Reading flat index from file {flat_index_fname}")
             self._faiss_index =faiss.read_index(flat_index_fname)

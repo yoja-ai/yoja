@@ -267,6 +267,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None
+    print(f"init_vdb: finished reading files_index.jsonl.gz. Entries in fls dict={len(fls.items())}")
 
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
@@ -282,6 +283,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
             para = finfo[key][para_index]
             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
             index_map.append((fileid, para_index))
+    print(f"init_vdb: finished loading embeddings/index_map. Entries in embeddings={len(embeddings)}")
+
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
 
 def _calc_path(service, entry, folder_details):
@@ -337,7 +340,6 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
     return unmodified, needs_embedding, deleted
 
 def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
-    """ download the jsonl that has a line for each file in the google drive; Return the dict {'1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM': {'filename': 'Multimodal', 'fileid': '1S8cnVQqarbVMOnOWcixbqX_7DSMzZL3gXVbURrFNSPM', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@yoja.ai/data/embeddings-1712657862202462825.jsonl'}, paragraphs:[{embedding:xxxxx, paragraph_text|aaaa:yyyy}], slides:[{embedding:xxxx, title:abc, text=xyz}] }   """
     rv = {}
     if download_files_index(s3client, bucket, prefix, False):
         with gzip.open(FILES_INDEX_JSONL_GZ, "rb") as rfp:
@@ -807,9 +809,9 @@ def _calc_filelists_dropbox(entries, s3_index):
     num_deleted_files = 0
     for entry in entries:
         if isinstance(entry, dropbox.files.FolderMetadata):
-            print(f"_calc_filelists_dropbox: DIR id={entry.id} path_display={entry.path_display}, name={entry.name}")
+            print(f"_calc_filelists_dropbox: type=DIR id={entry.id} path_display={entry.path_display}, name={entry.name}")
         elif isinstance(entry, dropbox.files.FileMetadata):
-            print(f"_calc_filelists_dropbox: FILE id={entry.id} path_display={entry.path_display}, name={entry.name}")
+            print(f"_calc_filelists_dropbox: type=FILE id={entry.id} path_display={entry.path_display}, name={entry.name}")
             if entry.id in s3_index and s3_index[entry.id]['mtime'] == entry.client_modified:
                 if 'partial' in s3_index[entry.id]:
                     needs_embedding[entry.id] = s3_index[entry.id]
@@ -821,20 +823,20 @@ def _calc_filelists_dropbox(entries, s3_index):
                                             'path': entry.path_display,
                                             'mtime': entry.client_modified}
         elif isinstance(entry, dropbox.files.DeletedMetadata):
-            print(f"_calc_filelists_dropbox: DELETED id={entry.id} path_display={entry.path_display}, name={entry.name}")
+            print(f"_calc_filelists_dropbox: type=DELETED path_display={entry.path_display}, name={entry.name}")
             to_delete = []
-            for s3entry in s3_index:
+            for fileid, s3entry in s3_index.items():
                 if s3entry['path'].startswith(entry.path_display):
                     print(f"_calc_filelists_dropbox: DELETED Yes! deleted={entry.path_display}. s3entry={s3entry['path']}")
-                    to_delete.append(s3entry['fileid'])
+                    to_delete.append(fileid)
                 else:
                     print(f"_calc_filelists_dropbox: DELETED No! deleted={entry.path_display}. s3entry={s3entry['path']}")
             for td in to_delete:
-                s3_index.pop(td)
+                del s3_index[td]
                 if td in unmodified:
-                    unmodified.pop(td)
+                    del unmodified[td]
                 if td in needs_embedding:
-                    needs_embedding.pop(td)
+                    del needs_embedding[td]
             num_deleted_files += len(to_delete)
         else:
             print(f"_calc_filelists_dropbox: Unknown entry type {entry}. Ignoring and continuing..")
