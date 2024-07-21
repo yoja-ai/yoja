@@ -58,3 +58,7 @@ Login to the OpenAI REST API account and create a new secret key
         - Add Behavior pointing /webhook/webhook_dropbox to this newly created origin
 
 ## Add DNS entry pointing chat.<domain> to the above CloudFront distro's URL
+
+## Publish html from <yoja_root>/html_new
+
+- Use the script html_new/scripts/copy-to-s3.sh
