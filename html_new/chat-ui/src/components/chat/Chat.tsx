@@ -212,7 +212,9 @@ export function Chat({
                   </div>
                   {  (msg.source &&  msg.source.length > 0) && 
                     <div>
-                      <span className="gpt-msg-text"> Sources </span>
+                      <span className="gpt-msg-text">
+                        {msg.source.length > 1 ? "Sources" : "Source"} 
+                      </span>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                         {
                           msg.source?.map((source) =>  
