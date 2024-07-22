@@ -12,7 +12,7 @@ const SettingsModel = () => {
   const [gdriveEmail, setGdriveEmail] = React.useState(false);
   const [dropboxEmail, setDropboxEmail] = React.useState(false);
   const [userEmail, setUserEmail] = React.useState('');
-  const DROPBOX_CLIENT_ID = servicesConfig.DROPBOX_CLIENT_ID;
+  const DROPBOX_CLIENT_ID = servicesConfig?.DROPBOX_CLIENT_ID;
 
   useEffect(() => {
     console.log('login api');
@@ -102,7 +102,10 @@ const SettingsModel = () => {
           <div className="settings-inner-layout">
             <span> Connections </span>
             <div>
-                <div style={{display: 'flex', justifyContent:'space-between'}}>
+                <div style={{display: 'flex', justifyContent:'space-between', alignItems:'center'}}>
+                  <div style={{width: '50px', display: 'flex', justifyContent:'center', alignItems:'center'}}>
+                    <img style={{ height: '32px'}} src="gdrive.png"/>
+                  </div>
                   <div className="settings-account-info">
                     <span className="settings-subhedder"> Google Drive  </span>
                     <span className="settings-body-text"> Allow Yoja to access your Google Docs, Sheets, and Slides files.  </span>
@@ -111,21 +114,27 @@ const SettingsModel = () => {
                 </div>
             </div>
             <div>
-                <div style={{display: 'flex', justifyContent:'space-between'}}>
+                <div style={{display: 'flex', justifyContent:'space-between', alignItems:'center'}}>
+                  <div style={{width: '50px', display: 'flex', justifyContent:'center', alignItems:'center'}}>
+                    <img style={{ height: '32px'}} src="dropbox.png"/>
+                  </div>
                   <div className="settings-account-info">
                     <span className="settings-subhedder"> DropBox  </span>
-                    <span className="settings-body-text"> Allow Yoja to access your DropBox, Sheets, and Slides files.  </span>
+                    <span className="settings-body-text"> Allow Yoja to access your DropBox files, Sheets, and Slides files.  </span>
                   </div>
                   <button disabled={dropboxEmail} className="settings-model-button" onClick={connectDropBox}> <span style={{ color: '1C1B1F', fontSize: '14px', fontWeight: '700'}}> {dropboxEmail ? "connected": "Connect"} </span> </button>
                 </div>
             </div>
             <div>
-                <div style={{display: 'flex', justifyContent:'space-between'}}>
-                <div className="settings-account-info">
+                <div style={{display: 'flex', justifyContent:'space-between', alignItems:'center'}}>
+                  <div style={{width: '60px', display: 'flex', justifyContent:'center', alignItems:'center'}}>
+                    <img style={{ height: '22px'}} src="onedrive.png"/>
+                  </div>
+                  <div className="settings-account-info">
                     <span className="settings-subhedder"> Microsoft OneDrive  </span>
                     <span className="settings-body-text"> Allow Yoja to access your Microsoft Word, Excel, Powerpoint files.  </span>
-                </div>
-                <button disabled className="settings-model-button"> <span style={{ color: '1C1B1F', fontSize: '14px', fontWeight: '700'}}> Coming soon </span> </button>
+                  </div>
+                  <button disabled className="settings-model-button"> <span style={{ color: '1C1B1F', fontSize: '14px', fontWeight: '700'}}> Coming soon </span> </button>
                 </div>
             </div>
            </div>

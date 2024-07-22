@@ -3,6 +3,15 @@ export interface Message {
     role: string;
     content: string;
     source?: SourceFile[];
+    like?: boolean;
+    dislike?: boolean;
+    copied?: boolean;
+}
+
+export interface ChatHistory {
+    name: string;
+    content: Message[];
+    time: Date
 }
 
 export interface SourceFile {

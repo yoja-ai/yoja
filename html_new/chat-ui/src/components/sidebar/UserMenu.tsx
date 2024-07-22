@@ -6,6 +6,7 @@ import { Menu, Modal } from 'antd';
 import SubMenu from "antd/es/menu/SubMenu";
 import SettingsModel from "./SettingsModel";
 import { Avatar, AvatarImage } from "../ui/avatar";
+import { LogOut, Settings } from "lucide-react";
 
 const { useState, useEffect, useRef } = React
 
@@ -15,7 +16,6 @@ const UserMenu = ({isCollapsed}: any) => {
   const documentClickHandler = useRef()
   let accessToken: any = null;
   
-  console.log('isCollapsed', isCollapsed);
   type MenuItem = Required<MenuProps>['items'][number];
 
   const items: MenuItem[] = [
@@ -140,10 +140,10 @@ const UserMenu = ({isCollapsed}: any) => {
             }
           >
             <Menu.Item key="Settings" onClick={showModal}>
-              <span> Setting </span>
+              <span style={{display: 'flex', justifyContent:'center', alignItems:'center', gap: '5px'}}> <Settings size={16} /> Setting </span>
             </Menu.Item>
             <Menu.Item key="SignOut"  onClick={handleSignoutClick}>
-              <div> SignOut </div>
+              <div style={{display: 'flex', justifyContent:'center', alignItems:'center',  gap: '5px'}}> <LogOut size={16} /> SignOut </div>
             </Menu.Item>
           </SubMenu>
         </Menu>
