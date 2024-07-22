@@ -1,5 +1,5 @@
 import { Message, UserInfo } from "../../type";
-import React, { useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ChatBottom from "./ChatBottom";
 import { AnimatePresence, m, motion } from "framer-motion";
 import { Avatar, AvatarImage } from "../ui/avatar";
@@ -9,28 +9,30 @@ import { ThreeDots } from "react-loader-spinner";
 declare var window: any
 
 interface ChatProps {
-  messages?: Message[];
+  currentChat: Message[];
   userInfo: UserInfo;
   sendMessage: (newMessage: Message) => void;
+  updateMessage: (newMessage: Message[]) => void;
   isMobile: boolean;
   isLoading: boolean;
 }
 
 export function Chat({
-  messages,
+  currentChat,
   userInfo,
   sendMessage,
+  updateMessage,
   isMobile,
   isLoading
 }: ChatProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (messagesContainerRef.current) {
       messagesContainerRef.current.scrollTop =
         messagesContainerRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [currentChat]);
 
   function dispaly(message: any): React.ReactNode {
     if(message.content) {
@@ -51,17 +53,101 @@ export function Chat({
     }
   }
 
+  const copyMessage = (message: any) => {
+    let msg: string = "";
+    if(message.content) {
+      let length = message.content.indexOf('**Context Source');
+      if(length < 1) {
+        length = message.content.indexOf('<!--');
+        if(length < 1) {
+          msg = message.content;
+        } else {
+          msg = message.content.substring(0, length);
+        }
+      } else {
+        msg = message.content.substring(0, length);
+      }
+    }
+    navigator.clipboard.writeText(msg);
+  }
+
+  const disLikeMessage = (message: Message) => {
+    if(message.dislike) {
+      message.dislike = false;
+      message.like = false;
+    } else {
+      message.dislike = true;
+      message.like = false;
+    }
+    message.dislike = true;
+    message.like = false;
+    const copyActivevChat = currentChat;
+    const ss = copyActivevChat.filter((chat=> chat.id === message.id))
+    copyActivevChat.map((chat=> {
+      if(chat.id === message.id) {
+        chat.like = message.like;
+        chat.dislike = message.dislike;
+      } 
+    }));
+    //ss[0].content = 'kjhjhkjjk';
+    //sendMessage(message)
+    updateMessage(copyActivevChat);
+  }
+
+  const likeMessage = (message: Message) => {
+    if(message.like) {
+      message.dislike = false;
+      message.like = false;
+
+    } else {
+      message.dislike = false;
+      message.like = true;
+    }
+    // const copyActivevChat = currentChat;
+    // copyActivevChat.map((chat=> {
+    //   if(chat.id === message.id) {
+    //     chat.like = message.like;
+    //     chat.dislike = message.dislike;
+    //   } 
+    // }));
+    // //setActiveChat(copyActivevChat);
+    // updateMessage(copyActivevChat);
+    const copyActivevChat = currentChat;
+    const ss = copyActivevChat.filter((chat=> chat.id === message.id))
+    copyActivevChat.map((chat=> {
+      if(chat.id === message.id) {
+        chat.like = message.like;
+        chat.dislike = message.dislike;
+      } 
+    }));
+    //ss[0].content = 'kjhjhkjjk';
+    //sendMessage(message)
+    updateMessage(copyActivevChat);
+  }
+
+  const modifyMessage = (msg: Message) => {
+    currentChat?.map((message=> {
+      if(message.id === msg.id) {
+        return msg;
+      } else {
+        return message;
+      }
+    }));
+    console.log('mess', currentChat);
+    //setActiveChat([]);
+  };
+
   return (
     <div className="chat-body chat-body-background">
       <div
         ref={messagesContainerRef}
         className="chat-body"
       > 
-      {messages?.length ?
+      {currentChat?.length ?
         <AnimatePresence>
-          {messages?.map((message, index) => (
+          {currentChat?.map((msg, index) => (
             <div key={index}>
-              { message.role === "user" ? 
+              { msg.role === "user" ? 
               <motion.div
                 key={index}
                 layout
@@ -73,7 +159,7 @@ export function Chat({
                   layout: {
                     type: "spring",
                     bounce: 0.3,
-                    duration: messages.indexOf(message) * 0.05 + 0.2,
+                    duration: currentChat.indexOf(msg) * 0.05 + 0.2,
                   },
                 }}
                 style={{
@@ -84,7 +170,7 @@ export function Chat({
               >
                 <div className="chat-message-view1">
                   <div className="chat-message-view2">
-                    <span className="chat-message-text"> {message.content} </span>
+                    <span className="chat-message-text"> {msg.content} </span>
                   </div>
                   <Avatar className="flex justify-center items-center">
                     <AvatarImage
@@ -107,7 +193,7 @@ export function Chat({
                   layout: {
                     type: "spring",
                     bounce: 0.3,
-                    duration: messages.indexOf(message) * 0.05 + 0.2,
+                    duration: currentChat.indexOf(msg) * 0.05 + 0.2,
                   },
                 }}
                 style={{
@@ -121,37 +207,29 @@ export function Chat({
                     <img style={{ height: '16px'}} src="Yoja.svg"/>
                     <span className="gpt-msg-header-text"> for Google Drive </span>
                   </div>
-                  <div style={{width: '100%', padding: '24px'}}>
-                    <span className="gpt-msg-text"> { dispaly(message) } </span>
+                  <div style={{width: '100%', padding: '12px'}}>
+                    <span className="gpt-msg-text"> { dispaly(msg) } </span>
                   </div>
-                  <div>
-                    <span className="gpt-msg-text"> Sources </span>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
-                      {
-                        message.source?.map((source) =>  
-                          <a className="gpt-msg-sourece" href={source.fullPath} target="_blank">
-                            <img style={{width:'16px', height: '16px'}} src={source.extension === "doc" || source.extension === "docx" ? "docs.png" : "slide.png"}/>
-                            <span className="gpt-source-name"> {source.name} </span>
-                          </a>
-                          // <div style={{ display: 'flex', gap: '8px'}}>
-                          //   <div className="gpt-msg-sourece">
-                          //     <img style={{width:'16px', height: '16px'}} src="slide.png"/>
-                          //     <span className="gpt-source-name"> {source.name} </span>
-                          //   </div>
-                          //   {/* <div className="gpt-msg-sourece">
-                          //     <img style={{width:'16px', height: '16px'}} src="docs.png"/>
-                          //     <span className="gpt-source-name"> InfinStor One Pager.docx </span>
-                          //   </div> */}
-                          // </div>
-                        )
-                      }
+                  {  (msg.source &&  msg.source.length > 0) && 
+                    <div>
+                      <span className="gpt-msg-text"> Sources </span>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                        {
+                          msg.source?.map((source) =>  
+                            <a className="gpt-msg-sourece" href={source.fullPath} target="_blank">
+                              <img style={{width:'16px', height: '16px'}} src={source.extension === "doc" || source.extension === "docx" ? "docs.png" : "slide.png"}/>
+                              <span className="gpt-source-name"> {source.name} </span>
+                            </a>
+                          )
+                        }
+                      </div>
                     </div>
-                  </div>
+                  }
                   <div className="gpt-msg-options">
-                    <Files size={13} color="#616161"/>
+                    <Files size={15} color="#616161" className="gpt-msg-icon" onClick={()=> {copyMessage(msg)}}/>
                     {/* <RotateCcw size={13} color="#616161"/> */}
-                    <ThumbsUp size={13} color="#616161"/>
-                    <ThumbsDown size={13} color="#616161"/>
+                    <ThumbsUp size={15} color="#616161" fill={msg.like ? '#616161' : '#FFFFFF' } className="gpt-msg-icon" onClick={()=> {likeMessage(msg)}}/>
+                    <ThumbsDown size={15} color="#616161" fill={msg.dislike ? '#616161' : '#FFFFFF' } className="gpt-msg-icon" onClick={()=> {disLikeMessage(msg)}}/>
                     {/* <EllipsisVertical size={13} color="#616161"/> */}
                   </div>
                 </div>
@@ -173,7 +251,7 @@ export function Chat({
           }
         </AnimatePresence> : <div>  {/* </New chat view> */}  </div>}
       </div>
-      <ChatBottom sendMessage={sendMessage} messages={messages} isMobile={isMobile}/>
+      <ChatBottom sendMessage={sendMessage} messages={currentChat} isMobile={isMobile} isLoading={isLoading}/>
     </div>
   );
 }

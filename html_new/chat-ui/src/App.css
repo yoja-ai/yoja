@@ -50,11 +50,18 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 4px;
+  border-radius: 999px;
   border: 2px solid var(--border, #E6E6E6);
+  background: var(--bgAlt, #EEEEEE);
   cursor: pointer;
 }
 
+.sidebar-header-icon:hover {
+  border: 2px solid var(--border, #FF6442);
+  background: var(--bgAlt, #FF6442);
+  cursor: pointer;
+  color: #FFFFFF;
+}
 .chat {
   display: flex;
   flex-direction: column;
@@ -109,7 +116,7 @@
 
 .chat-body-background {
   padding: 20px 100px 20px 100px;
-  background-image: linear-gradient(to bottom right, rgb(247, 241, 241), rgb(171, 204, 205));
+  background: var(--bg, #FFFFFF);
 }
 
 .chat-body {
@@ -133,23 +140,22 @@
 .chat-message-view1 {
   display: flex;
   gap: 6px;
-  align-items: center;
+  /* align-items: center; */
 }
 
 .chat-message-view2 {
   padding: 8px 24px 8px 24px;
-  border-radius: 16px 16px 0px 16px;
-  background: var(--brand, #4285F4);
-  box-shadow: 0px 2px 8px 0px #0000001A;
+  border-radius: 16px;
+  background: var(--bgAlt, #EEEEEE);
 }
 
 .chat-message-text {
   /* font-family: Nunito Sans; */
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 19.1px;
   text-align: left;
-  color: var(--textInverse, #FFFFFF);
+  color: var(#1C1B1F);
 }
 .chat-gpt-message{
   width: 100%;
@@ -163,7 +169,7 @@
 }
 
 .gpt-msg-header-text {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
   line-height: 19.1px;
   text-align: left;
@@ -178,7 +184,9 @@
   line-height: 19.1px;
   text-align: left;
 }
-
+.gpt-msg-icon{
+  cursor: pointer;
+}
 .gpt-msg-sourece{
   display: flex;
   align-items: center;
@@ -245,6 +253,8 @@
   width: 100%;
   height: 1.25rem;
   display: flex;
+  padding: 12px 18px 12px 24px;
+  background: var(--bgAlt, #EEEEEE);
 }
 
 .chat-box-icons {
@@ -253,6 +263,18 @@
   bottom: 10px;
   gap: 5px;
   display: flex;
+}
+.chat-box-send-icon {
+  border-radius: 999%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  padding: 3px;
+  border: 2px solid var(--border, #FF6442);
+  background: var(--bgAlt, #FF6442);
+  cursor: pointer;
+  color: #FFFFFF;
 }
 .chat-box-icon {
   border-radius: 20%;
@@ -291,7 +313,7 @@
 .search-icon {
   position: absolute;
   left: 10px;
-  bottom: 12px;
+  bottom: 15px;
   gap: 8px;
   display: flex;
 }
@@ -347,13 +369,30 @@
 
 
 .history-item {
+  display: flex;
+  justify-content: space-between;
   padding: 8px 16px 8px 16px;
   gap: 8px;
   border-radius: 8px;
-  cursor: pointer;
+  cursor:default;
 }
+
 .history-item:hover{
   background: var(--bgAlt, #EEEEEE);
+}
+
+.history-item .history-item-menu {
+  visibility: hidden;
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.history-item:hover .history-item-menu {
+  background-color: transparent;
+  visibility: visible;
 }
 
 .history-item-text {
@@ -438,7 +477,9 @@
   display: flex;
 }
 
-
+.sidebar-user-avatar{
+  padding-right: 5px;
+}
 
 .body-area {
   position: relative;
@@ -618,6 +659,18 @@
 .ant-menu-submenu-arrow {
   display: none;
 }
-.ant-menu-submenu-title{
-  padding-inline-end: 2px !important
+.popup-menu-container .ant-menu-submenu-title {
+  padding-inline: unset;
+}
+.history-menu-container ul {
+  border-inline-end: none !important;
+  height: 20px;
+}
+.history-menu-container ul li{
+  height: 20px;
+}
+.history-menu-container .ant-menu-submenu-title {
+  padding-inline: unset;
+  height: 20px !important;
+  bottom: 5px;
 }

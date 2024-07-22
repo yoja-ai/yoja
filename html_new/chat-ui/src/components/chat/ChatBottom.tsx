@@ -17,12 +17,13 @@ import {
     sendMessage: (newMessage: Message) => void;
     isMobile: boolean;
     messages: any;
+    isLoading: boolean;
   }
   
   export const BottombarIcons = [{ icon: FileImage }, { icon: Paperclip }];
   
   export default function ChatBottom({
-    sendMessage, isMobile, messages
+    sendMessage, isMobile, messages, isLoading
   }: ChatBottomProps) {
     const [message, setMessage] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -44,7 +45,7 @@ import {
     const handleSend = () => {
       if (message.trim()) {
         const newMessage: Message = {
-          //id: message.length + 1,
+          id: messages.length + 1,
           role: 'user',
           content: message.trim(),
         };
@@ -94,10 +95,10 @@ import {
               onChange={handleInputChange}
               name="message"
               placeholder="Aa"
+              disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">
-                <Mic size={16} color="#71717a" className="chat-box-icon"/>
-                <SendHorizontal size={16} color="#71717a" className="chat-box-icon" onClick={handleSend}/>
+                <SendHorizontal size={16} className="chat-box-send-icon" opacity={ isLoading ? 0.5 : 1} onClick={handleSend}/>
                 {message.trim() ? (
                     <X size={16} color="#71717a" className="chat-box-icon" onClick={() => setMessage("")}/>
                 ) : (
