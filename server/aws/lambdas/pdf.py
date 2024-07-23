@@ -12,6 +12,7 @@ import traceback
 import traceback_with_variables
 import pickle
 from typing import TYPE_CHECKING
+import shutil
 
 import llama_index
 import llama_index.core
@@ -37,7 +38,7 @@ def read_text_pdf(bio):
     return chunks
 
 def read_image_pdf(bio):
-    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True, delete_on_close=False) as tmpfp:
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmpfp:
         tmpfp.write(bio.read())
         tmpfp.close()
         outdir=tempfile.mkdtemp()
@@ -48,6 +49,10 @@ def read_image_pdf(bio):
         for line in process.stdout:
             lined=line.decode('utf-8').rstrip()
         rc = process.returncode
+        try:
+            os.remove(tmpfp.name)
+        except Exception as ex:
+            print(f"Exception {ex} removing temp file")
         if rc:
             if rc == 1:
                 print(f"read_image_pdf: pdfimages error opening input pdf file")
@@ -96,6 +101,10 @@ def read_image_pdf(bio):
                         chunk = ''
         except Exception as ex:
             print(f"read_image_pdf: Caught {ex} while processing {filename}. Ignoring and continuing ..")
+    try:
+        shutil.rmtree(outdir)
+    except Exception as ex:
+        print(f"Caught {ex} deleting output dir {outdir}")
     return chunks
 
 def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
