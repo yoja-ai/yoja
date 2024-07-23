@@ -9,6 +9,8 @@ RUN yum install \
     xorg-x11-fonts-* \
     google-noto-sans-cjk-fonts.noarch \
     binutils.x86_64 \
+    tesseract-ocr \
+    poppler-utils \
     -y && \
     yum clean all
 
@@ -97,6 +99,7 @@ COPY periodic.py ${LAMBDA_TASK_ROOT}
 COPY distilbert_dotprod.py ${LAMBDA_TASK_ROOT}
 COPY chat.py ${LAMBDA_TASK_ROOT}
 COPY index_utils.py ${LAMBDA_TASK_ROOT}
+COPY pdf.py ${LAMBDA_TASK_ROOT}
 COPY faiss_rm.py ${LAMBDA_TASK_ROOT}
 COPY table_qa.py ${LAMBDA_TASK_ROOT}
 COPY table_qa_lambda.py ${LAMBDA_TASK_ROOT}

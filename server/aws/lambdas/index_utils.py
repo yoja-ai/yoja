@@ -16,7 +16,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, set_start_time
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
@@ -26,6 +26,7 @@ import subprocess
 import dropbox
 import jsons
 import gzip
+from pdf import read_pdf
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -353,7 +354,7 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
     return rv
 
 
-def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     doc = docx.Document(file_io)
@@ -382,9 +383,9 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
                 doc_dct['paragraphs'].append(para_dct)
                 chunk_len = prelude_token_len
                 chunk_paras = []
-                if _lambda_timelimit_exceeded():
+                if lambda_timelimit_exceeded():
                     doc_dct['partial'] = "true"
-                    print(f"read_docx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+                    print(f"read_docx: Lambda timelimit exceeded when reading docx file. Breaking..")
                     break
             else:
                 chunk_paras.append(para)
@@ -404,7 +405,7 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
-def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, time_limit, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
+def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
     prs = Presentation(file_io)
     ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}
     ind = 0
@@ -437,50 +438,14 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, start_time, ti
                 print(f"Exception {ex} while creating slide embedding")
                 traceback.print_exc()
             ppt['slides'].append(slide_dct)
-            if _lambda_timelimit_exceeded():
+            if lambda_timelimit_exceeded():
                 ppt['partial'] = "true"
-                print(f"read_pptx: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
+                print(f"read_pptx: Lambda timelimit exceeded reading pptx file. Breaking..")
                 break
         ind += 1
     return ppt
 
-def _read_pdf(filename:str, fileid:str, bio:io.BytesIO, mtime:datetime.datetime, start_time, time_limit, prev_paras) -> Dict[str, Any]:
-    # https://docs.llamaindex.ai/en/stable/examples/low_level/oss_ingestion_retrieval/
-    pdf_reader:llama_index.readers.file.PyMuPDFReader = llama_index.readers.file.PyMuPDFReader()
-    # write the bytes out to a file
-    with tempfile.NamedTemporaryFile('wb') as tfile:
-        bio.seek(0)
-        tfile.write(bio.read()); tfile.flush(); tfile.seek(0)
-        # error: fitz.EmptyFileError: Cannot open empty file: filename='/tmp/tmpt6o3l__m'.
-        # error: FileDataError – if the document has an invalid structure for the given type – or is no file at all (but e.g. a folder). A subclass of RuntimeError. ( https://pymupdf.readthedocs.io/en/latest/document.html )
-        docs:List[llama_index.core.Document] = pdf_reader.load(file_path=tfile.name)
-    
-    sent_split:llama_index.core.node_parser.SentenceSplitter = llama_index.core.node_parser.SentenceSplitter(chunk_size=512)
-    # 
-    chunks:List[str] = []
-    for doc in docs:
-        chunks.extend(sent_split.split_text(doc.text))
-
-    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
-    for ind in range(len(prev_paras), len(chunks)):
-        chunk = chunks[ind]
-        para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
-        try:
-            embedding = vectorizer([f"The name of the file is {filename} and the paragraph is {chunk}"])
-            eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
-            para_dct['embedding'] = eem
-            doc_dct['paragraphs'].append(para_dct)
-            if _lambda_timelimit_exceeded():
-                doc_dct['partial'] = "true"
-                print(f"_read_pdf: More than {time_limit} minutes have passed when reading files from google drive. Breaking..")
-                break
-        except Exception as ex:
-            print(f"Exception {ex} while creating para embedding")
-            traceback.print_exc()
-    print(f"_read_pdf: fn={filename}. returning. num paras={len(doc_dct['paragraphs'])}")
-    return doc_dct
-
-def process_docx(file_item, filename, fileid, bio, start_time, time_limit):
+def process_docx(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
         prev_paras = file_item['paragraphs']
@@ -488,13 +453,13 @@ def process_docx(file_item, filename, fileid, bio, start_time, time_limit):
     else:
         prev_paras = []
         print(f"process_docx: fn={filename}. did not find partial")
-    doc_dict = read_docx(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_paras)
+    doc_dict = read_docx(filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'docx'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
-def process_pptx(file_item, filename, fileid, bio, start_time, time_limit):
+def process_pptx(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'slides' in file_item:
         del file_item['partial']
         prev_slides = file_item['slides']
@@ -502,7 +467,7 @@ def process_pptx(file_item, filename, fileid, bio, start_time, time_limit):
     else:
         prev_slides = []
         print(f"process_pptx: fn={filename}. did not find partial")
-    ppt = read_pptx(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_slides)
+    ppt = read_pptx(filename, fileid, bio, file_item['mtime'], prev_slides)
     file_item['slides'] = ppt['slides']
     file_item['filetype'] = 'pptx'
 
@@ -547,9 +512,6 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
     """
-    global g_start_time, g_time_limit
-    start_time = g_start_time
-    time_limit = g_time_limit
     time_limit_exceeded = False
     done_embedding = {}
     for fileid, file_item in needs_embedding.items():
@@ -565,11 +527,11 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
             
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_pptx(file_item, filename, fileid, bio, start_time, time_limit)
+                process_pptx(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_docx(file_item, filename, fileid, bio, start_time, time_limit)
+                process_docx(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
             elif filename.lower().endswith('.doc'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
@@ -585,7 +547,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to docx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        process_docx(file_item, filename, fileid, fp, start_time, time_limit)
+                        process_docx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}x')
                 else:
@@ -604,7 +566,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to pptx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        process_pptx(file_item, filename, fileid, fp, start_time, time_limit)
+                        process_pptx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}x')
                 else:
@@ -618,7 +580,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                 else:
                     prev_paras = []
                     print(f"process_files: fn={filename}. did not find partial")
-                pdf_dict:Dict[str,Any] = _read_pdf(filename, fileid, bio, file_item['mtime'], start_time, time_limit, prev_paras)
+                pdf_dict:Dict[str,Any] = read_pdf(filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
                 file_item['paragraphs'] = pdf_dict['paragraphs']
                 file_item['filetype'] = 'pdf'
                 if 'partial' in pdf_dict:
@@ -634,7 +596,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        process_pptx(file_item, filename, fileid, fp, start_time, time_limit)
+                        process_pptx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}')
             elif mimetype == 'application/vnd.google-apps.document':
@@ -647,7 +609,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        process_docx(file_item, filename, fileid, fp, start_time, time_limit)
+                        process_docx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                     os.remove(f'{tfn}')
             else:
@@ -655,7 +617,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
             traceback_with_variables.print_exc()
-        if _lambda_timelimit_exceeded():
+        if lambda_timelimit_exceeded():
             print(f"process_files: More than {g_time_limit} minutes have passed when reading files from google drive. Breaking..")
             time_limit_exceeded = True
             break
@@ -769,7 +731,7 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
     index_metadata:IndexMetadata = _read_index_metadata_json_local()
     # if faiss index needs to be updated and we have at least 5 minutes
     if index_metadata.is_vdb_index_stale():
-        time_left:float = _lambda_time_left_seconds()
+        time_left:float = lambda_time_left_seconds()
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
             # we update the index only when we have 1 to 100 embeddings that need to be updated..
@@ -1160,29 +1122,11 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         traceback.print_exc()
     return gdrive_next_page_token
 
-g_start_time:datetime.datetime = None # initialized further below
-g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))
-def _lambda_timelimit_exceeded() -> bool:
-    global g_start_time, g_time_limit
-    now = datetime.datetime.now()
-    return True if (now - g_start_time) > datetime.timedelta(minutes=g_time_limit) else False
-
-def _lambda_time_left_seconds() -> float:
-    global g_start_time, g_time_limit
-    return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
-
 def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
                             only_create_index:bool=False, gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
-    global g_start_time, g_time_limit
-    g_start_time = start_time
-    if not _lambda_timelimit_exceeded():
+    set_start_time(start_time)
+    if not lambda_timelimit_exceeded():
         gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
-    if not _lambda_timelimit_exceeded():
+    if not lambda_timelimit_exceeded():
         dropbox_next_page_token = update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
     return gdrive_next_page_token, dropbox_next_page_token
-
-if __name__ == '__main__':
-    files = [ '/home/dev/simple_memo.pdf', '/home/dev/tp_link_deco_e4_wifi_mesh_datasheet_Deco_E4_EU_US_3.pdf' ]
-    with open(files[1], "rb") as f:
-        bio = io.BytesIO(f.read())
-    print(_read_pdf("simple_memo.pdf", "file_id_for_simple_memo.pdf", bio, datetime.datetime.now() ))

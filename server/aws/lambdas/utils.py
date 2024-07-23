@@ -366,3 +366,21 @@ def refresh_user_dropbox(item):
         print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
         return None
     return access_token
+
+g_start_time:datetime.datetime = None # initialized further below
+g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))
+
+def set_start_time(start_time):
+    global g_start_time
+    g_start_time = start_time
+
+def lambda_timelimit_exceeded() -> bool:
+    global g_start_time, g_time_limit
+    now = datetime.datetime.now()
+    if not g_start_time:
+        g_start_time = now
+    return True if (now - g_start_time) > datetime.timedelta(minutes=g_time_limit) else False
+
+def lambda_time_left_seconds() -> float:
+    global g_start_time, g_time_limit
+    return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
