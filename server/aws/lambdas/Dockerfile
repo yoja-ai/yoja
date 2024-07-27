@@ -9,10 +9,22 @@ RUN yum install \
     xorg-x11-fonts-* \
     google-noto-sans-cjk-fonts.noarch \
     binutils.x86_64 \
-    tesseract-ocr \
     poppler-utils \
     -y && \
     yum clean all
+
+# Begin tesseract block
+RUN yum install -y git libtool clang gcc-c++.x86_64
+RUN yum install -y zlib zlib-devel libjpeg libjpeg-devel libwebp libwebp-devel libtiff libtiff-devel libpng libpng-devel
+RUN cp /usr/lib64/libjpeg.so.62 /usr/local/lib/
+RUN cp /usr/lib64/libwebp.so.4 /usr/local/lib/
+RUN cp /usr/lib64/libtiff.so.5 /usr/local/lib/
+RUN cp /usr/lib64/libpng15.so.15 /usr/local/lib/
+RUN rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+RUN yum -y update
+RUN yum install -y tesseract
+RUN yum install -y tesseract-osd
+# End tesseract block
 
 RUN set -xo pipefail && \
     curl "https://mirror.clarkson.edu/tdf/libreoffice/stable/7.6.7/rpm/x86_64/LibreOffice_7.6.7_Linux_x86-64_rpm.tar.gz" | tar -xz

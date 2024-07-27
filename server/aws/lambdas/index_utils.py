@@ -1130,3 +1130,11 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_tim
     if not lambda_timelimit_exceeded():
         dropbox_next_page_token = update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
     return gdrive_next_page_token, dropbox_next_page_token
+
+if __name__=="__main__":
+    with open(sys.argv[1], 'rb') as f:
+        bio = io.BytesIO(f.read())
+    rv = read_pdf(sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
+    rv['mtime'] = to_rfc3339(rv['mtime'])
+    print(json.dumps(rv, indent=4))
+    sys.exit(0)
