@@ -46,6 +46,7 @@ def _lsdir(ldir):
 
 def render_png(filename, start_page, end_page, tmpdir):
     try:
+        fnx_start = datetime.datetime.now()
         cmd = ['pdftocairo', '-png', '-r', '300', '-f', str(start_page), '-l', str(end_page), filename, 'out']
         print(f"render_png: cmd={cmd}")
         process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -57,6 +58,8 @@ def render_png(filename, start_page, end_page, tmpdir):
         if rc:
             print(f"Error {rc} while rendering png. Returning without doing any work")
             return False
+        fnx_end = datetime.datetime.now()
+        print(f"render_png: time taken {fnx_end - fnx_start}")
         return True
     except Exception as ex:
         print(f"render_png: Caught {ex}")
@@ -69,8 +72,9 @@ def tesseract_one_page(pgnum, pages, tmpdir):
     inputfn=str(fmt1 % pgnum)
     outputfn=str(fmt2 % pgnum)
     outputfn1=str(fmt3 % pgnum)
-    print(f"tesseract_one_page: input={inputfn}, outputfn={outputfn}, outputfn1={outputfn1}")
+    print(f"tesseract_one_page: pgnum={pgnum}, pages={pages}, input={inputfn}, outputfn={outputfn}, outputfn1={outputfn1}")
     try:
+        fnx_start = datetime.datetime.now()
         tenv=os.environ.copy()
         tenv['TESSDATA_PREFIX']='/usr/share/tesseract/tessdata'
         cmd = ['tesseract', os.path.join(tmpdir, inputfn), os.path.join(tmpdir, outputfn), '-l', 'eng', 'hocr']
@@ -83,7 +87,7 @@ def tesseract_one_page(pgnum, pages, tmpdir):
         rc = process.returncode
         if rc:
             print(f"Error {rc} while running tesseract. Returning without doing any work")
-            return None
+            return ''
         with open(os.path.join(tmpdir, outputfn1), 'rb') as fp:
             hh = fp.read()
         chunk = ''
@@ -94,10 +98,12 @@ def tesseract_one_page(pgnum, pages, tmpdir):
             nonl_ss = re.sub(' +', ' ', nonl_text)
             print(nonl_ss)
             chunk += f"{nonl_ss}\n"
+        fnx_end = datetime.datetime.now()
+        print(f"tesseract_one_page: time taken {fnx_end - fnx_start}")
         return chunk
     except Exception as ex:
         print(f"tesseract_one_page: Caught {ex}")
-        return None
+        return ''
 
 def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
     try:
@@ -105,17 +111,18 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
             tmpfp.write(bio.read())
             tmpfp.close()
         tmpdir = tempfile.mkdtemp()
-        print(f"tmpdir where pngs are created={tmpdir}")
         pages, pdfsize = get_pdf_info(tmpfp.name)
-        print(f"pages={pages}, pdfsize={pdfsize}")
-        if not render_png(tmpfp.name, 1, pages+1, tmpdir):
-            return
+        start_page = len(prev_paras)+1 if prev_paras else 1
+        end_page = start_page + 64
+        if end_page > pages:
+            end_page = pages
+        print(f"read_pdf: pages={pages}, pdfsize={pdfsize}, start_page={start_page}, end_page={end_page}")
+        if not render_png(tmpfp.name, start_page, end_page, tmpdir):
+            return None
         doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
         chunks:List[str] = []
-        for pgnum in range(1, pages+1):
-            chunk = tesseract_one_page(pgnum, pages, tmpdir)
-            if chunk:
-                chunks.append(chunk)
+        for pgnum in range(start_page, end_page):
+            chunks.append(tesseract_one_page(pgnum, pages, tmpdir))
 
         for ind in range(len(prev_paras), len(chunks)):
             chunk = chunks[ind]
@@ -127,7 +134,7 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
                 doc_dct['paragraphs'].append(para_dct)
                 if lambda_timelimit_exceeded():
                     doc_dct['partial'] = "true"
-                    print(f"read_text_pdf: Timelimit exceeded when reading pdf files. Breaking..")
+                    print(f"read_pdf: Timelimit exceeded when reading pdf files. Breaking..")
                     break
             except Exception as ex:
                 print(f"Exception {ex} while creating para embedding")
