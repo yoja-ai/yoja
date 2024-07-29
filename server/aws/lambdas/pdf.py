@@ -49,40 +49,36 @@ def _lsdir(ldir):
         print(f"_lsdir: dir={ldir}, Caught {ex}")
         return
 
-def render_png(filename, start_page, end_page, tmpdir):
-    print(f"render_png: Entered. filename {filename}, start_page {start_page}, end_page {end_page}, tmpdir {tmpdir}")
+def render_png(filename, start_page, num_pages_this_time, tmpdir):
+    print(f"render_png: Entered. filename {filename}, start_page {start_page}, num_pages_this_time {num_pages_this_time}, tmpdir {tmpdir}")
     try:
         fnx_start = datetime.datetime.now()
-        first = start_page
-        while first < end_page:
-            print(f"render_png: outer loop begin: first={first}")
-            cmds = []
-            for cmd_index in range(PARALLEL_PROCESSES):
-                print(f"render_png: inner loop begin: page={first}")
-                cmd = ['pdftocairo', '-png', '-r', '300', '-f',
-                            str(first), '-l', str(first), filename, 'out']
-                print(f"render_png: inner loop append cmd: {cmd}")
-                cmds.append(cmd)
-                first += 1
-                if first == end_page:
-                    break
-            print(f"render_png: inner loop complete: cmds array has {len(cmds)} entries")
+        outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
+        print(f"render_png: outer_loop_max={outer_loop_max}")
+        for outer_loop_count in range(outer_loop_max):
+            print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
             processes=[]
-            for cmd in cmds:
+            fd_to_process={}
+            poller=select.poll()
+            num_in_poller = 0
+            for inner_loop_count in range(PARALLEL_PROCESSES):
+                page = start_page+(outer_loop_count*PARALLEL_PROCESSES)+inner_loop_count
+                if page == start_page + num_pages_this_time:
+                    break
+                cmd = ['pdftocairo', '-png', '-r', '300', '-f',
+                            str(page), '-l', str(page), filename, 'out']
+                print(f"render_png: inner loop begin: inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}")
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True)
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
                 processes.append(process)
-            poller=select.poll()
-            fd_to_process={}
-            for process in processes:
-                fd=process.stdout.fileno()
                 fd_to_process[fd]=process
                 poller.register(fd, select.POLLIN|select.POLLPRI|select.POLLHUP|select.POLLERR)
-            print(f"Entering poll loop ..")
-            while fd_to_process.items():
+                num_in_poller += 1
+            print(f"Entering poll loop. num_in_poller={num_in_poller}")
+            while num_in_poller:
                 events = poller.poll(1000)
                 for fd, flag in events:
                     print(f"render_png: poll loop. fd {fd}, pid {fd_to_process[fd].pid}")
@@ -92,11 +88,11 @@ def render_png(filename, start_page, end_page, tmpdir):
                     elif flag & select.POLLHUP:
                         print(f"[{fd_to_process[fd].pid}] Received HUP. Child finished")
                         poller.unregister(fd)
-                        del fd_to_process[fd]
+                        num_in_poller -= 1
                     elif flag & select.POLLERR:
                         print(f"[{fd_to_process[fd].pid}] Received ERR. Child error")
                         poller.unregister(fd)
-                        del fd_to_process[fd]
+                        num_in_poller -= 1
             print(f"Exited poll loop ..")
             for process in processes:
                 rc = process.returncode
@@ -123,34 +119,35 @@ class ProcessInfo:
 
     def __str__(self):
         return f"page={self.page}, pid={self.process.pid}, outfn={self.outfn}"
-    
 
-# max_pages is max pages in pdf, use to determine the name of the png file, e.g. out-0011.png
-def tesseract_pages(filename, start_page, end_page, max_pages, tmpdir):
-    num_pages = end_page-start_page
-    print(f"tesseract_pages: Entered. filename {filename}, start_page {start_page}, end_page {end_page}, num_pages={num_pages}, max_pages={max_pages}, tmpdir {tmpdir}")
-    rv = ['' for ind in range(num_pages)]
+def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
+    print(f"tesseract_pages: Entered. filename {filename}, start_page {start_page}, num_pages_this_time={num_pages_this_time}, pages_in_pdf={pages_in_pdf}, tmpdir {tmpdir}")
+    rv = ['' for ind in range(num_pages_this_time)]
     try:
         fnx_start = datetime.datetime.now()
         tenv=os.environ.copy()
         tenv['TESSDATA_PREFIX']='/usr/share/tesseract/tessdata'
         tenv['OMP_THREAD_LIMIT']='1'
-        first = start_page
-        while first < end_page:
-            print(f"tesseract_pages: outer loop begin: first={first}")
+
+        outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
+        print(f"render_png: outer_loop_max={outer_loop_max}")
+        for outer_loop_count in range(outer_loop_max):
+            print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
             fd_to_processinfo = {}
             poller=select.poll()
             items_in_poll=0
-            for cmd_index in range(PARALLEL_PROCESSES):
-                print(f"tesseract_pages: inner loop begin: page={first}")
-                fmt1=f"out-%0{len(str(max_pages))}d.png"
-                fmt2=f"out-%0{len(str(max_pages))}d"
-                fmt3=f"out-%0{len(str(max_pages))}d.hocr"
-                inputfn=str(fmt1 % first)
-                outputfn=str(fmt2 % first)
-                outputfn1=str(fmt3 % first)
+            for inner_loop_count in range(PARALLEL_PROCESSES):
+                page = start_page+(outer_loop_count*PARALLEL_PROCESSES)+inner_loop_count
+                if page == start_page + num_pages_this_time:
+                    break
+                fmt1=f"out-%0{len(str(pages_in_pdf))}d.png"
+                fmt2=f"out-%0{len(str(pages_in_pdf))}d"
+                fmt3=f"out-%0{len(str(pages_in_pdf))}d.hocr"
+                inputfn=str(fmt1 % page)
+                outputfn=str(fmt2 % page)
+                outputfn1=str(fmt3 % page)
                 cmd = ['tesseract', os.path.join(tmpdir, inputfn), os.path.join(tmpdir, outputfn), '-l', 'eng', 'hocr']
-                print(f"tesseract_pages: inner loop cmd: {cmd}")
+                print(f"tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}")
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=tenv)
                 fd=process.stdout.fileno()
@@ -158,10 +155,7 @@ def tesseract_pages(filename, start_page, end_page, max_pages, tmpdir):
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
                 poller.register(fd, select.POLLIN|select.POLLPRI|select.POLLHUP|select.POLLERR)
                 items_in_poll += 1
-                fd_to_processinfo[fd] = ProcessInfo(process, outputfn1, first)
-                first += 1
-                if first == end_page:
-                    break
+                fd_to_processinfo[fd] = ProcessInfo(process, outputfn1, page)
             print(f"tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
             print(f"Entering poll loop items in poll={items_in_poll} ..")
             while items_in_poll > 0:
@@ -211,19 +205,19 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
             tmpfp.write(bio.read())
             tmpfp.close()
         tmpdir = tempfile.mkdtemp()
-        pages, pdfsize = get_pdf_info(tmpfp.name)
+        pages_in_pdf, pdfsize = get_pdf_info(tmpfp.name)
         start_page = len(prev_paras)+1 if prev_paras else 1
-        end_page = start_page + 64
-        if end_page >= pages:
-            end_page = pages
+        if pages_in_pdf <= 64:
+            num_pages_this_time = pages_in_pdf
             is_partial = False
         else:
+            num_pages_this_time = 64
             is_partial = True
-        print(f"read_pdf: pages={pages}, pdfsize={pdfsize}, start_page={start_page}, end_page={end_page}")
-        if not render_png(tmpfp.name, start_page, end_page, tmpdir):
+        print(f"read_pdf: pages_in_pdf={pages_in_pdf}, pdfsize={pdfsize}, start_page={start_page}, num_pages_this_time={num_pages_this_time}")
+        if not render_png(tmpfp.name, start_page, num_pages_this_time, tmpdir):
             return None
         doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
-        chunks:List[str] = tesseract_pages(filename, start_page, end_page, pages, tmpdir)
+        chunks:List[str] = tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
         for ind in range(len(prev_paras), len(chunks)):
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
