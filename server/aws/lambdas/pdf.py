@@ -54,7 +54,7 @@ def render_png(filename, start_page, end_page, tmpdir):
     try:
         fnx_start = datetime.datetime.now()
         first = start_page
-        while first <= end_page:
+        while first < end_page:
             print(f"render_png: outer loop begin: first={first}")
             cmds = []
             for cmd_index in range(PARALLEL_PROCESSES):
@@ -64,7 +64,7 @@ def render_png(filename, start_page, end_page, tmpdir):
                 print(f"render_png: inner loop append cmd: {cmd}")
                 cmds.append(cmd)
                 first += 1
-                if first > end_page:
+                if first == end_page:
                     break
             print(f"render_png: inner loop complete: cmds array has {len(cmds)} entries")
             processes=[]
@@ -103,7 +103,7 @@ def render_png(filename, start_page, end_page, tmpdir):
                 if rc:
                     print(f"[{process.pid}] Process returncode {rc}")
                 else:
-                    print(f"[{process.pid}] sucecss")
+                    print(f"[{process.pid}] success")
         fnx_end = datetime.datetime.now()
         print(f"render_png: time taken {fnx_end - fnx_start}")
         return True
@@ -125,18 +125,18 @@ class ProcessInfo:
         return f"page={self.page}, pid={self.process.pid}, outfn={self.outfn}"
     
 
-# start_page and end_page and inclusive
 # max_pages is max pages in pdf, use to determine the name of the png file, e.g. out-0011.png
 def tesseract_pages(filename, start_page, end_page, max_pages, tmpdir):
-    num_pages = end_page-start_page+1
+    num_pages = end_page-start_page
     print(f"tesseract_pages: Entered. filename {filename}, start_page {start_page}, end_page {end_page}, num_pages={num_pages}, max_pages={max_pages}, tmpdir {tmpdir}")
     rv = ['' for ind in range(num_pages)]
     try:
         fnx_start = datetime.datetime.now()
         tenv=os.environ.copy()
         tenv['TESSDATA_PREFIX']='/usr/share/tesseract/tessdata'
+        tenv['OMP_THREAD_LIMIT']='1'
         first = start_page
-        while first <= end_page:
+        while first < end_page:
             print(f"tesseract_pages: outer loop begin: first={first}")
             fd_to_processinfo = {}
             poller=select.poll()
@@ -160,7 +160,7 @@ def tesseract_pages(filename, start_page, end_page, max_pages, tmpdir):
                 items_in_poll += 1
                 fd_to_processinfo[fd] = ProcessInfo(process, outputfn1, first)
                 first += 1
-                if first > end_page:
+                if first == end_page:
                     break
             print(f"tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
             print(f"Entering poll loop items in poll={items_in_poll} ..")
@@ -214,8 +214,11 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
         pages, pdfsize = get_pdf_info(tmpfp.name)
         start_page = len(prev_paras)+1 if prev_paras else 1
         end_page = start_page + 64
-        if end_page > pages:
+        if end_page >= pages:
             end_page = pages
+            is_partial = False
+        else:
+            is_partial = True
         print(f"read_pdf: pages={pages}, pdfsize={pdfsize}, start_page={start_page}, end_page={end_page}")
         if not render_png(tmpfp.name, start_page, end_page, tmpdir):
             return None
@@ -236,7 +239,9 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
             except Exception as ex:
                 print(f"Exception {ex} while creating para embedding")
                 traceback.print_exc()
-        print(f"read_pdf: fn={filename}. returning. num paras={len(doc_dct['paragraphs'])}")
+        if is_partial:
+            doc_dct['partial'] = "true"
+        print(f"read_pdf: fn={filename}. returning. num paras={len(doc_dct['paragraphs'])}, is_partial={is_partial}")
         return doc_dct
     except Exception as ex:
         print(f"read_pdf: fn={filename}. Caught {ex}")
