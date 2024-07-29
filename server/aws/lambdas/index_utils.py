@@ -146,8 +146,9 @@ def download_gdrive_file(service, file_id, filename) -> io.BytesIO:
       status, done = downloader.next_chunk()
       print(f"filename={filename}, fileid={file_id}, download {int(status.progress() * 100)} %")
   except HttpError as error:
-    print(f"An error occurred: {error}")
-    file = None
+    print(f"download_gdrive_file: An error occurred: {error}")
+    return None
+  file.seek(0, os.SEEK_SET)
   return file
 
 def export_gdrive_file(service, file_id, mimetype) -> io.BytesIO:
