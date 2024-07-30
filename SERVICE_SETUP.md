@@ -2,6 +2,18 @@
 
 ## First, request a certification for chat.<domain> and get it validaded using DNS
 
+## Gdrive Client
+
+- Go to https://console.cloud.google.com and choose 'APIs and Services'
+- Choose 'Credentials'
+- Click on 'Create Credentials'
+- Credentials type is 'Oauth client ID'
+- Application type is 'Web Application'
+- Give it a name such as oauth_for_staging6
+- Add authorized javascript origins - https://chat.<domain>
+- Add authorized redirect URI - https://chat.<domain>/rest/entrypoint/oauth2cb
+- Create and save the client ID and client secret
+
 ## Dropbox Client
 
 - Go to https://www.dropbox.com/developers/apps/info and choose the 'create app' button

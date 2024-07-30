@@ -106,21 +106,38 @@ def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
         if gdrive_next_page_token and dropbox_next_page_token:
             ue="SET gdrive_next_page_token = :pt, dropbox_next_page_token = :db"
             eav={':pt': {'S': gdrive_next_page_token}, ':db': {'S': dropbox_next_page_token}}
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression=ue, ExpressionAttributeValues=eav,
+                ReturnValues="UPDATED_NEW"
+            )
         elif gdrive_next_page_token and not dropbox_next_page_token:
             ue="SET gdrive_next_page_token = :pt REMOVE dropbox_next_page_token"
             eav={':pt': {'S': gdrive_next_page_token}}
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression=ue, ExpressionAttributeValues=eav,
+                ReturnValues="UPDATED_NEW"
+            )
         elif not gdrive_next_page_token and dropbox_next_page_token:
             ue="REMOVE gdrive_next_page_token SET dropbox_next_page_token = :db"
             eav={':db': {'S': dropbox_next_page_token}}
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression=ue, ExpressionAttributeValues=eav,
+                ReturnValues="UPDATED_NEW"
+            )
         else:
             ue = "REMOVE gdrive_next_page_token REMOVE dropbox_next_page_token"
-            eav = {}
-        response = client.update_item(
-            TableName=os.environ['USERS_TABLE'],
-            Key={'email': {'S': email}},
-            UpdateExpression=ue, ExpressionAttributeValues=eav,
-            ReturnValues="UPDATED_NEW"
-        )
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression=ue,
+                ReturnValues="UPDATED_NEW"
+            )
     except ClientError as e:
         print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
         return False

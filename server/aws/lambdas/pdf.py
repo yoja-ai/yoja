@@ -159,7 +159,6 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
             print(f"tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
             print(f"Entering poll loop items in poll={items_in_poll} ..")
             while items_in_poll > 0:
-                print(f"About to call poll. items in poll={items_in_poll}")
                 events = poller.poll(1000)
                 for fd, flag in events:
                     print(f"tesseract_pages: poll loop. fd {fd}, pid {fd_to_processinfo[fd].process.pid}")
