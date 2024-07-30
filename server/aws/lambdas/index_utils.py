@@ -839,6 +839,17 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
         print(f"Exception occurred: {ex}")
         traceback.print_exc()
 
+    # Move items in 'partial' state from umodified to needs_embedding
+    to_del=[]
+    for fid, entry in unmodified.items():
+        if 'partial' in entry:
+            pth = entry['path'] if 'path' in entry else ''
+            print(f"update.dropbox: fileid={fid}, path={pth}, filename={entry['filename']} is in partial state. Moving from unmodified to needs_embedding")
+            needs_embedding[fid] = entry
+            to_del.append(fid)
+    for td in to_del:
+        del unmodified[td]
+
     done_embedding, time_limit_exceeded = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or num_deleted_files > 0:
         update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
@@ -1108,7 +1119,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         for fid, entry in unmodified.items():
             if 'partial' in entry:
                 pth = entry['path'] if 'path' in entry else ''
-                print(f"fileid={fid}, path={pth}, filename={entry['filename']} is in partial state. Moving from unmodified to needs_embedding")
+                print(f"update.gdrive: fileid={fid}, path={pth}, filename={entry['filename']} is in partial state. Moving from unmodified to needs_embedding")
                 needs_embedding[fid] = entry
                 to_del.append(fid)
         for td in to_del:
