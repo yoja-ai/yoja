@@ -6,7 +6,7 @@ import subprocess
 import io
 import datetime
 import os
-from utils import lambda_timelimit_exceeded
+from utils import lambda_timelimit_exceeded, lambda_time_left_seconds
 import base64
 import traceback
 import traceback_with_variables
@@ -199,6 +199,7 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
     return rv
 
 def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     try:
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmpfp:
             tmpfp.write(bio.read())
@@ -212,10 +213,14 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
         else:
             num_pages_this_time = 64
             is_partial = True
+        time_left = lambda_time_left_seconds()
+        if time_left < (num_pages_this_time * 3):
+            print(f"read_pdf: time_left={time_left} seconds. Insufficient time to process {num_pages_this_time} pages")
+            doc_dct['partial'] = "true"
+            return doc_dct
         print(f"read_pdf: pages_in_pdf={pages_in_pdf}, pdfsize={pdfsize}, start_page={start_page}, num_pages_this_time={num_pages_this_time}")
         if not render_png(tmpfp.name, start_page, num_pages_this_time, tmpdir):
-            return None
-        doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras} 
+            return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
         chunks:List[str] = tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
         for ind in range(len(prev_paras), len(chunks)):
             chunk = chunks[ind]
@@ -239,4 +244,4 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
     except Exception as ex:
         print(f"read_pdf: fn={filename}. Caught {ex}")
         traceback.print_exc()
-        return None
+        return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this

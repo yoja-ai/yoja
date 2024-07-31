@@ -131,7 +131,7 @@ def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
                 ReturnValues="UPDATED_NEW"
             )
         else:
-            ue = "REMOVE gdrive_next_page_token REMOVE dropbox_next_page_token"
+            ue = "REMOVE gdrive_next_page_token, dropbox_next_page_token"
             response = client.update_item(
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
@@ -636,7 +636,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
             traceback_with_variables.print_exc()
         if lambda_timelimit_exceeded():
-            print(f"process_files: More than {g_time_limit} minutes have passed when reading files from google drive. Breaking..")
+            print(f"process_files: lambda_timelimit_exceeded. Breaking..")
             time_limit_exceeded = True
             break
                 
