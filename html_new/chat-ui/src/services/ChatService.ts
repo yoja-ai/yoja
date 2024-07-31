@@ -22,16 +22,33 @@ export const chatApi = async (messages: Message[]) => {
   let headers: any = { "Content-Type": "application/json" };
   const API_URL = "/v1/chat/completions";
   headers["Authorization"] = "Bearer " + servicesConfig.API_KEY;
-  const res = await fetch(servicesConfig.envAPIEndpoint + API_URL, {
+
+  const requestUrl = servicesConfig.envAPIEndpoint + API_URL;
+  const requestBody = JSON.stringify({
+    messages: messages,
+    model: "gpt-3.5-turbo",
+    stream: true,
+    temperature: 1,
+    top_p: 0.7
+  });
+
+  //initial fetch attempt
+  let res = await fetch(requestUrl, {
+    method: "POST",
+    headers,
+    body: requestBody,
+  });
+
+  // Retry once after 1s if the first attempt returns a 504 Gateway Timeout
+  if (res.status === 504) {
+    console.log("Received 504 Gateway Timeout. Retrying...");
+    await new Promise(resolve => setTimeout(resolve, 1000)); 
+    res = await fetch(requestUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        messages: messages,
-        model: "gpt-3.5-turbo",
-        stream: true,
-        temperature: 1,
-        top_p: 0.7
-      }),
-  });
+      body: requestBody,
+    });
+  }
+
   return res;
-}
+};
