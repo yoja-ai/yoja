@@ -48,6 +48,10 @@ export const chatApi = async (messages: Message[]) => {
       headers,
       body: requestBody,
     });
+  } else if (res.status == 403) {
+    console.log("Received 403 Unauthorized. Redirecting to /login.html ...");
+    alert("Login expired");
+    window.location.href = "/login.html";
   }
 
   return res;
