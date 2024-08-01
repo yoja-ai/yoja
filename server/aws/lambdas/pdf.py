@@ -67,9 +67,9 @@ def render_png(filename, start_page, num_pages_this_time, tmpdir):
                     break
                 cmd = ['pdftocairo', '-png', '-r', '300', '-f',
                             str(page), '-l', str(page), filename, 'out']
-                print(f"render_png: inner loop begin: inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}")
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True)
+                print(f"render_png: start process. inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
@@ -81,7 +81,6 @@ def render_png(filename, start_page, num_pages_this_time, tmpdir):
             while num_in_poller:
                 events = poller.poll(1000)
                 for fd, flag in events:
-                    print(f"render_png: poll loop. fd {fd}, pid {fd_to_process[fd].pid}")
                     if flag & (select.POLLIN | select.POLLPRI):
                         bts=os.read(fd, 10248)
                         print(f"[{fd_to_process[fd].pid}] {bts.decode('utf-8').rstrip()}")
@@ -97,9 +96,7 @@ def render_png(filename, start_page, num_pages_this_time, tmpdir):
             for process in processes:
                 rc = process.returncode
                 if rc:
-                    print(f"[{process.pid}] Process returncode {rc}")
-                else:
-                    print(f"[{process.pid}] success")
+                    print(f"[{process.pid}] Process error. returncode {rc}")
         fnx_end = datetime.datetime.now()
         print(f"render_png: time taken {fnx_end - fnx_start}")
         return True
@@ -147,9 +144,9 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
                 outputfn=str(fmt2 % page)
                 outputfn1=str(fmt3 % page)
                 cmd = ['tesseract', os.path.join(tmpdir, inputfn), os.path.join(tmpdir, outputfn), '-l', 'eng', 'hocr']
-                print(f"tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}")
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=tenv)
+                print(f"tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
@@ -161,7 +158,6 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
             while items_in_poll > 0:
                 events = poller.poll(1000)
                 for fd, flag in events:
-                    print(f"tesseract_pages: poll loop. fd {fd}, pid {fd_to_processinfo[fd].process.pid}")
                     if flag & (select.POLLIN | select.POLLPRI):
                         bts=os.read(fd, 10248)
                         print(f"[{fd_to_processinfo[fd].process.pid}] {bts.decode('utf-8').rstrip()}")
@@ -177,9 +173,7 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
             for fd, processinfo in fd_to_processinfo.items():
                 rc = processinfo.process.returncode
                 if rc:
-                    print(f"[{processinfo.process.pid}] Process returncode {rc}")
-                else:
-                    print(f"[{processinfo.process.pid}] success")
+                    print(f"[{processinfo.process.pid}] Process error. returncode {rc}")
                     with open(os.path.join(tmpdir, processinfo.outfn), 'rb') as fp:
                         hh = fp.read()
                     chunk = ''
