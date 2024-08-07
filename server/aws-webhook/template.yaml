@@ -15,6 +15,8 @@ Parameters:
     Type: String
   ServiceconfTable:
     Type: String
+  YojaApiEntrypointFunctionArn:
+    Type: String
 Globals:
   Function:
     Environment:
@@ -26,7 +28,19 @@ Globals:
         USERS_TABLE: !Ref UsersTable
         SERVICECONF_TABLE: !Ref ServiceconfTable
         PYTHONUNBUFFERED: 'True'
-        YOJA_LAMBDA_ARN: AAAAAAAAAA
+        YOJA_LAMBDA_ARN: !Ref YojaApiEntrypointFunctionArn
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: YojaWebhookApi
+    Description: Yoja Webhook API
+    Author: Yoja AI
+    SpdxLicenseId: MIT
+    LicenseUrl: ../../LICENSE
+    # ReadmeUrl: README.md
+    Labels: ['tests']
+    HomePageUrl: https://www.yoja.ai
+    SemanticVersion: 0.0.1
+    SourceCodeUrl: https://github.com/yoja-ai/yoja
 Resources:
   YojaWebhookLambdaRole:
     Type: AWS::IAM::Role
@@ -104,12 +118,20 @@ Resources:
         AllowMethods: "'GET,HEAD,OPTIONS,POST,PUT,PATCH,DELETE'"
         AllowHeaders: "'Access-Control-Allow-Headers,Access-Control-Allow-Origin,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,x-requested-with,X-Api-Key,Authorization,X-Amz-Date,X-Forwarded-For,Idtoken'"
         AllowCredentials: false
+  LayerVersion:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: yoja-webhook-layer
+      Description: Dependencies for the yoja webhook APIs
+      ContentUri: layer-build/.
+      CompatibleRuntimes:
+        - python3.11
   webhookgdrive:
     Type: 'AWS::Serverless::Function'
     Properties:
       CodeUri: .
       Layers:
-        - BBBBBBBBBB
+        - !Ref LayerVersion
       Architectures:
         - x86_64
       MemorySize: 128
@@ -147,7 +169,7 @@ Resources:
     Properties:
       CodeUri: .
       Layers:
-        - BBBBBBBBBB
+        - !Ref LayerVersion
       Architectures:
         - x86_64
       MemorySize: 128
@@ -180,3 +202,28 @@ Resources:
             RestApiId: !Ref YojaWebhookApi
             Path: /webhook_dropbox
             Method: ANY
+Outputs:
+  GDriveWebhookFunctionArn:
+    Description: The Arn of the GDrive webhook lambda
+    Value: !GetAtt webhookgdrive.Arn
+    Export:
+      Name: 'yoja:GDriveWebhookFunctionArn'
+  DropboxWebhookFunctionArn:
+    Description: The Arn of the Dropbox webhook lambda
+    Value: !GetAtt webhookdropbox.Arn
+    Export:
+      Name: 'yoja:DropboxWebhookFunctionArn'
+  GDriveWebhookFunctionUrlConfig:
+    Description: The FunctionUrlConfig of the GDrive webhook lambda
+    # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-functionurlconfig.html
+    # https://xxxx.lambda-url.us-east-1.on.aws/
+    Value: !GetAtt webhookgdriveUrl.FunctionUrl
+    Export:
+      Name: 'yoja:GDriveWebhookFunctionUrlConfig' 
+  DropboxWebhookFunctionUrlConfig:
+    Description: The FunctionUrlConfig of the dropbox webhook lambda
+    # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-functionurlconfig.html
+    # https://xxxx.lambda-url.us-east-1.on.aws/
+    Value: !GetAtt webhookdropboxUrl.FunctionUrl
+    Export:
+      Name: 'yoja:DropboxWebhookFunctionUrlConfig' 
