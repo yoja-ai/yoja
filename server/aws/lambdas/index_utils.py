@@ -1212,14 +1212,6 @@ def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_tim
         dropbox_next_page_token = update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
     return gdrive_next_page_token, dropbox_next_page_token
 
-if __name__=="__main__":
-    with open(sys.argv[1], 'rb') as f:
-        bio = io.BytesIO(f.read())
-    rv = read_pdf(sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
-    rv['mtime'] = to_rfc3339(rv['mtime'])
-    print(json.dumps(rv, indent=4))
-    sys.exit(0)
-
 def create_sample_index(email, start_time, s3client, bucket, prefix):
     print(f"create_sample_index: Entered. email={email}")
     item = get_user_table_entry(email)
@@ -1280,3 +1272,11 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         traceback.print_exc()
         print(f"create_sample_index: credentials not valid. not processing user {item['email']['S']}. Exception={ex}")
         return False
+
+if __name__=="__main__":
+    with open(sys.argv[1], 'rb') as f:
+        bio = io.BytesIO(f.read())
+    rv = read_pdf(sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
+    rv['mtime'] = to_rfc3339(rv['mtime'])
+    print(json.dumps(rv, indent=4))
+    sys.exit(0)
