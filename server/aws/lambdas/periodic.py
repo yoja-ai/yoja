@@ -124,3 +124,19 @@ def periodic(event:dict, context) -> dict:
     else:
         print(f"periodic: post_body does not contain username or dropbox_sub. Doing a full scan")
         return do_full_scan(s3client, client, bucket, prefix, start_time)
+
+# You can invoke and run the periodic lambda in your local machine as follows
+#
+# OAUTH_CLIENT_ID='123456789012-abcdefghijklmnopqrstuvwxuzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-ABCDEFGHIJKLMNOPQRSTUVWXUB01' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example.ai AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=240 SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy python periodic.py  example.email@gmail.com
+#
+# This will use boto3 to read the ddb table yoja-users, get the gdrive access token, use the token to read and process the files and generate the index
+if __name__=="__main__":
+    if len(sys.argv) < 2:
+        print(f"Usage: periodic.py user_email")
+        sys.exit(255)
+    event = {
+            'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}},
+            'body': json.dumps({'username': sys.argv[1]})
+        }
+    periodic(event, None)
+    sys.exit(0)
