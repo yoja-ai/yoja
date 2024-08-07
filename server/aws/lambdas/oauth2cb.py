@@ -68,7 +68,7 @@ def oauth2cb_google(qs):
     fullname = None
     picture = None
     item = get_user_table_entry(email)
-    if 'fullname' not in item:
+    if item and 'fullname' not in item:
         try:
             params={'access_token': access_token}
             ui_url = f"https://www.googleapis.com/oauth2/v3/userinfo"
@@ -96,7 +96,7 @@ def oauth2cb_google(qs):
     else:
         if not update_users_table(email, refresh_token, access_token, expires_in, id_token=id_token):
             return respond({"error_msg": f"Error while updating users table for {email}"}, status=403)
-        fullname = item['fullname']['S']
+        if 'fullname' in item: fullname = item['fullname']['S']
         if 'picture' in item:
             picture = item['picture']['S']
 

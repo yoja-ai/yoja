@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: 'AWS::Serverless-2016-10-31'
-Description: GPT for Gdrive
+Description: Yoja AI API
 
 Parameters:
   LambdaVersion:
@@ -43,6 +43,18 @@ Globals:
         TRANSFORMERS_OFFLINE: '1'
         OPENAI_API_KEY: !Ref OpenaiApiKey
         PYTHONUNBUFFERED: 'True'
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: YojaApi
+    Description: Yoja API
+    Author: Yoja AI
+    SpdxLicenseId: MIT
+    LicenseUrl: ../../LICENSE
+    # ReadmeUrl: README.md
+    Labels: ['tests']
+    HomePageUrl: https://www.yoja.ai
+    SemanticVersion: 0.0.1
+    SourceCodeUrl: https://github.com/yoja-ai/yoja
 Resources:
   YojaLambdaRole:
     Type: AWS::IAM::Role
@@ -111,6 +123,33 @@ Resources:
               - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-users
               - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-users/index/dropbox_sub-index
               - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yoja-ServiceConf
+        -
+          # https://stackoverflow.com/questions/65137639/lambda-does-not-have-permission-to-access-the-ecr-image: permissions to be added to the lambda role
+          # Lambda does not have permission to access the ECR image. Check the ECR permissions
+          PolicyName: ECRPermissionsForLambda
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement:
+            - Sid: VisualEditor0
+              Effect: Allow
+              Action:
+              - ecr:SetRepositoryPolicy
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:DescribeImages
+              - ecr:DescribeRepositories
+              - ecr:UploadLayerPart
+              - ecr:ListImages
+              - ecr:InitiateLayerUpload
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetRepositoryPolicy
+              - ecr:PutImage
+              Resource: '*'
+            - Sid: VisualEditor1
+              Effect: Allow
+              Action: ecr:GetAuthorizationToken
+              Resource: '*'          
         - PolicyName: AllowS3Pylaprof
           PolicyDocument:
             Version: '2012-10-17'
@@ -131,6 +170,10 @@ Resources:
   entrypoint:
     Type: 'AWS::Serverless::Function'
     Properties:
+      # https://stackoverflow.com/questions/67330890/using-a-public-ecr-image-for-lambda-function : can't have a public container repository / registry container image
+      # https://stackoverflow.com/questions/69997144/specify-imageuri-in-awslambdafunction-throws-cf-error: can't have a public container repository / registry container image
+      # https://docs.aws.amazon.com/lambda/latest/dg/images-create.html: To create a Lambda function from a container image, build your image locally and upload it to an Amazon Elastic Container Registry (Amazon ECR) repository. Then, specify the repository URI when you create the function. The Amazon ECR repository must be in the same AWS Region as the Lambda function. You can create a function using an image in a different AWS account, as long as the image is in the same Region as the Lambda function. For more information, see Amazon ECR cross-account permissions.
+      # https://stackoverflow.com/questions/65137639/lambda-does-not-have-permission-to-access-the-ecr-image: permissions to be added to the lambda role  ( Lambda does not have permission to access the ECR image. Check the ECR permissions )
       ImageUri: IIIIIIIIII
       MemorySize: 8192
       EphemeralStorage:
@@ -177,3 +220,10 @@ Outputs:
     Value: !GetAtt entrypoint.Arn
     Export:
       Name: 'yoja:entrypointarn'
+  EntrypointFunctionUrlConfig:
+    Description: The FunctionUrlConfig of the entrypoint lambda
+    # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-functionurlconfig.html
+    # https://xxxx.lambda-url.us-east-1.on.aws/
+    Value: !GetAtt entrypointUrl.FunctionUrl
+    Export:
+      Name: 'yoja:entrypointfunctionurl'

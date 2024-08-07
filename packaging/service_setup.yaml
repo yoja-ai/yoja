@@ -1,0 +1,719 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform : AWS::Serverless-2016-10-31
+
+Description: yoja.ai stack
+
+Parameters:
+  cftVersion:
+    Type: String
+    Default: 0.0.1
+  YojaApiServiceSemanticVersionParameter:
+    Type: String
+    Default: 0.0.16
+  YojaWebhookServiceSemanticVersionParameter:
+    Type: String
+    Default: 0.0.3
+  yojaServiceDnsName:
+    Type: String
+    Description: the DNS name for the service.  For example, yoja.com.  chat.yoja.com is a subdomain needed under this
+  yojaChatSubdomain:
+    Type: String
+    Description: subdomain under yojaServiceDnsName
+    Default: chat
+  PreexistingWildcardCertificateARN:
+    Type: String
+    Description: 'ARN of pre-existing wildcard certificate in the region where stack is being installed. Leave empty if CreateCertificates above is true'
+  YojaApiLambdaVersion:
+    Type: String
+    Description: Version of Lambdas
+    Default: VVVVVVVVVV
+  OauthClientId:
+    Type: String
+  OauthClientSecret:
+    Type: String
+  DropboxOauthClientId:
+    Type: String
+  DropboxOauthClientSecret:
+    Type: String
+  OauthRedirectUri: 
+    Type: String
+    Description:  similar to https://chat.xxxxxxx/rest/entrypoint/oauth2cb
+  OpenaiApiKey:
+    Type: String
+Mappings:
+  RegionMap:
+    us-east-1:
+      SARYojaApiService: arn:aws:serverlessrepo:us-east-1:058264066930:applications/YojaApi
+      SARYojaWebhookService: arn:aws:serverlessrepo:us-east-1:058264066930:applications/YojaWebhookApi
+Resources:
+  CustomLambdasRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Description: Role for the Lambda that generates ddb table name by replacing
+        . with - and prefixing infinstor-mlflow-server-
+      Path: /
+      RoleName:
+        Fn::Join:
+        - '-'
+        - - CustomLambdasRole
+          - Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - Ref: AWS::StackId
+      Policies:
+      - PolicyName: AllowCustomLambdaToWriteCloudWatchLogs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+        # Needed for custom resource lambda CreateTableName below to make S3 calls
+      - PolicyName: AllowS3Operations
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: arn:aws:s3:::*
+      -
+        PolicyName: 'AllowDBT'
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:query
+              - dynamodb:PutItem
+              - dynamodb:DescribeTable
+              - dynamodb:scan
+              - dynamodb:BatchGetItem
+              - dynamodb:DeleteItem
+              - dynamodb:ListTables  
+              - dynamodb:BatchWriteItem
+              - dynamodb:PartiQLInsert      # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-iam.html
+              - dynamodb:PartiQLUpdate
+              - dynamodb:PartiQLDelete  
+              - dynamodb:PartiQLSelect
+              Resource: '*'  
+  CustomResourceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role:
+        Fn::GetAtt:
+        - CustomLambdasRole
+        - Arn
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          import re
+          import logging
+          import boto3
+          
+          def lambda_handler(event, context):
+            print('evt=' + str(event))
+            request_type:str = event['RequestType']
+            yojaServiceDnsName:str = event['ResourceProperties']['yojaServiceDnsName']
+            try:
+              # 'Create' | 'Update' | 'Delete'
+              if request_type.lower() == 'create' or request_type.lower() == 'update':
+                htmlBucketPrefix:str = event['ResourceProperties']['htmlBucketPrefix']
+                indexBucketPrefix:str = event['ResourceProperties']['indexBucketPrefix']
+                scratchBucketPrefix:str = event['ResourceProperties']['scratchBucketPrefix']
+                
+                yojaServiceDnsNameWithDashes:str = yojaServiceDnsName.replace('.', '-')
+                
+                htmlBucketName:str; indexBucketName:str; scratchBucketName:str
+                htmlBucketName, indexBucketName, scratchBucketName = [ bucket_name_pre + '-' + yojaServiceDnsNameWithDashes for bucket_name_pre in [htmlBucketPrefix, indexBucketPrefix, scratchBucketPrefix] ]
+            
+                # https://docs.python.org/3/library/re.html
+                # https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html: Bucket names must be between 3 (min) and 63 (max) characters long; Bucket names can consist only of lowercase letters, numbers, dots (.), and hyphens (-)
+                # output_bucket_name,count_subs = re.subn('[^a-z0-9.-]','-', output_bucket_name.lower())
+            
+                responseData = {}
+                responseData['yojaServiceDnsNameWithDashes'] = yojaServiceDnsNameWithDashes
+                responseData['htmlBucketName'] = htmlBucketName
+                responseData['indexBucketName'] = indexBucketName
+                responseData['scratchBucketName'] = scratchBucketName
+                #print(responseData)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, yojaServiceDnsName)
+              # delete 
+              else:
+                #pass
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {},yojaServiceDnsName)
+            except Exception as e:
+              logging.error(f'create_table_name lambda handler: caught exception={e}', exc_info=e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, { 'error': str(e) }, yojaServiceDnsName)
+  CustomResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - CustomResourceLambda
+        - Arn
+      yojaServiceDnsName: !Ref yojaServiceDnsName
+      htmlBucketPrefix: 'yoja-html'
+      indexBucketPrefix: 'yoja-index'
+      scratchBucketPrefix: 'yoja-scratch'
+  YojaScratchBucket:
+    Type: AWS::S3::Bucket    
+    Properties:
+      # https://stackoverflow.com/questions/68947257/how-to-replace-character-in-a-string-variable-using-cloudformation
+      BucketName:  !GetAtt [ CustomResource, 'scratchBucketName']
+  YojaHtmlBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+         BucketName: !GetAtt [ CustomResource, 'htmlBucketName']
+  YojaIndexBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+         BucketName: !GetAtt [ CustomResource, 'indexBucketName']
+  YojaHtmlBucketOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: "OAI for Yoja Html bucket"
+  YojaHtmlBucketBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref YojaHtmlBucket
+      PolicyDocument:
+        Statement:
+        - Action: "s3:Get*"
+          Effect: Allow
+          Resource: !Sub arn:aws:s3:::${YojaHtmlBucket}/*
+          Principal:
+            CanonicalUser: !GetAtt YojaHtmlBucketOriginAccessIdentity.S3CanonicalUserId          
+  YojaServiceConfTable: 
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: 'yoja-ServiceConf'
+      AttributeDefinitions: 
+        - 
+          AttributeName: "configVersion"
+          AttributeType: "N"
+      KeySchema: 
+        - 
+          AttributeName: "configVersion"
+          KeyType: "HASH"
+      BillingMode: "PAY_PER_REQUEST"
+  YojaUsersTable: 
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: 'yoja-users'
+      AttributeDefinitions: 
+        -
+          AttributeName: "email"
+          AttributeType: "S"
+        -
+          AttributeName: "dropbox_sub"
+          AttributeType: "S"
+      KeySchema: 
+        -
+          AttributeName: "email"
+          KeyType: "HASH"
+        # -
+        #   AttributeName: "productCode"
+        #   KeyType: "RANGE"
+      BillingMode: "PAY_PER_REQUEST"
+      GlobalSecondaryIndexes: 
+        -
+          IndexName: "dropbox_sub-index"
+          KeySchema:
+            -
+              AttributeName: "dropbox_sub"
+              KeyType: "HASH"
+            # -
+            #   AttributeName: "productCode"
+            #   KeyType: "RANGE"
+          Projection:
+            ProjectionType: ALL
+  YojaApiService:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId:
+          Fn::FindInMap:
+          - RegionMap
+          - Ref: AWS::Region
+          - SARYojaApiService
+        SemanticVersion:
+          Ref: YojaApiServiceSemanticVersionParameter
+      Parameters:
+        LambdaVersion:  !Ref YojaApiLambdaVersion
+        OauthClientId: !Ref OauthClientId
+        OauthClientSecret: !Ref OauthClientSecret
+        DropboxOauthClientId: !Ref DropboxOauthClientId
+        DropboxOauthClientSecret: !Ref DropboxOauthClientSecret
+        OauthRedirectUri: !Ref OauthRedirectUri
+        UsersTable: !Ref YojaUsersTable
+        ServiceconfTable: !Ref YojaServiceConfTable
+        CookieDomain: !Ref yojaServiceDnsName
+        OpenaiApiKey: !Ref OpenaiApiKey
+  YojaApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: YojaApiService
+    Properties:
+      FunctionName:
+        Fn::GetAtt:
+        - YojaApiService
+        - Outputs.GetversionFunctionArn
+      FunctionUrlAuthType: NONE
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+  YojaWebhookService:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId:
+          Fn::FindInMap:
+          - RegionMap
+          - Ref: AWS::Region
+          - SARYojaWebhookService
+        SemanticVersion:
+          Ref: YojaWebhookServiceSemanticVersionParameter
+      Parameters:
+        OauthClientId: !Ref OauthClientId
+        OauthClientSecret: !Ref OauthClientSecret
+        DropboxOauthClientId: !Ref DropboxOauthClientId
+        DropboxOauthClientSecret: !Ref DropboxOauthClientSecret
+        UsersTable: yoja-users
+        ServiceconfTable: yoja-ServiceConf
+        YojaApiEntrypointFunctionArn: !GetAtt [YojaApiService, Outputs.GetversionFunctionArn]
+  YojaWebhookDropboxInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: YojaWebhookService
+    Properties:
+      FunctionName: !GetAtt [YojaWebhookService, Outputs.DropboxWebhookFunctionArn]
+      FunctionUrlAuthType: NONE
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+  YojaWebhookGDriveInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: YojaWebhookService
+    Properties:
+      FunctionName: !GetAtt [YojaWebhookService, Outputs.GDriveWebhookFunctionArn]
+      FunctionUrlAuthType: NONE
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+  YojaResponseHeaderPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name:
+          Fn::Sub: ${AWS::Region}-YojaCloudFrontResponseHeaderPolicy
+        CorsConfig:
+          AccessControlAllowCredentials: 'false'
+          AccessControlAllowHeaders:
+            Items:
+            - Access-Control-Allow-Headers
+            - Access-Control-Allow-Origin
+            - Origin
+            - Accept
+            - X-Requested-With
+            - Content-Type
+            - Access-Control-Request-Method
+            - Access-Control-Request-Headers
+            - x-requested-with
+            - X-Api-Key
+            - Authorization
+            - X-Amz-Date
+            - X-Forwarded-For
+            - Retry-After
+            - Idtoken
+          AccessControlAllowMethods:
+            Items:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          AccessControlAllowOrigins:
+            Items:
+            - '*'
+          OriginOverride: 'true'
+  YojaCloudFront:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudfront-distribution.html
+    Type: AWS::CloudFront::Distribution
+    DependsOn:
+    - YojaApiService
+    - YojaResponseHeaderPolicy
+    Properties:
+      DistributionConfig:
+        Enabled: 'true'
+        Aliases:
+        - 'Fn::Join': [ '.', [ !Ref yojaChatSubdomain, !Ref yojaServiceDnsName]]
+        Origins:
+        # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-origin.html
+        - Id: 
+            # https://xxxxxx.lambda-url.us-east-1.on.aws/
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaApiService, Outputs.EntrypointFunctionUrlConfig]
+          DomainName:
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaApiService, Outputs.EntrypointFunctionUrlConfig]
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginReadTimeout: 60
+        - Id: 
+            # https://xxxxxx.lambda-url.us-east-1.on.aws/
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.GDriveWebhookFunctionUrlConfig]
+          DomainName:
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.GDriveWebhookFunctionUrlConfig]
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginReadTimeout: 60
+        - Id: 
+            # https://xxxxxx.lambda-url.us-east-1.on.aws/
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.DropboxWebhookFunctionUrlConfig]
+          DomainName:
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.DropboxWebhookFunctionUrlConfig]
+          CustomOriginConfig:
+            HTTPSPort: 443
+            OriginProtocolPolicy: https-only
+            OriginReadTimeout: 60
+        - Id: !GetAtt YojaHtmlBucket.RegionalDomainName
+          ConnectionAttempts: 3
+          ConnectionTimeout: 10
+          DomainName: !GetAtt YojaHtmlBucket.RegionalDomainName
+          OriginPath: /html
+          # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-s3originconfig.html
+          S3OriginConfig:
+            OriginAccessIdentity: !Join ["", ["origin-access-identity/cloudfront/", !Ref YojaHtmlBucketOriginAccessIdentity]]
+        CacheBehaviors:
+        - Compress: false
+          PathPattern: /rest/*
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          # CachingDisabled
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # MinTTL: 0
+          # MaxTTL: 1
+          # DefaultTTL: 0
+          AllowedMethods:
+          - HEAD
+          - DELETE
+          - POST
+          - GET
+          - OPTIONS
+          - PUT
+          - PATCH
+          SmoothStreaming: false
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html#managed-origin-request-policy-all-viewer-except-host-header
+          # AllViewerExceptHostHeader
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          # ForwardedValues:
+          #   QueryString: 'true'
+          #   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-cookies.html
+          #   Cookies:
+          #     Forward: all
+          #   Headers:
+          #   - Authorization
+          #   - Origin
+          TargetOriginId: 
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaApiService, Outputs.EntrypointFunctionUrlConfig]
+          ViewerProtocolPolicy: https-only
+        - Compress: false
+          PathPattern: /webhook/webhook_gdrive
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          # CachingDisabled
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # MinTTL: 0
+          # MaxTTL: 1
+          # DefaultTTL: 0
+          AllowedMethods:
+          - HEAD
+          - DELETE
+          - POST
+          - GET
+          - OPTIONS
+          - PUT
+          - PATCH
+          SmoothStreaming: false
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html#managed-origin-request-policy-all-viewer-except-host-header
+          # AllViewerExceptHostHeader
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          # ForwardedValues:
+          #   QueryString: 'true'
+          #   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-cookies.html
+          #   Cookies:
+          #     Forward: all
+          #   Headers:
+          #   - Authorization
+          #   - Origin
+          TargetOriginId: 
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.GDriveWebhookFunctionUrlConfig]
+          ViewerProtocolPolicy: https-only
+        - Compress: false
+          PathPattern: /webhook/webhook_dropbox
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          # CachingDisabled
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # MinTTL: 0
+          # MaxTTL: 1
+          # DefaultTTL: 0
+          AllowedMethods:
+          - HEAD
+          - DELETE
+          - POST
+          - GET
+          - OPTIONS
+          - PUT
+          - PATCH
+          SmoothStreaming: false
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html#managed-origin-request-policy-all-viewer-except-host-header
+          # AllViewerExceptHostHeader
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          # ForwardedValues:
+          #   QueryString: 'true'
+          #   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-cookies.html
+          #   Cookies:
+          #     Forward: all
+          #   Headers:
+          #   - Authorization
+          #   - Origin
+          TargetOriginId: 
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - !GetAtt [YojaWebhookService, Outputs.DropboxWebhookFunctionUrlConfig]
+          ViewerProtocolPolicy: https-only
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - DELETE
+          - GET
+          - HEAD
+          - OPTIONS
+          - PATCH
+          - POST
+          - PUT
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          # CachingOptimized          
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          TargetOriginId: !GetAtt YojaHtmlBucket.RegionalDomainName
+          ViewerProtocolPolicy: https-only
+          # https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html#managed-origin-request-policy-all-viewer-except-host-header
+          # AllViewerExceptHostHeader
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          # ForwardedValues:
+          #   QueryString: 'true'
+          #   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-cloudfront-distribution-cookies.html
+          #   Cookies:
+          #     Forward: all
+          #   Headers:
+          #   - Authorization
+          #   - Origin
+          ResponseHeadersPolicyId:
+            Fn::GetAtt:
+            - YojaResponseHeaderPolicy
+            - Id
+        ViewerCertificate:
+          AcmCertificateArn: !Ref PreexistingWildcardCertificateARN
+          MinimumProtocolVersion: TLSv1.2_2018
+          SslSupportMethod: sni-only
+  PopulateDDBLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role:
+        Fn::GetAtt:
+        - CustomLambdasRole
+        - Arn
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import os
+          from typing import Any, Dict, List, Tuple, Union
+          import typing
+          import boto3
+          import botocore
+          import botocore.client
+          if typing.TYPE_CHECKING:
+              from mypy_boto3_dynamodb.client import DynamoDBClient
+          else:
+              DynamoDBClient = object
+          from typing import TYPE_CHECKING
+          if TYPE_CHECKING:
+              from mypy_boto3_dynamodb import DynamoDBClient
+              from mypy_boto3_dynamodb.type_defs import ExecuteStatementOutputTypeDef
+              from mypy_boto3_dynamodb.service_resource import Table
+              
+              from mypy_boto3_s3 import S3Client
+              from mypy_boto3_s3.type_defs import GetBucketLocationOutputTypeDef
+          else:
+              DynamoDBClient = object
+              ExecuteStatementOutputTypeDef = object
+              Table = object
+              
+              CognitoIdentityProviderClient = object
+              AdminListGroupsForUserResponseTypeDef = object; GroupTypeTypeDef=object; AdminGetUserResponseTypeDef=object; AttributeTypeTypeDef = object; AdminCreateUserResponseTypeDef = object; UserTypeTypeDef = object; EmptyResponseMetadataTypeDef = object
+              
+              S3Client = object
+              GetBucketLocationOutputTypeDef = object
+          #from cryptography.fernet import Fernet
+
+          import logging
+          logger = logging.getLogger(__name__)
+          logger.setLevel(logging.getLevelName(os.getenv("LAMBDA_LOG_LEVEL", "INFO")))
+
+          def _insert_serviceconf_partiql(serviceconf_table_name:str, index_bucket_name:str) -> Tuple[bool, str]:
+              try:
+                  # # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.update.html
+                  # # UPDATE  table  
+                  # # [SET | REMOVE]  path  [=  data] […]
+                  # # WHERE condition [RETURNING returnvalues]
+                  # # <returnvalues>  ::= [ALL OLD | MODIFIED OLD | ALL NEW | MODIFIED NEW] *
+                  # set_clauses:str = ""
+                  # for key,val in update_dict.items():
+                  #     set_clauses = set_clauses + f" SET {key}='{val}' "
+                  # # Note: table name must be double quoted due to the use of '-' in the name: infinstor-Subscribers
+                  # # Error: ValidationException: Where clause does not contain a mandatory equality on all key attributes
+                  # update_stmt:str = f"UPDATE \"{os.environ['SUBSCRIBERS_TABLE']}\" {set_clauses} WHERE customerId = '{customer_id}' AND productCode = '{product_code}' RETURNING ALL NEW *"
+                  # print(f"Executing update_stmt for subscriber {cognito_username} = {update_stmt}")
+                  
+                  ddb_client:DynamoDBClient = boto3.client('dynamodb')
+                  if not ddb_client: return False, "Unable to get ddb_client for service"
+                  
+                  # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.insert.html
+                  insert_stmt:str = f"INSERT INTO \"{serviceconf_table_name}\" VALUE " + "{" + f"'configVersion':1, 'bucket':'{index_bucket_name}', 'prefix':'index2' " +  "}"
+                  
+                  # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Client.execute_statement
+                  # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ExecuteStatement.html
+                  # response = {'Items': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...], 'ResponseMetadata': {'RequestId': 'CHBDU0TEJ6UH82VNOMPA9F8I3NVV4KQNSO5AEMVJF66Q9ASUAAJG', 'HTTPStatusCode': 200, 'HTTPHeaders': {...}, 'RetryAttempts': 0}}
+                  exec_stmt_resp:ExecuteStatementOutputTypeDef = ddb_client.execute_statement(Statement=insert_stmt)
+                  ddb_http_status_code:int = exec_stmt_resp.get('ResponseMetadata').get('HTTPStatusCode')
+                  if ddb_http_status_code != 200: return False, f"dynamodb http status code={ddb_http_status_code} headers={exec_stmt_resp['ResponseMetadata'].get('HTTPHeaders')}"
+                  
+                  return True, ""
+              except Exception as e:
+                  logger.error(f"Exception caught during ddb serviceconf statment: {e}", exc_info=e)
+                  return False, str(e)
+
+          def _delete_serviceconf_partiql(serviceconf_table_name:str) -> Tuple[bool, str]:
+              try:
+                  # # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.update.html
+                  # # UPDATE  table  
+                  # # [SET | REMOVE]  path  [=  data] […]
+                  # # WHERE condition [RETURNING returnvalues]
+                  # # <returnvalues>  ::= [ALL OLD | MODIFIED OLD | ALL NEW | MODIFIED NEW] *
+                  # set_clauses:str = ""
+                  # for key,val in update_dict.items():
+                  #     set_clauses = set_clauses + f" SET {key}='{val}' "
+                  # # Note: table name must be double quoted due to the use of '-' in the name: infinstor-Subscribers
+                  # # Error: ValidationException: Where clause does not contain a mandatory equality on all key attributes
+                  # update_stmt:str = f"UPDATE \"{os.environ['SUBSCRIBERS_TABLE']}\" {set_clauses} WHERE customerId = '{customer_id}' AND productCode = '{product_code}' RETURNING ALL NEW *"
+                  # print(f"Executing update_stmt for subscriber {cognito_username} = {update_stmt}")
+                  
+                  ddb_client:DynamoDBClient = boto3.client('dynamodb')
+                  if not ddb_client: return False, "Unable to get ddb_client for service"
+                  
+                  # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.delete.html
+                  delete_stmt:str = f"DELETE FROM \"{serviceconf_table_name}\" WHERE \"configVersion\" = 1" 
+                  
+                  # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Client.execute_statement
+                  # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ExecuteStatement.html
+                  # response = {'Items': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...], 'ResponseMetadata': {'RequestId': 'CHBDU0TEJ6UH82VNOMPA9F8I3NVV4KQNSO5AEMVJF66Q9ASUAAJG', 'HTTPStatusCode': 200, 'HTTPHeaders': {...}, 'RetryAttempts': 0}}
+                  exec_stmt_resp:ExecuteStatementOutputTypeDef = ddb_client.execute_statement(Statement=delete_stmt)
+                  ddb_http_status_code:int = exec_stmt_resp.get('ResponseMetadata').get('HTTPStatusCode')
+                  if ddb_http_status_code != 200: return False, f"dynamodb http status code={ddb_http_status_code} headers={exec_stmt_resp['ResponseMetadata'].get('HTTPHeaders')}"
+                  
+                  return True, ""
+              except Exception as e:
+                  logger.error(f"Exception caught during ddb serviceconf statment: {e}", exc_info=e)
+                  return False, str(e)
+
+          def lambda_handler(event, context):
+            print('evt=' + str(event))
+            request_type:str = event['RequestType']
+            serviceConfTableName:str = event['ResourceProperties']['serviceConfTableName']
+            try:
+              # 'Create' | 'Update' | 'Delete'
+              if request_type.lower() == 'create':
+                indexBucketName:str = event['ResourceProperties']['indexBucketName']
+                # don't populate the 'key' in serviceconf; autopopulated by the backend in the api if it doesn't exist
+                # keyStr:str  = '' #Fernet.generate_key().decode()
+                
+                success, errmsg = _insert_serviceconf_partiql(serviceConfTableName, indexBucketName, keyStr)
+                  
+                responseData = {}
+                print(responseData)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS if success else cfnresponse.FAILED, responseData if success else {'error':errmsg} , serviceConfTableName)
+              # delete
+              elif request_type.lower() == 'delete':
+                serviceConfTableName:str = event['ResourceProperties']['serviceConfTableName']
+                success, errmsg = _delete_serviceconf_partiql(serviceConfTableName)
+                  
+                responseData = {}
+                print(responseData)
+                cfnresponse.send(event, context, cfnresponse.SUCCESS if success else cfnresponse.FAILED, responseData if success else {'error':errmsg} , serviceConfTableName)
+              # update
+              else:
+                #pass
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {},serviceConfTableName)
+            except Exception as e:
+              logging.error(f'populate_ddb_custom_resource lambda handler: caught exception={e}', exc_info=e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, { 'error': str(e) }, serviceConfTableName)
+  PopulateDDBCustomResource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt [PopulateDDBLambda, Arn]
+      serviceConfTableName: !Ref YojaServiceConfTable
+      indexBucketName: !Ref YojaIndexBucket
+      keyStr: ''

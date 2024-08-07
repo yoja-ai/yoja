@@ -461,6 +461,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         # Submit all tool outputs at once after collecting them in a list
         if tool_outputs:
             try:
+                print(f"**{_prtime()}: calling submit_tool_outputs_and_poll:** run={run}.")
+                tracebuf.append(f"**{_prtime()}: calling submit_tool_outputs_and_poll:**")
                 run = client.beta.threads.runs.submit_tool_outputs_and_poll(
                     thread_id=assistants_thread_id,
                     run_id=run.id,
