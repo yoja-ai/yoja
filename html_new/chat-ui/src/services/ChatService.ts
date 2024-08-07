@@ -32,27 +32,44 @@ export const chatApi = async (messages: Message[]) => {
     top_p: 0.7
   });
 
-  //initial fetch attempt
-  let res = await fetch(requestUrl, {
-    method: "POST",
-    headers,
-    body: requestBody,
-  });
-
-  // Retry once after 1s if the first attempt returns a 504 Gateway Timeout
-  if (res.status === 504) {
-    console.log("Received 504 Gateway Timeout. Retrying...");
-    await new Promise(resolve => setTimeout(resolve, 1000)); 
-    res = await fetch(requestUrl, {
+  var num504s = 0;
+  var num503s = 0;
+  while (true) {
+    let res = await fetch(requestUrl, {
       method: "POST",
       headers,
       body: requestBody,
     });
-  } else if (res.status == 403) {
-    console.log("Received 403 Unauthorized. Redirecting to /login.html ...");
-    alert("Login expired");
-    window.location.href = "/login.html";
+    if (res.status === 504) {
+      console.log("Received 504 Gateway Timeout. Retrying...");
+      num504s++;
+      if (num504s >= 2) {
+        console.log("Received too many Gateway Timeouts. Aborting..")
+        alert("Received too many Gateway Timeouts. Aborting..")
+        return new Response();
+      } else {
+        // XXX Need to provide user feedback and the ability to cancel
+        await new Promise(resolve => setTimeout(resolve, 1000)); 
+        continue;
+      }
+    } else if (res.status === 503) {
+      console.log("Received 503 Service Unavailable. Waiting and retrying...");
+      num503s++;
+      if (num503s >= 12) {
+        console.log("Received too many Service Unavailable responses. Aborting..")
+        alert("Received too many Service Unavailable responses. Aborting..")
+        return new Response();
+      } else {
+        // XXX Need to provide user feedback and the ability to cancel
+        await new Promise(resolve => setTimeout(resolve, 10000)); 
+        continue;
+      }
+    } else if (res.status == 403) {
+      console.log("Received 403 Unauthorized. Redirecting to /login.html ...");
+      alert("Login expired");
+      window.location.href = "/login.html";
+    } else {
+      return res;
+    }
   }
-
-  return res;
 };

@@ -20,7 +20,7 @@ RUN cp /usr/lib64/libjpeg.so.62 /usr/local/lib/
 RUN cp /usr/lib64/libwebp.so.4 /usr/local/lib/
 RUN cp /usr/lib64/libtiff.so.5 /usr/local/lib/
 RUN cp /usr/lib64/libpng15.so.15 /usr/local/lib/
-RUN rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+RUN rpm -Uvh https://archives.fedoraproject.org/pub/archive/epel/7/x86_64/Packages/e/epel-release-7-14.noarch.rpm
 RUN yum -y update
 RUN yum install -y tesseract
 RUN yum install -y tesseract-osd

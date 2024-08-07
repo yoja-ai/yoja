@@ -16,7 +16,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, set_start_time
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, set_start_time, get_user_table_entry
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
@@ -140,6 +140,46 @@ def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
             )
     except ClientError as e:
         print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
+        return False
+    return True
+
+def lock_sample_dir(email, client):
+    print(f"lock_sample_dir: Entered. Trying to lock sample dir for email={email}")
+    gdrive_next_page_token = None
+    dropbox_next_page_token = None
+    try:
+        now = time.time()
+        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
+        response = client.update_item(
+            TableName=os.environ['USERS_TABLE'],
+            Key={'email': {'S': email}},
+            UpdateExpression="set #lm = :st",
+            ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
+            ExpressionAttributeNames={'#lm': 'sample_end_time'},
+            ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(15*60))} },
+            ReturnValues="ALL_NEW"
+        )
+        print(f"lock_sample_dir: conditional check success. No other instance of lambda is creating the sample dir for user {email}")
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == "ConditionalCheckFailedException":
+            print(f"lock_sample_dir: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is creating the sample dir for {email}")
+            return False
+        else:
+            raise
+
+def unlock_sample_dir(email, client):
+    print(f"unlock_sample_dir: Entered. email={email}")
+    try:
+        ue = "REMOVE sample_end_time"
+        response = client.update_item(
+            TableName=os.environ['USERS_TABLE'],
+            Key={'email': {'S': email}},
+            UpdateExpression=ue,
+            ReturnValues="UPDATED_NEW"
+        )
+    except ClientError as e:
+        print(f"unlock_sample_dir: Error {e.response['Error']['Message']} while unlocking")
         return False
     return True
 
@@ -589,7 +629,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                     os.remove(f'{tfn}x')
                 else:
                     print(f"Failed to convert {filename} to pptx. Return value {rv.returncode}. Not generating embeddings")
-            elif filename.lower().endswith('.pdf'):
+            elif (filename.lower().endswith('.pdf') or mimetype == 'application/pdf'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if 'partial' in file_item and 'paragraphs' in file_item:
                     del file_item['partial']
@@ -1066,7 +1106,8 @@ def _get_gdrive_listing_full(service, item, folder_id):
             # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
             results = (
                 service.files()
-                .list(pageSize=100, fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
+                .list(pageSize=100, orderBy="folder,modifiedTime desc, name",
+                                        fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
                 .execute()
             )
             items = results.get("files", [])
@@ -1178,3 +1219,64 @@ if __name__=="__main__":
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))
     sys.exit(0)
+
+def create_sample_index(email, start_time, s3client, bucket, prefix):
+    print(f"create_sample_index: Entered. email={email}")
+    item = get_user_table_entry(email)
+    try:
+        creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
+        kwargs = {}
+        service:googleapiclient.discovery.Resource = build("drive", "v3", credentials=creds)
+        print(f"create_sample_index: First, we look at files in gdrive...")
+        results = (
+            service.files()
+            .list(pageSize=64,
+                #orderBy="folder,modifiedTime desc, name", fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)",
+                q="mimeType != 'application/vnd.google-apps.folder'", orderBy="modifiedTime desc, name", fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)",
+                **kwargs)
+            .execute()
+        )
+        items = results.get("files", [])
+        print(f"create_sample_index: Fetched {items} items from google drive")
+        needs_embedding = {}
+        for item in items:
+            # pick word/ppt files smaller than 100K and pdfs smaller than 200K
+            fn = item['name'].lower()
+            size = int(item['size'])
+            if fn.endswith('.pdf') and size > (200*1024):
+                print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 200k")
+                continue
+            if (fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx')) and size > (100*1024):
+                print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
+                continue
+            needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
+                                'mtime': from_rfc3339(item['modifiedTime']), 'mimetype': item['mimeType'],
+                                'size': size}
+            if len(needs_embedding) == 5:
+                print(f"create_sample_index: Chose the following files {needs_embedding}")
+                break
+        sub_prefix = "sample"
+        user_prefix = f"{prefix}/{email}/{sub_prefix}"
+
+        s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/files_index.jsonl.gz")
+        s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/faiss_index_flat")
+        s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/faiss_index_ivfadc")
+        s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/index_metadata.json")
+
+        fnx_start = datetime.datetime.now()
+        done_embedding, time_limit_exceeded = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        if len(done_embedding.items()) > 0:
+            update_files_index_jsonl(done_embedding, {}, bucket, user_prefix, s3client)
+        else:
+            print(f"create_sample_index: Error. No entries in done_embedding")
+            return
+        fnx_end = datetime.datetime.now()
+        print(f"create_sample_index: time taken for indexing 5 files: {fnx_end - fnx_start}")
+        _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix, DocStorageType.Sample)
+        fnx_end2 = datetime.datetime.now()
+        print(f"create_sample_index: time taken for build/save faiss: {fnx_end2 - fnx_end}")
+        return True
+    except Exception as ex:
+        traceback.print_exc()
+        print(f"create_sample_index: credentials not valid. not processing user {item['email']['S']}. Exception={ex}")
+        return False

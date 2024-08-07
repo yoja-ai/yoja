@@ -10,8 +10,8 @@ import zlib
 import datetime
 from urllib.parse import unquote
 import numpy as np
-from utils import respond, get_service_conf, check_cookie
-from index_utils import init_vdb
+from utils import respond, get_service_conf, check_cookie, set_start_time
+from index_utils import init_vdb, lock_sample_dir, unlock_sample_dir, create_sample_index
 import boto3
 from openai_ner import OpenAiNer
 from openai import OpenAI
@@ -945,6 +945,9 @@ def chat_completions(event, context):
     prefix = service_conf['prefix']['S'].strip().strip('/')
     print(f"Index Location: s3://{bucket}/{prefix}")
 
+    start_time:datetime.datetime = datetime.datetime.now()
+    set_start_time(start_time)
+
     rv = check_cookie(event, False)
     email = rv['google']
     if not email:
@@ -964,8 +967,40 @@ def chat_completions(event, context):
         faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, doc_storage_type, build_faiss_indexes=False, sub_prefix=index)
         if faiss_rm_vdb: faiss_rm_vdbs.append(faiss_rm_vdb)
     if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
-        print(f"chat: no faiss index. Returning 403")
-        return respond({"error_msg": f"No document index found. Please wait and try later.."}, status=403)
+        print(f"chat_completions: No full indexes found. Looking for sample index")
+        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix,
+                                    faiss_rm.DocStorageType.Sample, build_faiss_indexes=False,
+                                    sub_prefix="sample")
+        if faiss_rm_vdb:
+            print(f"chat_completions: Found and loaded sample index for {email}")
+            faiss_rm_vdbs.append(faiss_rm_vdb)
+        else:
+            print(f"chat_completions: No sample index found for {email}. Creating sample index")
+            ddbclient = boto3.client('dynamodb')
+            if lock_sample_dir(email, ddbclient):
+                print(f"chat_completions: Acquired sample index lock for {email}. Now creating..")
+                try:
+                    if create_sample_index(email, start_time, s3client, bucket, prefix):
+                        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix,
+                                                                faiss_rm.DocStorageType.Sample,
+                                                                build_faiss_indexes=False,
+                                                                sub_prefix="sample")
+                        if faiss_rm_vdb:
+                            faiss_rm_vdbs.append(faiss_rm_vdb)
+                        else:
+                            print(f"chat_completions: Error in create sample index for {email}")
+                            return respond({"error_msg": f"Error in create sample index for {email}"}, status=403)
+                    else:
+                        print(f"chat_completions: Unable to create sample index for {email}")
+                        return respond({"error_msg": f"Unable to create sample index for {email}"}, status=403)
+                except Exception as ex:
+                    print(f"chat_completions: Caught {ex} creating sample index for {email}")
+                    return respond({"error_msg": f"Caught {ex} creating sample index for {email}"}, status=403)
+                finally:
+                    unlock_sample_dir(email, ddbclient)
+            else:
+                print(f"chat_completions: sample index for user {email} is being created by another lambda instance.")
+                return respond({"error_msg": f"No document index found and sample index being created by another lambda. Please wait and try later.."}, status=503)
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []

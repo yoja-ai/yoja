@@ -12,7 +12,7 @@ import enum
 class DocStorageType(enum.Enum):
     GoogleDrive = 1
     DropBox = 2
-
+    Sample = 3
 
 class FaissRM():
     def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]], pre_calc_embeddings:List[List[float]], vectorizer, doc_storage_type:DocStorageType, k: int = 3, flat_index_fname=None, ivfadc_index_fname:str=None):
@@ -172,6 +172,9 @@ class FaissRM():
 
     def _faiss_search(self, emb_npa, k, index_type:str = 'flat'):
         print(f"using index_type={index_type} for faiss")
+        if k > len(self._index_map):
+            print(f"_faiss_search: reducing k from {k} to the number of entries in this vdb, i.e. {len(self._index_map)}")
+            k = len(self._index_map)
         dist_rv = []
         index_rv = []
         index = self._faiss_index_ivf_adc if index_type == 'ivfadc' else self._faiss_index
@@ -179,14 +182,18 @@ class FaissRM():
         # 
         distance_list, index_list = index.search(emb_npa, k)
             
-        # print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc distance_list={distance_list}")
-        # print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc index_list={index_list}")
+        #print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc distance_list={distance_list}")
+        #print(f"_faiss_search: index_type={index.__class__.__module__}.{index.__class__.__name__}: before trunc index_list={index_list}")
         lindex = list(list(index_list)[0])
         try:
             trunc_point = lindex.index(-1)
-            print(f"_faiss_search: index_type={index_type}: trunc point={trunc_point}")
+            print(f"_faiss_search: index_type={index_type}: Found -1 at {trunc_point}. Truncating results to {trunc_point} entries")
             return np.array([distance_list[0][:trunc_point]]), np.array([index_list[0][:trunc_point]])
         except ValueError as ve:
+            for trunc_point in range(len(lindex)):
+                if lindex[trunc_point] >= len(self._index_map):
+                    print(f"_faiss_search: index_type={index_type}: Found ind > len(index_map) at {trunc_point}. Truncating results to {trunc_point} entries")
+                    return np.array([distance_list[0][:trunc_point]]), np.array([index_list[0][:trunc_point]])
             return distance_list, index_list
 
     def __call__(self, query: str, k: Optional[int] = None, index_type:str = 'flat'):

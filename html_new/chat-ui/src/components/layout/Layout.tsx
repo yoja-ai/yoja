@@ -115,16 +115,12 @@ const Layout = () => {
         localStorage.setItem("chat_history", JSON.stringify(updatedChatHistory));
       }
     }).catch((error: any) => {
-      setIsLoading(false);
-      notyf.open({
-        type: 'warning',
-        message: `<b> Error : </b> ${ error.message }`
-      });
+      alert("Error " + error.message);
     }).finally(()=> {
       setIsLoading(false);
     });
   };
-  
+
   const getFileFullPath = (extension: string, id: string) => {
     switch(extension) {
       case 'doc':
