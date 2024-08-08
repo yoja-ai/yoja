@@ -95,6 +95,10 @@ def get_service_conf():
             print(f"get_service_conf: resp={resp}")
             if 'Item' in resp:
                 cached_service_conf = resp['Item']
+                if 'YOJA_INDEX_BUCKET' in os.environ:
+                    cached_service_conf['bucket'] = {'S': os.environ['YOJA_INDEX_BUCKET']}
+                if 'YOJA_INDEX_PREFIX' in os.environ:
+                    cached_service_conf['prefix'] = {'S': os.environ['YOJA_INDEX_PREFIX']}
                 return cached_service_conf
             else:
                 if ind == 0:
