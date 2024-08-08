@@ -425,58 +425,61 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id
-
-        print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
-        tracebuf.append(f"**{_prtime()}: run incomplete:**")
-    
-        # Define the list to store tool outputs
-        tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
-        # Loop through each tool in the required action section        
-        for tool in run.required_action.submit_tool_outputs.tool_calls:
-            # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
-            args_dict:dict = json.loads(tool.function.arguments)
-            print(f"**{_prtime()}: Running tool tool.function.name={tool.function.name} with tool.function.arguments={args_dict}")
-            if tool.function.name == "search_question_in_db":
-                tool_arg_question = args_dict.get('question')
-                context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question)
-                print(f"**{_prtime()}: Tool output:** context={context}")
-                tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": context
-                })
-            elif tool.function.name == "list_of_files_for_given_question":
-                args_dict:dict = json.loads(tool.function.arguments)
-                tool_arg_question = args_dict.get('question')
-                num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
-                tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
-                print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
-                tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
-                tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
-            else:
-                raise Exception(f"**Unknown function call:** {tool.function.name}")
-  
-        # Submit all tool outputs at once after collecting them in a list
-        if tool_outputs:
-            try:
-                print(f"**{_prtime()}: calling submit_tool_outputs_and_poll:** run={run}.")
-                tracebuf.append(f"**{_prtime()}: calling submit_tool_outputs_and_poll:**")
-                run = client.beta.threads.runs.submit_tool_outputs_and_poll(
-                    thread_id=assistants_thread_id,
-                    run_id=run.id,
-                    poll_interval_ms=500,
-                    tool_outputs=tool_outputs
-                )
-                print(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:** run={run}.")
-                tracebuf.append(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:**")
-            except Exception as e:
-                print("Failed to submit tool outputs: ", e)
-        else:
-            logmsg = "**{_prtime()}: No tool outputs to submit.**"
+        elif run.status == 'failed':
+            logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}"
             print(logmsg); tracebuf.append(logmsg)
+            return None, None
+        else: # run is incomplete
+            print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
+            tracebuf.append(f"**{_prtime()}: run incomplete:**")
     
+            # Define the list to store tool outputs
+            tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
+            # Loop through each tool in the required action section        
+            for tool in run.required_action.submit_tool_outputs.tool_calls:
+                # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
+                args_dict:dict = json.loads(tool.function.arguments)
+                print(f"**{_prtime()}: Running tool tool.function.name={tool.function.name} with tool.function.arguments={args_dict}")
+                if tool.function.name == "search_question_in_db":
+                    tool_arg_question = args_dict.get('question')
+                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question)
+                    print(f"**{_prtime()}: Tool output:** context={context}")
+                    tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
+                    tool_outputs.append({
+                        "tool_call_id": tool.id,
+                        "output": context
+                    })
+                elif tool.function.name == "list_of_files_for_given_question":
+                    args_dict:dict = json.loads(tool.function.arguments)
+                    tool_arg_question = args_dict.get('question')
+                    num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
+                    tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
+                    print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
+                    tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
+                    tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
+                else:
+                    raise Exception(f"**Unknown function call:** {tool.function.name}")
+  
+            # Submit all tool outputs at once after collecting them in a list
+            if tool_outputs:
+                try:
+                    print(f"**{_prtime()}: calling submit_tool_outputs_and_poll:** run={run}.")
+                    tracebuf.append(f"**{_prtime()}: calling submit_tool_outputs_and_poll:**")
+                    run = client.beta.threads.runs.submit_tool_outputs_and_poll(
+                        thread_id=assistants_thread_id,
+                        run_id=run.id,
+                        poll_interval_ms=500,
+                        tool_outputs=tool_outputs
+                    )
+                    print(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:** run={run}.")
+                    tracebuf.append(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:**")
+                except Exception as e:
+                    print("Failed to submit tool outputs: ", e)
+            else:
+                logmsg = "**{_prtime()}: No tool outputs to submit.**"
+                print(logmsg); tracebuf.append(logmsg)
     return None, None
 
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
