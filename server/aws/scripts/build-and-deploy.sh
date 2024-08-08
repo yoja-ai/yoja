@@ -78,9 +78,29 @@ EOF
 python3 /tmp/replace_image_$$.py
 rm /tmp/replace_image_$$.py
 
+# get the existing stack name
+c=`cat <<EOF
+import boto3
+import sys
+
+# if 'region_name' is not specified, defaults to us-east-1, even if ~/.aws/config is configured for ap-south-1.  So pass 'region' explicitly
+client = boto3.client('cloudformation', region_name='$AWS_REGN')
+stacks = client.list_stacks()
+ssum = stacks['StackSummaries']
+
+for os in ssum: 
+    if os['StackStatus'] == 'CREATE_COMPLETE' or os['StackStatus'] == 'UPDATE_COMPLETE' or os['StackStatus'] == 'UPDATE_ROLLBACK_COMPLETE':
+      # CFT stack names have YojaApiService in it.  manual stack name was 'yoja'
+      if 'yoja' == os['StackName'] or 'YojaApiService' in os['StackName'] :
+        print(os['StackName'])
+        sys.exit(0)
+sys.exit(255)
+EOF`
+STACK_NAME=`python3 -c "$c"`
+
 if [ -z "$YOJADIST" ]; then
   sam build --profile ${AWS_CREDS} --region ${AWS_REGN} || exit 1 
-  sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml --stack-name yoja \
+  sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml --stack-name $STACK_NAME \
     --s3-bucket ${scratch_bucket} --s3-prefix yoja \
     --region ${AWS_REGN} --capabilities CAPABILITY_IAM \
     --image-repository $aws_account_id.dkr.ecr.${AWS_REGN}.amazonaws.com/yoja \

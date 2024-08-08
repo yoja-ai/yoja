@@ -365,6 +365,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: 'true'
+        DefaultRootObject: login.html
         Aliases:
         - 'Fn::Join': [ '.', [ !Ref yojaChatSubdomain, !Ref yojaServiceDnsName]]
         Origins:
