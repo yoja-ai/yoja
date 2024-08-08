@@ -127,9 +127,13 @@ def periodic(event:dict, context) -> dict:
 
 # You can invoke and run the periodic lambda in your local machine as follows
 #
-# OAUTH_CLIENT_ID='123456789012-abcdefghijklmnopqrstuvwxuzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-ABCDEFGHIJKLMNOPQRSTUVWXUB01' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example.ai AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=240 SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy python periodic.py  example.email@gmail.com
+# OAUTH_CLIENT_ID='123456789012-abcdefghijklmnopqrstuvwxuzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-ABCDEFGHIJKLMNOPQRSTUVWXUB01' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example.ai AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=240 USERS_TABLE=yoja-users SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy python periodic.py  example.email@gmail.com
 #
 # This will use boto3 to read the ddb table yoja-users, get the gdrive access token, use the token to read and process the files and generate the index
+# You will need a conda environment with all the right packages. The easiest way is to run create-container.sh.
+# Then run 'docker run --interactive --tty --entrypoint /bin/bash yoja-img'
+# When the docker container starts up, copy the aws credentials profile in the above command (example.ai) into a file called credentials in /var/task. Then add AWS_SHARED_CREDENTIALS_FILE=./credentials to the above command line.
+#
 if __name__=="__main__":
     if len(sys.argv) < 2:
         print(f"Usage: periodic.py user_email")
