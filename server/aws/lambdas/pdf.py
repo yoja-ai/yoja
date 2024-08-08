@@ -174,6 +174,8 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
                 rc = processinfo.process.returncode
                 if rc:
                     print(f"[{processinfo.process.pid}] Process error. returncode {rc}")
+                else:
+                    print(f"[{processinfo.process.pid}] No process error")
                     with open(os.path.join(tmpdir, processinfo.outfn), 'rb') as fp:
                         hh = fp.read()
                     chunk = ''
