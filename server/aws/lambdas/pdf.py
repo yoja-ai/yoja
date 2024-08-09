@@ -14,6 +14,7 @@ import pickle
 from typing import TYPE_CHECKING
 import fcntl
 import select
+import shutil
 
 PARALLEL_PROCESSES=os.cpu_count()-1 if os.cpu_count() > 1 else 1
 print(f"pdf: using {PARALLEL_PROCESSES} cpus for processing pdfs")
@@ -196,6 +197,7 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
 
 def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
+    tmpdir = None
     try:
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmpfp:
             tmpfp.write(bio.read())
@@ -241,3 +243,7 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
         print(f"read_pdf: fn={filename}. Caught {ex}")
         traceback.print_exc()
         return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
+    finally:
+        os.remove(tmpfp.name)
+        if tmpdir:
+            shutil.rmtree(tmpdir)
