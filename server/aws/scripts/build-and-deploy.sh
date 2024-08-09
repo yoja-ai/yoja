@@ -83,8 +83,7 @@ c=`cat <<EOF
 import boto3
 import sys
 
-# if 'region_name' is not specified, defaults to us-east-1, even if ~/.aws/config is configured for ap-south-1.  So pass 'region' explicitly
-client = boto3.client('cloudformation', region_name='$AWS_REGN')
+client = boto3.Session(profile_name='$AWS_CREDS', region_name='$AWS_REGN').client('cloudformation')
 stacks = client.list_stacks()
 ssum = stacks['StackSummaries']
 
