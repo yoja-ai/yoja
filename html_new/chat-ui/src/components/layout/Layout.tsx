@@ -24,22 +24,24 @@ const Layout = () => {
 
   useEffect(() => {
     const items = JSON.parse(localStorage.getItem('current_chat') || '[]');
-    if (items) {
+    if (items.length > 0) {
       setCurrentChat(items);
     }
     const historyItems = JSON.parse(localStorage.getItem('chat_history') || '[]');
     if (historyItems.length) {
-      console.log('historyItemsss', historyItems);
       setChatHistory(historyItems);
     } else {
-      const newChat: ChatHistory = {
+      const newChat = {
         name: 'New Chat',
         content: [],
-        time: new Date()
+        time: new Date(),
+        isNew: true // Chat is initially invisible
       };
       setChatHistory([newChat]);
+      setCurrentChat(newChat.content); // Focus on the new chat even though it's invisible
     }
   }, []);
+  
 
   const notyf = new Notyf({
     duration: 1000,
@@ -75,51 +77,63 @@ const Layout = () => {
   
   const sendMessage = (newMessage: Message) => {
     setIsLoading(true);
-    setCurrentChat([...currentChat, newMessage]);
-    const newState = [...currentChat, newMessage];
-    localStorage.setItem("current_chat", JSON.stringify(newState));
-    chatApi([...currentChat, newMessage]).then(async (res: any) => {
-      const text = await res.text();
-      const result = JSON.parse(text.slice(5)); 
-      if(result) {
-        const resMessage: Message = result.choices[0].delta;
-        resMessage.source = convertFileNameAndID(resMessage.content);
-        resMessage.id = currentChat?.length + 1;
-        setIsLoading(false);
-        setCurrentChat([...newState, resMessage]);
-        localStorage.setItem("current_chat", JSON.stringify([...newState, resMessage]));
-        
-        const history = [...newState, resMessage];
-        const chatHistoryStorage: any[] = JSON.parse(localStorage.getItem('chat_history') || '[]');
-        const newChat = {
-          name: history[0].content,
-          content: history,
-          time: new Date()
-        };
-        const ff = chatHistoryStorage.filter( chat => chat.name === newChat.name);
-        const updatedChatHistory = chatHistoryStorage.map((chat=> {
-          if(chat.name === newChat.name) {
-            chat.content = history;
-            chat.time = new Date();
-          }
-          return chat;
-        }));
+    const updatedCurrentChat = [...currentChat, newMessage];
+    setCurrentChat(updatedCurrentChat);
+    localStorage.setItem("current_chat", JSON.stringify(updatedCurrentChat));
 
-        if(updatedChatHistory.length === 0) {
-          updatedChatHistory[0] = newChat;
-        } else if(currentChat.length <= 1) {
-          const last = (updatedChatHistory.length - 1);
-          updatedChatHistory[last] = newChat;
+    chatApi(updatedCurrentChat).then(async (res: any) => {
+        const text = await res.text();
+        const result = JSON.parse(text.slice(5));
+        if (result) {
+            const resMessage = {
+                ...result.choices[0].delta,
+                source: convertFileNameAndID(result.choices[0].delta.content)
+            };
+            const fullUpdatedChat = [...updatedCurrentChat, resMessage];
+
+            // Update the current chat in state and localStorage
+            setCurrentChat(fullUpdatedChat);
+            localStorage.setItem("current_chat", JSON.stringify(fullUpdatedChat));
+
+            // Handling the chat history to ensure no duplicates and correct ordering
+            const chatIndex = chatHistory.findIndex(chat => chat.content === currentChat);
+
+            if (chatIndex !== -1) {
+                // If the chat was initially marked as new, update and make it visible
+                chatHistory[chatIndex] = {
+                    ...chatHistory[chatIndex],
+                    content: fullUpdatedChat,
+                    name: fullUpdatedChat[0]?.content || 'Chat on ' + new Date().toLocaleDateString(),
+                    time: new Date(),
+                    isNew: false  // Making the chat visible after the first response
+                };
+            } else {
+                // This is genuinely new content, add new chat to the history
+                chatHistory.push({
+                    name: fullUpdatedChat[0]?.content || 'Chat on ' + new Date().toLocaleDateString(),
+                    content: fullUpdatedChat,
+                    time: new Date(),
+                    isNew: false  // Ensure new chats are visible if not initially marked as new
+                });
+            }
+
+            // Ensure time is a Date object and sort to ensure the most recently updated chat is at the top
+            chatHistory.forEach(chat => chat.time = new Date(chat.time));
+            chatHistory.sort((a, b) => b.time.getTime() - a.time.getTime());
+
+            setChatHistory([...chatHistory]);
+            localStorage.setItem("chat_history", JSON.stringify(chatHistory));
         }
-        setChatHistory(updatedChatHistory);
-        localStorage.setItem("chat_history", JSON.stringify(updatedChatHistory));
-      }
     }).catch((error: any) => {
-      alert("Error " + error.message);
-    }).finally(()=> {
-      setIsLoading(false);
+        setIsLoading(false);
+        notyf.open({
+            type: 'warning',
+            message: `Error: ${error.message}`
+        });
+    }).finally(() => {
+        setIsLoading(false);
     });
-  };
+};
 
   const getFileFullPath = (extension: string, id: string) => {
     switch(extension) {

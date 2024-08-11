@@ -11,7 +11,15 @@ export interface Message {
 export interface ChatHistory {
     name: string;
     content: Message[];
-    time: Date
+    time: Date;
+    isNew?: boolean; // Add this line to indicate if the chat is new
+}
+
+
+export interface ExportOptionsModalProps {
+    chat: ChatHistory; // Adjust according to the actual properties of a chat
+    isVisible: boolean;
+    onClose: () => void; // Define the type as a function that returns nothing
 }
 
 export interface SourceFile {

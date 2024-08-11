@@ -1,139 +1,151 @@
-import React, { Fragment, useEffect, useState } from 'react';
-import { EllipsisVertical, FolderPlus, LogOut, Pencil, Settings, SquarePen, Trash2 } from "lucide-react";
+import React, { useEffect, useState } from 'react';
+import { EllipsisVertical, Pencil, Trash2, Download, SquarePen } from "lucide-react";
 import SideBarSearch from './SideBarSearch';
-import { Avatar, AvatarImage } from '../ui/avatar';
-import { ChatHistory, Message } from '../../type';
 import UserMenu from './UserMenu';
-import { Menu, Modal } from 'antd';
-import SubMenu from "antd/es/menu/SubMenu";
+import { Dropdown, Menu } from 'antd';
+import { ChatHistory, Message } from '../../type';
+import ExportOptionsModal from './ExportOptionsModal';
 
 interface SidebarProps {
   isCollapsed: boolean;
-  onClick?: () => void;
   isMobile: boolean;
   currentChat: Message[];
-  setCurrentChat: any;
+  setCurrentChat: (chat: Message[]) => void;
   chatHistory: ChatHistory[];
-  setChatHistory: any;
+  setChatHistory: (history: ChatHistory[]) => void;
 }
 
-const Sidebar = ({ isCollapsed, isMobile, setCurrentChat, chatHistory, setChatHistory, currentChat }: SidebarProps) => {
+const Sidebar: React.FC<SidebarProps> = ({
+  isCollapsed,
+  isMobile,
+  currentChat,
+  setCurrentChat,
+  chatHistory,
+  setChatHistory
+}) => {
   const [filteredChatHistory, setFilteredChatHistory] = useState<ChatHistory[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [selectedChatForExport, setSelectedChatForExport] = useState<ChatHistory | null>(null);
+  const [selectedChatIndex, setSelectedChatIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    const historyItems = JSON.parse(localStorage.getItem('chat_history') || '[]');
-    const filteredHistory = chatHistory?.filter((item: any) => {
-      return (item.name).toLowerCase().includes(searchTerm.toLowerCase().trim());
-    });
+    const filteredHistory = chatHistory.filter((item) =>
+      item.name.toLowerCase().includes(searchTerm.toLowerCase().trim()) && !item.isNew
+    );
     setFilteredChatHistory(filteredHistory);
   }, [chatHistory, searchTerm]);
 
+  useEffect(() => {
+    if (chatHistory.length === 0) { // Only initialize if chatHistory is empty
+      const historyItems = JSON.parse(localStorage.getItem('chat_history') || '[]');
+      if (historyItems.length > 0) {
+        setChatHistory(historyItems);
+        setSelectedChatIndex(0); // Select the first chat in the list
+        setCurrentChat(historyItems[0].content); // Set the content of the first chat as the current chat
+        localStorage.setItem("current_chat", JSON.stringify(historyItems[0].content));
+      } else {
+        console.log("No chats found, consider initializing a new chat if needed");
+      }
+    }
+  }, []);
+
   const newChat = () => {
-    if(currentChat.length) {
+    if (currentChat.length) {
       setCurrentChat([]);
       localStorage.setItem("current_chat", JSON.stringify([]));
       const newChat: ChatHistory = {
         name: 'New Chat',
         content: [],
-        time: new Date()
+        time: new Date(),
+        isNew: true // Set this chat as new
       };
-      const updateHistory = [...chatHistory, newChat];
-      setChatHistory(updateHistory);
-      localStorage.setItem("chat_history", JSON.stringify(updateHistory));
+      const updatedHistory = [...chatHistory, newChat];
+      setChatHistory(updatedHistory);
+      localStorage.setItem("chat_history", JSON.stringify(updatedHistory));
+      setCurrentChat(newChat.content);
+      setSelectedChatIndex(updatedHistory.length - 1); // Index of the new chat at the end of the list
     }
-  }
+  };
+
+  const handleChatClick = (chat: ChatHistory, index: number) => {
+    if (!chat.isNew) { // Ensure the chat is not new before selecting it
+      setSelectedChatIndex(index);
+      localStorage.setItem("current_chat", JSON.stringify(chat.content));
+      setCurrentChat(chat.content);
+    }
+  };
+
+  const handleMenuClick = (e: { key: string }, chatIndex: number) => {
+    const action = e.key;
+    if (action === "delete") {
+      const newFilteredChatHistory = filteredChatHistory.filter((_, idx) => idx !== chatIndex);
+      setFilteredChatHistory(newFilteredChatHistory);
+      setChatHistory(newFilteredChatHistory);
+      localStorage.setItem("chat_history", JSON.stringify(newFilteredChatHistory));
+      setCurrentChat([]);
+      localStorage.setItem("current_chat", JSON.stringify([]));
+    } else if (action === "download") {
+      setSelectedChatForExport(filteredChatHistory[chatIndex]);
+      setIsModalVisible(true);
+    }
+  };
+
+  const menu = (chatIndex: number) => (
+    <Menu onClick={(e) => handleMenuClick(e, chatIndex)}>
+      <Menu.Item key="edit" icon={<Pencil size={16} />}>Edit</Menu.Item>
+      <Menu.Item key="download" icon={<Download size={16} />}>Export</Menu.Item>
+      <Menu.Item key="delete" icon={<Trash2 size={16} style={{ color: 'red' }} />} style={{ color: 'red' }}>
+        Delete
+      </Menu.Item>
+    </Menu>
+  );
+
   return (
     <div data-collapsed={isCollapsed} style={isCollapsed ? {flex: '0 1 0px'} : {flex: '20 1 0px'}}>
       <div className="sidebar">
-        {!isCollapsed && (
-          <div className="sidebar-head">
-            <div className="sidebar-header">
-              <div className="flex">
-                <img style={{width:'100%', height: '24px'}} src="Yoja.svg"/>
-              </div>
-              <div className='flex' style={{gap: '8px'}}>
-                <div className="sidebar-header-icon" onClick={newChat}>
-                  <SquarePen size={14} strokeWidth={2}/>
-                </div>
-                {/* 
-                  <div className="sidebar-header-icon">
-                    <FolderPlus size={16} strokeWidth={2} />
-                  </div> 
-                */}
-              </div>
+        <div className="sidebar-head">
+          <div className="sidebar-header">
+            <div className="flex">
+              <img style={{width:'100%', height: '24px'}} src="Yoja.svg"/>
             </div>
-            <SideBarSearch isMobile={isMobile} handleSearch= {setSearchTerm}/>
-          </div>
-        )}
-        {isCollapsed && (
-          <div className="sidebar-head">
-            <div className="sidebar-header" style={{justifyContent: 'center'}}>
-              <div className="flex">
-                <img style={{width:'100%', height: '24px'}} src="Yoja_logo.svg"/>
+            <div className='flex' style={{gap: '8px'}}>
+              <div className="sidebar-header-icon" onClick={newChat}>
+                <SquarePen size={14} strokeWidth={2}/>
               </div>
             </div>
           </div>
-        )}
-        <div className="sidebar-body" style={{padding: '24px'}}>
-          <div className="sidebar-body">
-            {!isCollapsed && (
-              <div className='chat-history'>
-                <div>
-                  <div className='history-header'>
-                    <span className='history-header-text'> History </span>
-                  </div>
-                  {filteredChatHistory?.map((chats: any, index: number) => (
-                    <div className='history-item' key={index} onClick={() => {
-                      localStorage.setItem("current_chat", JSON.stringify(chats.content));
-                      setCurrentChat(chats.content);
-                      const chatHistoryStorage: any[] = JSON.parse(localStorage.getItem('chat_history') || '[]');
-                      const filteredHistory = chatHistoryStorage.filter((item: any) => {
-                        let date1 = new Date(item.time);
-                        let date2 = new Date(chats.time);
-                        return (date1.getTime() !== date2.getTime());
-                      });
-                    }}>
-                    <span className='history-item-text'> {chats.content[0] ? chats.content[0].content : 'New Chat'} </span>
-                    <div className="history-item-menu" onClick={()=> {
-                      setCurrentChat([]);
-                      localStorage.setItem("current_chat", JSON.stringify([]));
-                      filteredChatHistory.splice(index, 1)
-                      setFilteredChatHistory(filteredChatHistory);
-                      setChatHistory(filteredChatHistory);
-                      localStorage.setItem("chat_history", JSON.stringify(filteredChatHistory));
-                      setCurrentChat([]);
-                      localStorage.setItem("current_chat", JSON.stringify([]));
-                    }}> <Trash2 size={16} color="#71717a"/> </div>
-
-                      {/* <div className="history-menu-container">
-                        <Menu key="chat-history-item" className="history-item-menu">
-                          <SubMenu
-                            title={
-                              <div className="history-item-menu"> <EllipsisVertical size={16} color="#71717a"/> </div> 
-                            }
-                          >
-                            <Menu.Item key="Settings" onClick={()=> {
-                              filteredChatHistory.splice(index, 1); 
-                               const chatHistoryStorage: any[] = JSON.parse(localStorage.getItem('chat_history') || '[]');
-                               const filteredHistory = filteredChatHistory.filter((item: any) => item.name === chats.name);
-                             }}>
-                              <span style={{display: 'flex', justifyContent:'center', alignItems:'center', gap: '5px'}}> <Pencil size={16} /> Rename </span>
-                            </Menu.Item>
-                            <Menu.Item key="SignOut"  onClick={()=> {}}>
-                              <div style={{display: 'flex', justifyContent:'center', alignItems:'center',  gap: '5px', color: 'red'}}> <Trash2 size={16} /> Delete </div>
-                            </Menu.Item>
-                          </SubMenu>
-                        </Menu>
-                      </div> */}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <UserMenu isCollapsed={isCollapsed}/>
+          <SideBarSearch isMobile={isMobile} handleSearch={setSearchTerm} />
         </div>
+        <div className="sidebar-body" style={{ padding: '24px' }}>
+          <div className="sidebar-body">
+            <div className='chat-history'>
+              <div className='history-header'>
+                <span className='history-header-text'>History</span>
+              </div>
+              {filteredChatHistory.map((chat, index) => (
+                <div
+                  key={index}
+                  className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
+                  onClick={() => handleChatClick(chat, index)}
+                >
+                  <span className='history-item-text'>{chat.name}</span>
+                  <Dropdown overlay={menu(index)} trigger={['click']}>
+                    <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
+                  </Dropdown>
+                </div>
+              ))}
+            </div>
+          </div>
+          <UserMenu isCollapsed={isCollapsed} />
+        </div>
+        {selectedChatForExport && (
+          <ExportOptionsModal
+            chat={selectedChatForExport}
+            isVisible={isModalVisible}
+            onClose={() => setIsModalVisible(false)}
+          />
+        )}
       </div>
     </div>
   );
