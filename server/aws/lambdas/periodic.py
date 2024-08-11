@@ -10,7 +10,7 @@ import zlib
 from urllib.parse import unquote
 import faiss
 import boto3
-from utils import respond, get_service_conf, get_user_table_entry, get_user_table_entry_dropbox_sub
+from utils import respond, get_service_conf, get_user_table_entry, get_user_table_entry_dropbox_sub, set_start_time
 import os.path
 import io
 from index_utils import update_index_for_user, lock_user, unlock_user
@@ -36,7 +36,7 @@ def upd(client, item, s3client, bucket, prefix, start_time):
         print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
 
         unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token)
-    return
+    return gdrive_next_page_token, dropbox_next_page_token
 
 def do_full_scan(s3client, client, bucket, prefix, start_time):
     try:
@@ -69,16 +69,26 @@ def update_gdrive_user(s3client, client, email, bucket, prefix, start_time):
     if not item:
         print(f"update_gdrive_user: Hmm. user table entry not found for {email}")
         return respond({"error_msg": f"update_gdrive_user: Hmm. user table entry not found for {email}"}, status=403)
-    upd(client, item, s3client, bucket, prefix, start_time)
-    return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
+    gdrive_next_page_token, dropbox_next_page_token = upd(client, item, s3client, bucket, prefix, start_time)
+    res={'version': os.environ['LAMBDA_VERSION']}
+    if gdrive_next_page_token:
+        res['gdrive_next_page_token'] = gdrive_next_page_token
+    if dropbox_next_page_token:
+        res['dropbox_next_page_token'] = dropbox_next_page_token
+    return respond(None, res=res)
 
 def update_dropbox_user(s3client, client, dropbox_sub, bucket, prefix, start_time):
     item = get_user_table_entry_dropbox_sub(dropbox_sub)
     if not item:
         print(f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
         return respond({"error_msg": f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub{dropbox_sub}"}, status=403)
-    upd(client, item, s3client, bucket, prefix, start_time)
-    return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
+    gdrive_next_page_token, dropbox_next_page_token = upd(client, item, s3client, bucket, prefix, start_time)
+    res={'version': os.environ['LAMBDA_VERSION']}
+    if gdrive_next_page_token:
+        res['gdrive_next_page_token'] = gdrive_next_page_token
+    if dropbox_next_page_token:
+        res['dropbox_next_page_token'] = dropbox_next_page_token
+    return respond(None, res=res)
 
 ########
 #  use this payload in EventBridge Schedules to setup hourly runs:
@@ -115,6 +125,7 @@ def periodic(event:dict, context) -> dict:
     s3client = boto3.client('s3')
     client = boto3.client('dynamodb')
     start_time:datetime.datetime = datetime.datetime.now()
+    set_start_time(start_time)
     if post_body.username:
         print(f"periodic: post_body contains username {post_body.username}. Updating")
         return update_gdrive_user(s3client, client, post_body.username, bucket, prefix, start_time)
@@ -142,5 +153,8 @@ if __name__=="__main__":
             'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}},
             'body': json.dumps({'username': sys.argv[1]})
         }
-    periodic(event, None)
-    sys.exit(0)
+    res = periodic(event, None)
+    if 'gdrive_next_page_token' in res:
+        sys.exit(0)
+    else:
+        sys.exit(1)

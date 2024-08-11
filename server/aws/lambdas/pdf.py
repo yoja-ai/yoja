@@ -53,6 +53,8 @@ def _lsdir(ldir):
 def render_png(filename, start_page, num_pages_this_time, tmpdir):
     print(f"render_png: Entered. filename {filename}, start_page {start_page}, num_pages_this_time {num_pages_this_time}, tmpdir {tmpdir}")
     try:
+        renv=os.environ.copy()
+        renv['OMP_THREAD_LIMIT']='1'
         fnx_start = datetime.datetime.now()
         outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
         print(f"render_png: outer_loop_max={outer_loop_max}")
@@ -69,7 +71,7 @@ def render_png(filename, start_page, num_pages_this_time, tmpdir):
                 cmd = ['pdftocairo', '-png', '-r', '300', '-f',
                             str(page), '-l', str(page), filename, 'out']
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True)
+                                stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=renv)
                 print(f"render_png: start process. inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -176,7 +178,6 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
                 if rc:
                     print(f"[{processinfo.process.pid}] Process error. returncode {rc}")
                 else:
-                    print(f"[{processinfo.process.pid}] No process error")
                     with open(os.path.join(tmpdir, processinfo.outfn), 'rb') as fp:
                         hh = fp.read()
                     chunk = ''
@@ -196,31 +197,38 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
     return rv
 
 def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
+    print(f"read_pdf: Entered. filename={filename}, fileid={fileid}, len(prev_paras)={len(prev_paras)}")
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     tmpdir = None
+    tmpfp = None
     try:
+        time_left = lambda_time_left_seconds()
+        time_for_this_pdf = int(time_left) - 180
+        max_pages_this_time = int(time_for_this_pdf/5)
+        print(f"read_pdf: time_left={time_left}, time_for_this_pdf={time_for_this_pdf}, max_pages_this_time={max_pages_this_time}")
+        if max_pages_this_time <= 0:
+            print(f"read_pdf: Insufficient time to process {filename} this time")
+            doc_dct['partial'] = "true"
+            return doc_dct
+
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmpfp:
             tmpfp.write(bio.read())
             tmpfp.close()
         tmpdir = tempfile.mkdtemp()
         pages_in_pdf, pdfsize = get_pdf_info(tmpfp.name)
         start_page = len(prev_paras)+1 if prev_paras else 1
-        if pages_in_pdf <= 64:
-            num_pages_this_time = pages_in_pdf
+        if (pages_in_pdf - (start_page-1)) <= max_pages_this_time:
+            num_pages_this_time = pages_in_pdf - (start_page-1)
             is_partial = False
         else:
-            num_pages_this_time = 64
+            num_pages_this_time = max_pages_this_time
             is_partial = True
-        time_left = lambda_time_left_seconds()
-        if time_left < (num_pages_this_time * 3):
-            print(f"read_pdf: time_left={time_left} seconds. Insufficient time to process {num_pages_this_time} pages")
-            doc_dct['partial'] = "true"
-            return doc_dct
+
         print(f"read_pdf: pages_in_pdf={pages_in_pdf}, pdfsize={pdfsize}, start_page={start_page}, num_pages_this_time={num_pages_this_time}")
         if not render_png(tmpfp.name, start_page, num_pages_this_time, tmpdir):
             return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
         chunks:List[str] = tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
-        for ind in range(len(prev_paras), len(chunks)):
+        for ind in range(len(chunks)):
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             try:
@@ -229,7 +237,7 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
                 para_dct['embedding'] = eem
                 doc_dct['paragraphs'].append(para_dct)
                 if lambda_timelimit_exceeded():
-                    doc_dct['partial'] = "true"
+                    is_partial = True
                     print(f"read_pdf: Timelimit exceeded when reading pdf files. Breaking..")
                     break
             except Exception as ex:
@@ -244,6 +252,7 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
         traceback.print_exc()
         return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
     finally:
-        os.remove(tmpfp.name)
+        if tmpfp:
+            os.remove(tmpfp.name)
         if tmpdir:
             shutil.rmtree(tmpdir)

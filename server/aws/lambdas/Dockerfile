@@ -24,6 +24,7 @@ RUN rpm -Uvh https://archives.fedoraproject.org/pub/archive/epel/7/x86_64/Packag
 RUN yum -y update
 RUN yum install -y tesseract
 RUN yum install -y tesseract-osd
+RUN yum install -y vim
 # End tesseract block
 
 RUN set -xo pipefail && \

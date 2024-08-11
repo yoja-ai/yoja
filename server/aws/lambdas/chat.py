@@ -657,7 +657,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     
     context:str = ''
     all_docs_token_count = 0
-    max_token_limit:int = 6000
+    max_token_limit:int = 2048
     max_pre_and_post_token_limit = 512
     context_chunk_range_list:List[DocumentChunkRange] = []
     for i in range(len(reranked_indices)):

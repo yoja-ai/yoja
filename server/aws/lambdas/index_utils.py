@@ -16,7 +16,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, set_start_time, get_user_table_entry
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
@@ -75,13 +75,14 @@ def lock_user(item, client):
             l_e_t=int(item['lambda_end_time']['N'])
             l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
             print(f"lock_user: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+        time_left = int(lambda_time_left_seconds())
         response = client.update_item(
             TableName=os.environ['USERS_TABLE'],
             Key={'email': {'S': email}},
             UpdateExpression="set #lm = :st",
             ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
             ExpressionAttributeNames={'#lm': 'lambda_end_time'},
-            ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(15*60))} },
+            ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(time_left))} },
             ReturnValues="ALL_NEW"
         )
         if 'Attributes' in response:
@@ -864,6 +865,12 @@ def _calc_filelists_dropbox(entries, s3_index):
     print(f"_calc_filelists_dropbox: return. s3_index={s3_index}, needs_embedding={needs_embedding}, num_deleted_files={num_deleted_files}")
     return s3_index, needs_embedding, num_deleted_files
 
+def partial_present(done_embedding):
+    for fileid, file_item in done_embedding.items():
+        if 'partial' in file_item:
+            return True
+    return False
+
 def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
     print(f'update_index_for_user_dropbox: Entered. {item}')
     email:str = item['email']['S']
@@ -912,6 +919,12 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
         update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
     else:
         print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
+    if time_limit_exceeded:
+        print("update_index_for_user_dropbox: time limit exceeded. Forcing full listing next time..")
+        dropbox_next_page_token = None # force full scan next time
+    if partial_present(done_embedding):
+        print("update_index_for_user_dropbox: partial present. Forcing full listing next time..")
+        dropbox_next_page_token = None # force full scan next time
         
     # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)    
     _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix, DocStorageType.DropBox )
@@ -1045,6 +1058,7 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
             for chg in respj['changes']:
                 if chg['removed']:
                     if chg['changeType'] == 'file':
+                        print(f"_get_gdrive_listing_incremental: removed. file. fileid={chg['fileid']}")
                         fileid = chg['fileId']
                         mtime = from_rfc3339(chg['time'])
                         deleted_files[fileid] = {"fileid": fileid, "mtime": mtime}
@@ -1054,21 +1068,28 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                         fileid = chg['fileId']
                         mtime = from_rfc3339(chg['time'])
                         mimetype = chg['file']['mimeType']
-                        file_details = service.files().get(fileId=fileid, fields='size,parents').execute()
+                        file_details = service.files().get(fileId=fileid, fields='size,parents,trashed,explicitlyTrashed').execute()
+                        print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}, file_details={file_details}")
                         if mimetype == 'application/vnd.google-apps.folder':
+                            print(f"_get_gdrive_listing_incremental: changed. folder. filename={filename}, fileid={fileid}")
                             if 'parents' in file_details:
                                 folder_details[fileid] = {'filename': filename, 'parents': file_details['parents']}
                         else:
                             size = file_details['size'] if 'size' in file_details else 0
                             if size: # ignore if size is not available
-                                if 'parents' in file_details:
-                                    entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
-                                                            'mimetype': mimetype, 'size': size, 'parents': file_details['parents']}
+                                if file_details['trashed'] or file_details['explicitlyTrashed']:
+                                    print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}. trashed!")
+                                    deleted_files[fileid] = {"fileid": fileid, "mtime": mtime}
                                 else:
-                                    entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                    if 'parents' in file_details:
+                                        entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
+                                                            'mimetype': mimetype, 'size': size, 'parents': file_details['parents']}
+                                    else:
+                                        entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
                                                             'mimetype': mimetype, 'size': size}
-                                entry['path']=_calc_path(service, entry, folder_details)
-                                gdrive_listing[fileid] = entry
+                                    entry['path']=_calc_path(service, entry, folder_details)
+                                    print(f"_get_gdrive_listing_incremental: changed. file. filename={filename}, fileid={fileid}, path={entry['path']}")
+                                    gdrive_listing[fileid] = entry
             if 'newStartPageToken' in respj:
                 new_start_page_token = respj['newStartPageToken']
             else:
@@ -1162,7 +1183,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
                 print("update_index_for_user_gdrive: Forcing full index because of env var YOJA_FORCE_FULL_INDEX")
             gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
-            print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; ")
+            print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         else:
             needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id)
             unmodified = s3_index
@@ -1193,7 +1214,10 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         if time_limit_exceeded:
             print("update_index_for_user_gdrive: time limit exceeded. Forcing full listing next time..")
             gdrive_next_page_token = None # force full scan next time
-        
+        if partial_present(done_embedding):
+            print("update_index_for_user_gdrive: partial present. Forcing full listing next time..")
+            gdrive_next_page_token = None # force full scan next time
+
         # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
         _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix, DocStorageType.GoogleDrive)
             
@@ -1207,7 +1231,6 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
 
 def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
                             only_create_index:bool=False, gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
-    set_start_time(start_time)
     if not lambda_timelimit_exceeded():
         gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
     if not lambda_timelimit_exceeded():
