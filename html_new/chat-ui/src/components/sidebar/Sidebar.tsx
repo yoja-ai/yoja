@@ -101,6 +101,35 @@ const Sidebar: React.FC<SidebarProps> = ({
     </Menu>
   );
 
+  // Function to categorize chat history based on time
+  const categorizeChats = () => {
+    const now = new Date();
+    const today: ChatHistory[] = [];
+    const yesterday: ChatHistory[] = [];
+    const previous7Days: ChatHistory[] = [];
+    const previous30Days: ChatHistory[] = [];
+
+    filteredChatHistory.forEach(chat => {
+      const chatDate = new Date(chat.time);
+      const diffTime = now.getTime() - chatDate.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) {
+        today.push(chat);
+      } else if (diffDays === 1) {
+        yesterday.push(chat);
+      } else if (diffDays <= 7) {
+        previous7Days.push(chat);
+      } else if (diffDays <= 30) {
+        previous30Days.push(chat);
+      }
+    });
+
+    return { today, yesterday, previous7Days, previous30Days };
+  };
+
+  const { today, yesterday, previous7Days, previous30Days } = categorizeChats();
+
   return (
     <div data-collapsed={isCollapsed} style={isCollapsed ? {flex: '0 1 0px'} : {flex: '20 1 0px'}}>
       <div className="sidebar">
@@ -120,21 +149,82 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="sidebar-body" style={{ padding: '24px' }}>
           <div className="sidebar-body">
             <div className='chat-history'>
-              <div className='history-header'>
-                <span className='history-header-text'>History</span>
-              </div>
-              {filteredChatHistory.map((chat, index) => (
-                <div
-                  key={index}
-                  className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
-                  onClick={() => handleChatClick(chat, index)}
-                >
-                  <span className='history-item-text'>{chat.name}</span>
-                  <Dropdown overlay={menu(index)} trigger={['click']}>
-                    <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
-                  </Dropdown>
+              {today.length > 0 && (
+                <div>
+                  <div className='history-header'>
+                    <span className='history-header-text'>Today</span>
+                  </div>
+                  {today.map((chat, index) => (
+                    <div
+                      key={`today-${index}`}
+                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
+                      onClick={() => handleChatClick(chat, index)}
+                    >
+                      <span className='history-item-text'>{chat.name}</span>
+                      <Dropdown overlay={menu(index)} trigger={['click']}>
+                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
+                      </Dropdown>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {yesterday.length > 0 && (
+                <div>
+                  <div className='history-header'>
+                    <span className='history-header-text'>Yesterday</span>
+                  </div>
+                  {yesterday.map((chat, index) => (
+                    <div
+                      key={`yesterday-${index}`}
+                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
+                      onClick={() => handleChatClick(chat, index)}
+                    >
+                      <span className='history-item-text'>{chat.name}</span>
+                      <Dropdown overlay={menu(index)} trigger={['click']}>
+                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
+                      </Dropdown>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {previous7Days.length > 0 && (
+                <div>
+                  <div className='history-header'>
+                    <span className='history-header-text'>Previous 7 Days</span>
+                  </div>
+                  {previous7Days.map((chat, index) => (
+                    <div
+                      key={`previous7Days-${index}`}
+                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
+                      onClick={() => handleChatClick(chat, index)}
+                    >
+                      <span className='history-item-text'>{chat.name}</span>
+                      <Dropdown overlay={menu(index)} trigger={['click']}>
+                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
+                      </Dropdown>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {previous30Days.length > 0 && (
+                <div>
+                  <div className='history-header'>
+                    <span className='history-header-text'>Previous 30 Days</span>
+                  </div>
+                  {previous30Days.map((chat, index) => (
+                    <div
+                      key={`previous30Days-${index}`}
+                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
+                      onClick={() => handleChatClick(chat, index)}
+                    >
+                      <span className='history-item-text'>{chat.name}</span>
+                      <Dropdown overlay={menu(index)} trigger={['click']}>
+                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
+                      </Dropdown>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <UserMenu isCollapsed={isCollapsed} />
