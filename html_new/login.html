@@ -49,7 +49,6 @@ limitations under the License.
   <div class="button-container">
     <button id="authorize_gdrive_button" onclick="handleAuthGoogleClick()">Authorize Gdrive</button>
     <button id="authorize_dropbox_button" onclick="handleAuthDropboxClick()">Authorize Dropbox</button>
-    <button id="skiptochat_button" onclick="handleSkiptochatClick()">Proceed to chat</button>
     <button id="signout_button" onclick="handleSignoutClick()">Sign Out</button>
   </div>
 <div id="waitingFlyout">
@@ -63,7 +62,6 @@ limitations under the License.
   /* exported handleAuthGoogleClick */
   /* exported handleAuthDropboxClick */
   /* exported handleSignoutClick */
-  /* exported handleSkiptochatClick */
 
   // Authorization scopes required by the API; multiple scopes can be
   // included, separated by spaces.
@@ -90,7 +88,6 @@ limitations under the License.
 
   document.getElementById('authorize_gdrive_button').style.visibility = 'hidden';
   document.getElementById('authorize_dropbox_button').style.visibility = 'hidden';
-  document.getElementById('skiptochat_button').style.visibility = 'hidden';
   document.getElementById('signout_button').style.visibility = 'hidden';
 
   /**
@@ -120,28 +117,13 @@ limitations under the License.
         document.getElementById('authorize_dropbox_button').innerText = 'Login using Dropbox and allow us to index your Dropbox';
         document.getElementById('authorize_gdrive_button').style.visibility = 'visible';
         document.getElementById('authorize_dropbox_button').style.visibility = 'visible';
-        document.getElementById('skiptochat_button').style.visibility = 'hidden';
         document.getElementById('signout_button').style.visibility = 'hidden';
       } else {
-        if (gdriveLoginSuccess) {
-          document.getElementById('authorize_dropbox_button').innerText = 'Allow us to index your Dropbox';
-          document.getElementById('authorize_dropbox_button').style.visibility = 'visible';
-          document.getElementById('skiptochat_button').innerText = 'Skip and proceed to chat';
-          document.getElementById('skiptochat_button').style.visibility = 'visible';
-        } else {
-          document.getElementById('authorize_gdrive_button').innerText = 'Allow us to index your Gdrive';
-          document.getElementById('authorize_gdrive_button').style.visibility = 'visible';
-          document.getElementById('skiptochat_button').innerText = 'Skip and proceed to chat';
-          document.getElementById('skiptochat_button').style.visibility = 'visible';
-        }
+        const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
+                                    + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
+        window.location.href = "index.html?" + params;
       }
     }
-  }
-
-  function handleSkiptochatClick() {
-    const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
-                                + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
-    window.location.href = "index.html?" + params;
   }
 
   /**
