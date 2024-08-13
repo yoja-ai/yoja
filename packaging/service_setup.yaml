@@ -9,7 +9,7 @@ Parameters:
     Default: 0.0.1
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.16
+    Default: 0.0.18
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.0.3
@@ -356,12 +356,197 @@ Resources:
             Items:
             - '*'
           OriginOverride: 'true'
+  YojaStaticFilesLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Description: 'Create s3 bucket and populate with static html/js for mflowui and dashboard'
+      Handler: index.handler
+      Role: !GetAtt CustomLambdasRole.Arn
+      Timeout: 900
+      # error in ap-southeast-2: Resource handler returned message: "'MemorySize' value failed to satisfy constraint: Member must have value less than or equal to 3008
+      MemorySize: 3008
+      Runtime: python3.9
+      Code:
+        # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-lambda-function-code.html#cfn-lambda-function-code-zipfile
+        # (Node.js and Python) The source code of your Lambda function. If you include your function source inline with this parameter, AWS CloudFormation places it in a file named index and zips it to create a deployment package. For the Handler property, the first part of the handler identifier must be index. For example, index.handler.
+        # Your source code can contain up to 4096 characters. For JSON, you must escape quotes and special characters such as newline (\n) with a backslash.
+        # If you specify a function that interacts with an AWS CloudFormation custom resource, you don't have to write your own functions to send responses to the custom resource that invoked the function. AWS CloudFormation provides a response module (cfn-response) that simplifies sending responses. See Using AWS Lambda with AWS CloudFormation for details.
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import urllib3
+          import time
+          import os
+          import zipfile
+          from typing import List
+          import mimetypes
+
+          # pylint: disable=bad-indentation
+
+          def handler(event, context):
+              print(f'event={event}')
+              print(f'context={context}')
+              response_data = {}
+              try:
+                # Init ...
+                the_event = event['RequestType']
+                print('The event is: ' + str(the_event))
+                s_3 = boto3.client('s3')
+                # Retrieve parameters
+                yojaHtmlBucket =       event['ResourceProperties']['yojaHtmlBucket']
+                yojaOAuthRedirectUri = event['ResourceProperties']['yojaOAuthRedirectUri']
+                yojaApiEndpoint =      event['ResourceProperties']['yojaApiEndpoint']
+                yojaApiKey =           event['ResourceProperties']['yojaApiKey']
+                yojaGoogleClientId =   event['ResourceProperties']['yojaGoogleClientId']
+                yojaDropboxClientId =  event['ResourceProperties']['yojaDropboxClientId']
+                yojaCftVersion =       event['ResourceProperties']['yojaCftVersion']
+
+                if the_event == 'Create':
+                  create_all(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion)
+                  # Everything OK... send the signal back
+                  print('Operation successful!')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data,  physicalResourceId=yojaHtmlBucket)
+                elif the_event == 'Update':
+                  delete_all(s_3, yojaHtmlBucket)
+                  create_all(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion)
+                  # Everything OK... send the signal back
+                  print('Operation successful!')
+                  cfnresponse.send(event, context,  cfnresponse.SUCCESS, response_data, physicalResourceId=yojaHtmlBucket)
+                elif the_event == 'Delete':
+                  delete_all(s_3, yojaHtmlBucket)
+                  # Everything OK... send the signal back
+                  print('Operation successful!')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, physicalResourceId=yojaHtmlBucket)
+              except Exception as e:
+                print('Operation failed...')
+                print(str(e))
+                response_data['Data'] = str(e)
+                cfnresponse.send(event, context, cfnresponse.FAILED, response_data, physicalResourceId=yojaHtmlBucket)
+
+          def create_all(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion) :
+              # create serviceconfig.js for the dashboard ui
+              create_serviceconfig_1(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion)
+              # copy dashboard files from infinstordist to this service bucket
+              copy_dashboard_files(yojaCftVersion, s_3, yojaHtmlBucket)
+
+          def create_serviceconfig_1(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion):
+              with open('/tmp/serviceconfig.js', 'w') as wfp:
+                  service_config_str:str = "var ServiceConfig = { " + \
+                  f"""OAUTH_REDIRECT_URI: \"{yojaOAuthRedirectUri}\", 
+                    envAPIEndpoint: \"{yojaApiEndpoint}\", 
+                    envAPIKey: \"{yojaApiKey}\", 
+                    GOOGLE_CLIENT_ID: \"{yojaGoogleClientId}\", 
+                    DROPBOX_CLIENT_ID: \"{yojaDropboxClientId}\" """ + \
+                  "}"
+                  
+                  wfp.write(service_config_str)
+                  
+              s3_prefix:str = 'html/serviceconfig.js'
+              print(f"Creating s3://{yojaHtmlBucket}/{s3_prefix}")
+              s_3.upload_file('/tmp/serviceconfig.js', yojaHtmlBucket, s3_prefix)
+
+          def delete_all(s_3, the_bucket):
+              print('Deleting all objects from bucket=' + str(the_bucket))
+              delete_s_3 = boto3.client('s3')
+              paginator = s_3.get_paginator('list_object_versions')
+              page_iterator = paginator.paginate(Bucket=the_bucket)
+              for page in page_iterator:
+                if ('Versions' in page):
+                  aob = page['Versions']
+                  oa = []
+                  for obj in aob:
+                    oe = {}
+                    oe['Key'] = obj['Key']
+                    if 'VersionId' in obj and obj['VersionId'] and obj['VersionId'] != 'null':
+                      oe['VersionId'] = obj['VersionId']
+                      print('Adding key=' + str(oe['Key']) + ' vers=' + str(oe['VersionId']) + ' to del list')
+                    else:
+                      print('Adding key=' + str(oe['Key']) + ' to del list')
+                    oa.append(oe)
+
+                  dobjs = {}
+                  dobjs['Objects'] = oa
+                  dobjs['Quiet'] = True
+                  print('deleting ' + str(len(oa)) + ' object versions')
+                  delete_s_3.delete_objects(Bucket=the_bucket, Delete=dobjs)
+                  print('deleted ' + str(len(oa)) + ' object versions')
+
+                if ('DeleteMarkers' in page):
+                  aob = page['DeleteMarkers']
+                  oa = []
+                  for obj in aob:
+                    oe = {}
+                    oe['Key'] = obj['Key']
+                    if 'VersionId' in obj and obj['VersionId'] and obj['VersionId'] != 'null':
+                      oe['VersionId'] = obj['VersionId']
+                      print('Adding delmarker=' + str(oe['Key']) + ' vers=' + str(oe['VersionId']) + ' to del list')
+                    else:
+                      print('Adding delmarker=' + str(oe['Key']) + ' to del list')
+                    oa.append(oe)
+
+                  dobjs = {}
+                  dobjs['Objects'] = oa
+                  dobjs['Quiet'] = True
+                  print('deleting ' + str(len(oa)) + ' delete markers')
+                  delete_s_3.delete_objects(Bucket=the_bucket, Delete=dobjs)
+                  print('deleted ' + str(len(oa)) + ' delete markers')
+
+          def copy_dashboard_files(cftVersion, s_3, the_bucket):
+              base_url = 'https://yojadist.s3.amazonaws.com/builds/' + cftVersion
+              http = urllib3.PoolManager()
+              
+              # download dashboard zip file and copy to s3
+              web_ui_zip_fname:str = "web_ui.zip"
+              resp = http.request('GET', base_url + '/' + web_ui_zip_fname)
+              if (resp.status != 200):
+                estr = 'Download of dashboard filelist failed. http status=' + str(resp.status)
+                print(estr)
+                raise ValueError(estr)
+              s_3.put_object(Body=resp.data, Bucket=the_bucket, Key='html/' + web_ui_zip_fname, ContentType=resp.headers['Content-Type'])
+
+              # write dashboard_files.zip to /tmp directory
+              web_ui_zip_fpath = '/tmp/'+web_ui_zip_fname
+              with open(web_ui_zip_fpath, "wb") as fh:
+                fh.write(resp.data)
+                
+              # read the .zip file and copy to s3 bucket
+              zipf:zipfile.ZipFile
+              with zipfile.ZipFile(web_ui_zip_fpath) as zipf:
+                  filelist:List[zipfile.ZipInfo] = zipf.filelist;  file_zipinfo:zipfile.ZipInfo
+                  for file_zipinfo in filelist:
+                      print(f"file_zipinfo={file_zipinfo}")
+                      # if archive member is a file
+                      if not file_zipinfo.is_dir(): 
+                          # read the file
+                          file_bytes:bytes = zipf.read(file_zipinfo)
+                          # determine its mime type.  without this, file content type is set to binary/octet-stream, even for .html files, when http served from s3 bucket
+                          content_type, encoding = mimetypes.guess_type(file_zipinfo.filename, strict=False)
+                          s3_prefix:str='html/' + file_zipinfo.filename
+                          if content_type:
+                            s_3.put_object(Body=file_bytes, Bucket=the_bucket, Key=s3_prefix, ContentType=content_type)
+                          else:
+                            s_3.put_object(Body=file_bytes, Bucket=the_bucket, Key=s3_prefix) #, ContentType=r1.headers['Content-Type'])
+                          print(f"wrote to s3://{the_bucket}/{s3_prefix} with content_type={content_type}")
+  YojaStaticFilesCustomResource:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cfn-customresource.html
+    # In a CloudFormation template, you use the AWS::CloudFormation::CustomResource or Custom::String resource type to specify custom resources.
+    Type: Custom::S3CustomResource
+    Properties:
+      ServiceToken: !GetAtt YojaStaticFilesLambdaFunction.Arn
+      yojaHtmlBucket: !Ref YojaHtmlBucket
+      yojaOAuthRedirectUri: !Ref OauthRedirectUri
+      yojaApiEndpoint: !Sub "https://chat.${yojaServiceDnsName}/rest"
+      yojaApiKey: unused
+      yojaGoogleClientId: !Ref OauthClientId
+      yojaDropboxClientId: !Ref DropboxOauthClientId
+      yojaCftVersion: !Ref cftVersion
   YojaCloudFront:
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cloudfront-distribution.html
     Type: AWS::CloudFront::Distribution
     DependsOn:
     - YojaApiService
     - YojaResponseHeaderPolicy
+    - YojaStaticFilesCustomResource
     Properties:
       DistributionConfig:
         Enabled: 'true'
