@@ -13,6 +13,7 @@ interface SidebarProps {
   setCurrentChat: (chat: Message[]) => void;
   chatHistory: ChatHistory[];
   setChatHistory: (history: ChatHistory[]) => void;
+  handleChatSelect: (selectedChat: ChatHistory) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -21,13 +22,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   currentChat,
   setCurrentChat,
   chatHistory,
-  setChatHistory
+  setChatHistory,
+  handleChatSelect
 }) => {
   const [filteredChatHistory, setFilteredChatHistory] = useState<ChatHistory[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedChatForExport, setSelectedChatForExport] = useState<ChatHistory | null>(null);
-  const [selectedChatIndex, setSelectedChatIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const filteredHistory = chatHistory.filter((item) =>
@@ -36,63 +37,107 @@ const Sidebar: React.FC<SidebarProps> = ({
     setFilteredChatHistory(filteredHistory);
   }, [chatHistory, searchTerm]);
 
-  useEffect(() => {
-    if (chatHistory.length === 0) { // Only initialize if chatHistory is empty
-      const historyItems = JSON.parse(localStorage.getItem('chat_history') || '[]');
-      if (historyItems.length > 0) {
-        setChatHistory(historyItems);
-        setSelectedChatIndex(0); // Select the first chat in the list
-        setCurrentChat(historyItems[0].content); // Set the content of the first chat as the current chat
-        localStorage.setItem("current_chat", JSON.stringify(historyItems[0].content));
-      } else {
-        console.log("No chats found, consider initializing a new chat if needed");
+  const categorizeChats = (chats: ChatHistory[]): { [key: string]: ChatHistory[] } => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setDate(todayStart.getDate() - 1);
+    const sevenDaysAgo = new Date(todayStart);
+    sevenDaysAgo.setDate(todayStart.getDate() - 7);
+    const thirtyDaysAgo = new Date(todayStart);
+    thirtyDaysAgo.setDate(todayStart.getDate() - 30);
+
+    const categories: { [key: string]: ChatHistory[] } = {
+      'Today': [],
+      'Yesterday': [],
+      'Previous 7 Days': [],
+      'Previous 30 Days': []
+    };
+
+    chats.forEach(chat => {
+      const chatDate = new Date(chat.time);
+      if (chatDate >= todayStart) {
+        categories['Today'].push(chat);
+      } else if (chatDate >= yesterdayStart) {
+        categories['Yesterday'].push(chat);
+      } else if (chatDate >= sevenDaysAgo) {
+        categories['Previous 7 Days'].push(chat);
+      } else if (chatDate >= thirtyDaysAgo) {
+        categories['Previous 30 Days'].push(chat);
       }
-    }
-  }, []);
+    });
+
+    return categories;
+  };
+
+  const categorizedChatHistory = categorizeChats(filteredChatHistory);
 
   const newChat = () => {
     if (currentChat.length) {
+      // Clear the current chat
       setCurrentChat([]);
-      localStorage.setItem("current_chat", JSON.stringify([]));
+  
+      // Find the currently selected chat and deselect it
+      const updatedHistory = chatHistory.map(chat => ({
+        ...chat,
+        selected: false
+      }));
+  
+      // Create the new chat
       const newChat: ChatHistory = {
         name: 'New Chat',
         content: [],
         time: new Date(),
-        isNew: true // Set this chat as new
+        isNew: true,
+        selected: true // This new chat is now selected
       };
-      const updatedHistory = [...chatHistory, newChat];
+  
+      // Add the new chat to the updated history
+      updatedHistory.push(newChat);
+  
+      // Update the state with the new history and set the new chat as current
       setChatHistory(updatedHistory);
-      localStorage.setItem("chat_history", JSON.stringify(updatedHistory));
       setCurrentChat(newChat.content);
-      setSelectedChatIndex(updatedHistory.length - 1); // Index of the new chat at the end of the list
     }
   };
+  
 
-  const handleChatClick = (chat: ChatHistory, index: number) => {
-    if (!chat.isNew) { // Ensure the chat is not new before selecting it
-      setSelectedChatIndex(index);
-      localStorage.setItem("current_chat", JSON.stringify(chat.content));
-      setCurrentChat(chat.content);
-    }
+  const handleChatClick = (chat: ChatHistory) => {
+    handleChatSelect(chat);
   };
 
-  const handleMenuClick = (e: { key: string }, chatIndex: number) => {
+  const handleMenuClick = (e: { key: string }, chat: ChatHistory) => {
     const action = e.key;
     if (action === "delete") {
-      const newFilteredChatHistory = filteredChatHistory.filter((_, idx) => idx !== chatIndex);
-      setFilteredChatHistory(newFilteredChatHistory);
-      setChatHistory(newFilteredChatHistory);
-      localStorage.setItem("chat_history", JSON.stringify(newFilteredChatHistory));
-      setCurrentChat([]);
-      localStorage.setItem("current_chat", JSON.stringify([]));
+      // Filter out the deleted chat from both histories
+      const newChatHistory = chatHistory.filter(item => item !== chat);
+      const newFilteredChatHistory = filteredChatHistory.filter(item => item !== chat);
+  
+      // Temporarily set a dummy state to force a re-render
+      setChatHistory([]);
+      setFilteredChatHistory([]);
+  
+      // Update state and localStorage
+      setTimeout(() => {
+        setChatHistory(newChatHistory);
+        setFilteredChatHistory(newFilteredChatHistory);
+        localStorage.setItem("chat_history", JSON.stringify(newChatHistory));
+  
+        // Clear the current chat if it was the one being deleted
+        if (currentChat === chat.content) {
+          setCurrentChat([]);
+        }
+      }, 0);
     } else if (action === "download") {
-      setSelectedChatForExport(filteredChatHistory[chatIndex]);
+      setSelectedChatForExport(chat);
       setIsModalVisible(true);
     }
   };
+  
+  
 
-  const menu = (chatIndex: number) => (
-    <Menu onClick={(e) => handleMenuClick(e, chatIndex)}>
+  const menu = (chat: ChatHistory) => (
+    <Menu onClick={(e) => handleMenuClick(e, chat)}>
       <Menu.Item key="edit" icon={<Pencil size={16} />}>Edit</Menu.Item>
       <Menu.Item key="download" icon={<Download size={16} />}>Export</Menu.Item>
       <Menu.Item key="delete" icon={<Trash2 size={16} style={{ color: 'red' }} />} style={{ color: 'red' }}>
@@ -101,46 +146,17 @@ const Sidebar: React.FC<SidebarProps> = ({
     </Menu>
   );
 
-  // Function to categorize chat history based on time
-  const categorizeChats = () => {
-    const now = new Date();
-    const today: ChatHistory[] = [];
-    const yesterday: ChatHistory[] = [];
-    const previous7Days: ChatHistory[] = [];
-    const previous30Days: ChatHistory[] = [];
-
-    filteredChatHistory.forEach(chat => {
-      const chatDate = new Date(chat.time);
-      const diffTime = now.getTime() - chatDate.getTime();
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-
-      if (diffDays === 0) {
-        today.push(chat);
-      } else if (diffDays === 1) {
-        yesterday.push(chat);
-      } else if (diffDays <= 7) {
-        previous7Days.push(chat);
-      } else if (diffDays <= 30) {
-        previous30Days.push(chat);
-      }
-    });
-
-    return { today, yesterday, previous7Days, previous30Days };
-  };
-
-  const { today, yesterday, previous7Days, previous30Days } = categorizeChats();
-
   return (
-    <div data-collapsed={isCollapsed} style={isCollapsed ? {flex: '0 1 0px'} : {flex: '20 1 0px'}}>
+    <div data-collapsed={isCollapsed} style={isCollapsed ? { flex: '0 1 0px' } : { flex: '20 1 0px' }}>
       <div className="sidebar">
         <div className="sidebar-head">
           <div className="sidebar-header">
             <div className="flex">
-              <img style={{width:'100%', height: '24px'}} src="Yoja.svg"/>
+              <img style={{ width: '100%', height: '24px' }} src="Yoja.svg" />
             </div>
-            <div className='flex' style={{gap: '8px'}}>
+            <div className='flex' style={{ gap: '8px' }}>
               <div className="sidebar-header-icon" onClick={newChat}>
-                <SquarePen size={14} strokeWidth={2}/>
+                <SquarePen size={14} strokeWidth={2} />
               </div>
             </div>
           </div>
@@ -148,84 +164,27 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
         <div className="sidebar-body" style={{ padding: '24px' }}>
           <div className="sidebar-body">
-            <div className='chat-history'>
-              {today.length > 0 && (
-                <div>
-                  <div className='history-header'>
-                    <span className='history-header-text'>Today</span>
+            {Object.entries(categorizedChatHistory).map(([category, chats]) => (
+              chats.length > 0 && ( // Render category only if it has chats
+                <div key={category} className="chat-category">
+                  <h3>{category}</h3>
+                  <div className='chat-history'>
+                    {chats.map((chat) => (
+                      <div
+                        key={`${chat.name}-${chat.time}`} // Use a combination of name and time as a key
+                        className={`history-item ${chat.selected ? 'selected' : ''}`}
+                        onClick={() => handleChatClick(chat)}
+                      >
+                        <span className='history-item-text'>{chat.name}</span>
+                        <Dropdown overlay={menu(chat)} trigger={['click']}>
+                          <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a" /></div>
+                        </Dropdown>
+                      </div>
+                    ))}
                   </div>
-                  {today.map((chat, index) => (
-                    <div
-                      key={`today-${index}`}
-                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
-                      onClick={() => handleChatClick(chat, index)}
-                    >
-                      <span className='history-item-text'>{chat.name}</span>
-                      <Dropdown overlay={menu(index)} trigger={['click']}>
-                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
-                      </Dropdown>
-                    </div>
-                  ))}
                 </div>
-              )}
-              {yesterday.length > 0 && (
-                <div>
-                  <div className='history-header'>
-                    <span className='history-header-text'>Yesterday</span>
-                  </div>
-                  {yesterday.map((chat, index) => (
-                    <div
-                      key={`yesterday-${index}`}
-                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
-                      onClick={() => handleChatClick(chat, index)}
-                    >
-                      <span className='history-item-text'>{chat.name}</span>
-                      <Dropdown overlay={menu(index)} trigger={['click']}>
-                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
-                      </Dropdown>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {previous7Days.length > 0 && (
-                <div>
-                  <div className='history-header'>
-                    <span className='history-header-text'>Previous 7 Days</span>
-                  </div>
-                  {previous7Days.map((chat, index) => (
-                    <div
-                      key={`previous7Days-${index}`}
-                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
-                      onClick={() => handleChatClick(chat, index)}
-                    >
-                      <span className='history-item-text'>{chat.name}</span>
-                      <Dropdown overlay={menu(index)} trigger={['click']}>
-                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
-                      </Dropdown>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {previous30Days.length > 0 && (
-                <div>
-                  <div className='history-header'>
-                    <span className='history-header-text'>Previous 30 Days</span>
-                  </div>
-                  {previous30Days.map((chat, index) => (
-                    <div
-                      key={`previous30Days-${index}`}
-                      className={`history-item ${selectedChatIndex === index ? 'selected' : ''}`}
-                      onClick={() => handleChatClick(chat, index)}
-                    >
-                      <span className='history-item-text'>{chat.name}</span>
-                      <Dropdown overlay={menu(index)} trigger={['click']}>
-                        <div className="history-item-menu"><EllipsisVertical size={16} color="#71717a"/></div>
-                      </Dropdown>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+              )
+            ))}
           </div>
           <UserMenu isCollapsed={isCollapsed} />
         </div>

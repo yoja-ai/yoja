@@ -8,12 +8,16 @@ export interface Message {
     copied?: boolean;
 }
 
+// Assuming this is how the ChatHistory type is defined:
 export interface ChatHistory {
     name: string;
     content: Message[];
     time: Date;
-    isNew?: boolean; // Add this line to indicate if the chat is new
+    isNew?: boolean;
+    // Add the following line:
+    selected: boolean; // Indicates if the chat is currently selected
 }
+
 
 
 export interface ExportOptionsModalProps {
