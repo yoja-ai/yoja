@@ -485,10 +485,10 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
     """returns the tupe (error_dict, context)"""
     
-    print(f"_get_context(): context_chunk_range_list={context_chunk_range_list}")
+    print(f"_gen_context(): context_chunk_range_list={context_chunk_range_list}")
     if handle_overlaps: 
         context_chunk_range_list = DocumentChunkRange.process_overlaps(context_chunk_range_list)
-        print(f"_get_context(): context_chunk_range_list after overlapping merge={context_chunk_range_list}")
+        print(f"_gen_context(): context_chunk_range_list after overlapping merge={context_chunk_range_list}")
     
     # generate the context
     new_context:str = ''    
@@ -608,7 +608,6 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         curr_chunk.para_text_formatted = f"Name of the file is {curr_chunk.file_name}\n" + curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
         reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
-    print(f"retrieve_and_rerank_using_faiss: reranker_input={[ [i[0], i[1][:128] + '...' ] for i in reranker_input]}")
     global g_cross_encoder
     # https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-2-v2
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
@@ -617,9 +616,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     # 
     # Negative Scores for cross-encoder/ms-marco-MiniLM-L-6-v2 #1058: https://github.com/UKPLab/sentence-transformers/issues/1058
     cross_scores:np.ndarray = g_cross_encoder.predict(reranker_input)
+    print(f"retrieve_and_rerank_using_faiss: cross_scores={cross_scores}")
     # Returns the indices into the given cross_scores array, that would sort the given cross_scores array.
     # Perform an indirect sort along the given axis using the algorithm specified by the kind keyword. It returns an array of indices of the same shape as a that index data along the given axis in sorted order.
     reranked_indices = np.argsort(cross_scores)[::-1]
+    print(f"retrieve_and_rerank_using_faiss: reranked_indices={reranked_indices}")
     reranker_sorted_idx:int = 0
     for retr_sorted_idx in reranked_indices:
         sorted_summed_scores[retr_sorted_idx].cross_encoder_score = cross_scores[retr_sorted_idx]
@@ -629,6 +630,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
     if print_trace_context_choice:
         tracebuf.append(f"**{_prtime()}: Reranker Output**")
+    print(f"**{_prtime()}: Reranker Output**")
     for i in range(len(reranked_indices)):
         # ri == reranked_idx
         ri = reranked_indices[i]
@@ -638,11 +640,43 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         finfo = chunk_det.file_info
         if print_trace_context_choice:
             tracebuf.append(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
+        print(f"file={finfo['filename']}, paragraph_num={para_index}, cross_score={cross_scores[ri]}")
         
         # if we asked to only print the 10 cross encoded outputs
         if cross_encoder_10 and i >= 10: break
     
     return reranked_indices, sorted_summed_scores
+
+def _calc_cross_score_diffs(reranked_indices, sorted_summed_scores):
+    rv = []
+    for ind in range(1, len(reranked_indices)):
+        prev_chosen_reranked_index = reranked_indices[ind-1]
+        prev_chunk_det:DocumentChunkDetails = sorted_summed_scores[prev_chosen_reranked_index]
+        chosen_reranked_index = reranked_indices[ind]
+        chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
+        dif = prev_chunk_det.cross_encoder_score - chunk_det.cross_encoder_score
+        print(f"_calc_cross_score_diffs## {ind} ## dif={dif}, prev_chosen_reranked_index={prev_chosen_reranked_index}, prev chunk details={prev_chunk_det}, chosen_reranked_index={chosen_reranked_index}, chunk details={chunk_det}")
+        rv.append((ind, dif))
+    return rv
+
+def _truncate_reranked_indices(reranked_indices, sorted_summed_scores):
+    print(f"_truncate_reranked_indices: before truncating. reranked_indices={reranked_indices}")
+
+    csd=_calc_cross_score_diffs(reranked_indices, sorted_summed_scores)
+    ps=""
+    for i in range(len(csd)):
+        ps = ps + f"    {csd[i][0]}"
+    print(f"_truncate_reranked_indices: cross score diffs={ps}")
+
+    sorted_csd = sorted(csd, key=lambda x: x[1], reverse=True)
+    ps=""
+    for i in range(len(sorted_csd)):
+        ps = ps + f"    {sorted_csd[i][0]}"
+    print(f"_truncate_reranked_indices: sorted cross score diffs={ps}")
+
+    rv = reranked_indices[:sorted_csd[0][0]]
+    print(f"_truncate_reranked_indices: after truncating. reranked_indices={rv}")
+    return rv
 
 def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str):
@@ -655,6 +689,8 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
     reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
     
+    reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores)
+
     context:str = ''
     all_docs_token_count = 0
     max_token_limit:int = 2048
@@ -663,6 +699,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     for i in range(len(reranked_indices)):
         chosen_reranked_index = reranked_indices[i]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
+        print(f"_get_context_using_retr_and_rerank:: {i} :: chosen_reranked_index={chosen_reranked_index}, chunk details={chunk_det}")
         chunk_range:DocumentChunkRange = DocumentChunkRange(chunk_det)
         # # if the cross encoder score is negative, skip.
         # if chunk_det.cross_encoder_score < 0: 
