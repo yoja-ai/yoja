@@ -22,7 +22,7 @@ export const chatApi = async (messages: Message[]) => {
   let headers: any = { "Content-Type": "application/json" };
   const API_URL = "/v1/chat/completions";
   headers["Authorization"] = "Bearer " + servicesConfig.API_KEY;
-
+  console.log(headers["Authorization"])
   const requestUrl = servicesConfig.envAPIEndpoint + API_URL;
   const requestBody = JSON.stringify({
     messages: messages,
@@ -69,6 +69,7 @@ export const chatApi = async (messages: Message[]) => {
       alert("Login expired");
       window.location.href = "/login.html";
     } else {
+      console.log("here")
       return res;
     }
   }
