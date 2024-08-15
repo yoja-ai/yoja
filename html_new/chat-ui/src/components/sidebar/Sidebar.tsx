@@ -138,7 +138,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const menu = (chat: ChatHistory) => (
     <Menu onClick={(e) => handleMenuClick(e, chat)}>
-      <Menu.Item key="edit" icon={<Pencil size={16} />}>Edit</Menu.Item>
+      <Menu.Item key="edit" icon={<Pencil size={16} />}>Rename</Menu.Item>
       <Menu.Item key="download" icon={<Download size={16} />}>Export</Menu.Item>
       <Menu.Item key="delete" icon={<Trash2 size={16} style={{ color: 'red' }} />} style={{ color: 'red' }}>
         Delete

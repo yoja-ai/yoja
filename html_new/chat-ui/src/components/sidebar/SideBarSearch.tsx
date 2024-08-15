@@ -84,7 +84,7 @@ import {
               onKeyDown={handleKeyPress}
               onChange={handleInputChange}
               name="message"
-              placeholder="Aa"
+              placeholder="Search"
               style={{paddingLeft: '30px'}}
             ></Textarea>
             <div className="chat-box-icons">

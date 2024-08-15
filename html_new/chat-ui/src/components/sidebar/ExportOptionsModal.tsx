@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, Button, Input } from 'antd';
-import { MailOutlined, DownloadOutlined } from '@ant-design/icons';
+import { MailOutlined, DownloadOutlined, CheckOutlined, CloseOutlined, LoadingOutlined } from '@ant-design/icons';
 import jsPDF from 'jspdf';
 import { ChatHistory, ExportOptionsModalProps } from '../../type'; // Ensure this path is correct
 import { sendEmail } from "../../services/EmailService"; // Import the sendEmail function
@@ -35,11 +35,14 @@ const generatePDF = (chatHistory: ChatHistory): Blob => {
 
 const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible, onClose }) => {
     const [email, setEmail] = useState('');
+    const [buttonState, setButtonState] = useState<'default' | 'loading' | 'success' | 'error'>('default');
 
     const handleEmailTranscript = async () => {
         const pdfBlob = generatePDF(chat);
         console.log("Generated PDF Blob:", pdfBlob); // Debugging output
         console.log("Recipient Email:", email); // Debugging output
+
+        setButtonState('loading'); // Set the button to loading state
 
         // Convert Blob to Base64
         const reader = new FileReader();
@@ -52,10 +55,16 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
                 console.log("Base64 PDF Data:", base64data); // Debugging output
                 try {
                     await sendEmail({ recipient: email, pdfData: base64data }); // Use the sendEmail service
-                    alert('Email sent successfully!');
+                    setTimeout(() => {
+                        setButtonState('success'); // Set to success state
+                        setTimeout(() => setButtonState('default'), 2000); // Revert to default after 2 seconds
+                    }, 2000);
                 } catch (error) {
                     console.error("Error sending email:", error);
-                    alert('Failed to send email. Please try again.');
+                    setTimeout(() => {
+                        setButtonState('error'); // Set to error state
+                        setTimeout(() => setButtonState('default'), 2000); // Revert to default after 2 seconds
+                    }, 2000);
                 }
             } else {
                 console.error("Failed to convert PDF to Base64.");
@@ -74,6 +83,19 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
         link.click();
     };
 
+    const renderButtonContent = () => {
+        switch (buttonState) {
+            case 'loading':
+                return { text: 'Sending Email', icon: <LoadingOutlined spin /> };
+            case 'success':
+                return { text: 'Email Sent', icon: <CheckOutlined />, style: { backgroundColor: '#52c41a', borderColor: '#52c41a' } };
+            case 'error':
+                return { text: 'Failed to send', icon: <CloseOutlined />, type: 'primary', danger: true };
+            default:
+                return { text: 'Email Transcript', icon: <MailOutlined /> };
+        }
+    };
+
     return (
         <Modal
             title="Export Chat Transcript"
@@ -90,8 +112,14 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
                 style={{ marginBottom: '20px' }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-evenly', margin: '20px 0' }}>
-                <Button icon={<MailOutlined />} type="primary" onClick={handleEmailTranscript}>
-                    Email Transcript
+                <Button
+                    type={buttonState === 'error' ? 'primary' : 'primary'}
+                    danger={buttonState === 'error'}
+                    style={buttonState === 'success' ? { backgroundColor: '#52c41a', borderColor: '#52c41a' } : {}}
+                    icon={renderButtonContent().icon}
+                    onClick={handleEmailTranscript}
+                >
+                    {renderButtonContent().text}
                 </Button>
                 <Button icon={<DownloadOutlined />} onClick={handleDownloadTranscript}>
                     Download Transcript
