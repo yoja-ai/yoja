@@ -282,35 +282,6 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
     
     return True
 
-embeddings_file_cache = {}
-processed_embeddings_files = []
-
-def populate_embeddings_file_cache(embeddings_file_uri, s3client, index_bucket, index_object):
-    print(f"populate_embeddings_file_cache: Entered for file {embeddings_file_uri}")
-    try:
-        s3client.download_file(index_bucket, index_object, "/tmp/tmp_embedding_file.jsonl")
-    except Exception as ex:
-        print(f"Caught {ex} while downloading {embeddings_file_uri}")
-        return False
-    try:
-        with open("/tmp/tmp_embedding_file.jsonl", 'r') as rfp:
-            for line in rfp:
-                ff = json.loads(line)
-                ff['mtime'] = from_rfc3339(ff['mtime'])
-                fileid = ff['fileid']
-                if fileid in embeddings_file_cache:
-                    # multiple files in s3 may have embeddings for different versions of
-                    # the same fileid. update cache only if this version is newer
-                    if ff['mtime'] > embeddings_file_cache[fileid]['mtime']:
-                        embeddings_file_cache[fileid] = ff
-                else:
-                    embeddings_file_cache[fileid] = ff
-        processed_embeddings_files.append(embeddings_file_uri)
-        return True
-    except Exception as ex:
-        print(f"Caught {ex} while parsing tmp_embeddings_file.jsonl")
-        return False
-
 def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
     """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
@@ -383,12 +354,21 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
     deleted = {}
     needs_embedding = {}
     for fileid, gdrive_entry in gdrive_listing.items():
-        if fileid in s3_index and s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
-            if 'partial' in s3_index[fileid]:
-                needs_embedding[fileid] = s3_index[fileid]
+        if fileid in s3_index:
+            if s3_index[fileid]['mtime'] == gdrive_entry['mtime']:
+                if 'partial' in s3_index[fileid]:
+                    #print(f"calc_file_lists: entry {gdrive_entry['filename']} is in s3 listing. Needs embedding. Time matches, but PARTIAL. gdrive_entry={gdrive_entry['mtime']}, s3listing={s3_index[fileid]['mtime']}")
+                    needs_embedding[fileid] = s3_index[fileid]
+                    needs_embedding[fileid]['mtime'] = gdrive_entry['mtime']
+                else:
+                    #print(f"calc_file_lists: entry {gdrive_entry['filename']} is in s3 listing. Unmodified. Time matches, no PARTIAL. gdrive_entry={gdrive_entry['mtime']}, s3listing={s3_index[fileid]['mtime']}")
+                    unmodified[fileid] = s3_index[fileid]
             else:
-                unmodified[fileid] = s3_index[fileid]
+                #print(f"calc_file_lists: entry {gdrive_entry['filename']} is in s3 listing. Needs embedding. Time mismatch. gdrive_entry={gdrive_entry['mtime']}, s3listing={s3_index[fileid]['mtime']}")
+                needs_embedding[fileid] = s3_index[fileid]
+                needs_embedding[fileid]['mtime'] = gdrive_entry['mtime']
         else:
+            #print(f"calc_file_lists: entry {gdrive_entry['filename']} is not in s3 listing. Needs embedding")
             path=_calc_path(service, gdrive_entry, folder_details)
             gdrive_entry['path'] = path
             needs_embedding[fileid] = gdrive_entry
@@ -862,7 +842,7 @@ def _calc_filelists_dropbox(entries, s3_index):
     for tm in to_move:
         needs_embedding[tm] = s3_index[tm]
         del s3_index[tm]
-    print(f"_calc_filelists_dropbox: return. s3_index={s3_index}, needs_embedding={needs_embedding}, num_deleted_files={num_deleted_files}")
+    print(f"_calc_filelists_dropbox: return. len s3_index={len(s3_index.items())}, len needs_embedding={len(needs_embedding.items())}, num_deleted_files={num_deleted_files}")
     return s3_index, needs_embedding, num_deleted_files
 
 def partial_present(done_embedding):
@@ -1019,7 +999,7 @@ def _get_start_page_token(item):
             print(f"_get_start_page_token: In changes.getStartPageToken for user {item['email']['S']}, caught {ex}")
         return None
 
-def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id):
+def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id):
     gdrive_listing = {}
     folder_details = {}
     deleted_files = {}
@@ -1066,10 +1046,10 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                     if chg['changeType'] == 'file':
                         filename = chg['file']['name']
                         fileid = chg['fileId']
-                        mtime = from_rfc3339(chg['time'])
                         mimetype = chg['file']['mimeType']
-                        file_details = service.files().get(fileId=fileid, fields='size,parents,trashed,explicitlyTrashed').execute()
+                        file_details = service.files().get(fileId=fileid, fields='size,parents,trashed,explicitlyTrashed,modifiedTime').execute()
                         print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}, file_details={file_details}")
+                        mtime = from_rfc3339(file_details['modifiedTime'])
                         if mimetype == 'application/vnd.google-apps.folder':
                             print(f"_get_gdrive_listing_incremental: changed. folder. filename={filename}, fileid={fileid}")
                             if 'parents' in file_details:
@@ -1081,15 +1061,20 @@ def _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folde
                                     print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}. trashed!")
                                     deleted_files[fileid] = {"fileid": fileid, "mtime": mtime}
                                 else:
-                                    if 'parents' in file_details:
-                                        entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
-                                                            'mimetype': mimetype, 'size': size, 'parents': file_details['parents']}
+                                    if fileid in s3_index and mtime == s3_index[fileid]['mtime']:
+                                        print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}. unmodified since file details mtime matches s3index")
                                     else:
+                                        if fileid in s3_index:
+                                            print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}. mtime={mtime}, s3_index_mtime={s3_index[fileid]['mtime']}")
+                                        else:
+                                            print(f"_get_gdrive_listing_incremental: filename={filename}, fileid={fileid}. mtime={mtime}, s3_index does not have fileid")
                                         entry = {"filename": filename, "fileid": fileid, "mtime": mtime,
                                                             'mimetype': mimetype, 'size': size}
-                                    entry['path']=_calc_path(service, entry, folder_details)
-                                    print(f"_get_gdrive_listing_incremental: changed. file. filename={filename}, fileid={fileid}, path={entry['path']}")
-                                    gdrive_listing[fileid] = entry
+                                        if 'parents' in file_details:
+                                            entry['parents'] = file_details['parents']
+                                        entry['path']=_calc_path(service, entry, folder_details)
+                                        print(f"_get_gdrive_listing_incremental: changed. file. filename={filename}, fileid={fileid}, path={entry['path']}, mtime={mtime}")
+                                        gdrive_listing[fileid] = entry
             if 'newStartPageToken' in respj:
                 new_start_page_token = respj['newStartPageToken']
             else:
@@ -1185,7 +1170,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
             print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         else:
-            needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, item, gdrive_next_page_token, folder_id)
+            needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id)
             unmodified = s3_index
         # remove deleted files from the index
         for fileid in deleted_files:
@@ -1248,7 +1233,6 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         results = (
             service.files()
             .list(pageSize=64,
-                #orderBy="folder,modifiedTime desc, name", fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)",
                 q="mimeType != 'application/vnd.google-apps.folder'", orderBy="modifiedTime desc, name", fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)",
                 **kwargs)
             .execute()
