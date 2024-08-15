@@ -27,6 +27,8 @@ import enum
 import copy
 import jsons
 
+MAX_TOKEN_LIMIT=2048
+
 def _prtime():
     nw=datetime.datetime.now()
     return f"{nw.hour}:{nw.minute}:{nw.second}"
@@ -202,10 +204,13 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     tracebuf = ['**Begin Trace**']; filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}; srp:str
     chat_config:ChatConfiguration; last_msg:str
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
-    srp, thread_id = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
+    srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
                         tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
+    if run_usage:
+        pct=(float(run_usage.prompt_tokens)/float(MAX_TOKEN_LIMIT))*100.0
+        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {MAX_TOKEN_LIMIT}), completion={run_usage.completion_tokens}"
     
     context_srcs:List[str]; context_srcs_links:List[ContextSource]
     context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
@@ -384,7 +389,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 _ = next(ms)
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
-            return message.content[0].text.value, assistants_thread_id
+            return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             seconds = 2**retries
             logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
@@ -392,7 +397,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             time.sleep(seconds)
             retries += 1
             if retries >= 5:
-                return None, None
+                return None, None, None
         # run.status='requires_action'
         else:
             print(f"**{_prtime()}: run incomplete:** run result after running thread with above messages: run={run}")
@@ -424,11 +429,11 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 _ = next(ms)
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
-            return message.content[0].text.value, assistants_thread_id
+            return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}"
             print(logmsg); tracebuf.append(logmsg)
-            return None, None
+            return None, None, None
         else: # run is incomplete
             print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
             tracebuf.append(f"**{_prtime()}: run incomplete:**")
@@ -480,7 +485,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             else:
                 logmsg = "**{_prtime()}: No tool outputs to submit.**"
                 print(logmsg); tracebuf.append(logmsg)
-    return None, None
+    return None, None, None
 
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
     """returns the tupe (error_dict, context)"""
@@ -693,7 +698,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
 
     context:str = ''
     all_docs_token_count = 0
-    max_token_limit:int = 2048
+    max_token_limit:int = MAX_TOKEN_LIMIT
     max_pre_and_post_token_limit = 512
     context_chunk_range_list:List[DocumentChunkRange] = []
     for i in range(len(reranked_indices)):
@@ -701,12 +706,6 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
         print(f"_get_context_using_retr_and_rerank:: {i} :: chosen_reranked_index={chosen_reranked_index}, chunk details={chunk_det}")
         chunk_range:DocumentChunkRange = DocumentChunkRange(chunk_det)
-        # # if the cross encoder score is negative, skip.
-        # if chunk_det.cross_encoder_score < 0: 
-        #     print(f"skipping reranked chunk in context since cross_encoder_score is -ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
-        #     continue
-        # 
-        # print(f"using reranked chunk in context since cross_encoder_score is +ve : file_name={chunk_det.file_name} para_id={chunk_det.para_id} file_id={chunk_det.file_id} similarity_score={chunk_det.distance} cross_encoder_score={chunk_det.cross_encoder_score} ")
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
@@ -923,11 +922,14 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                     filekey_to_file_chunks_dict, None, chat_config, last_msg)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
-    
+    if run_usage:
+        pct=int((float(run_usage.prompt_tokens)/float(MAX_TOKEN_LIMIT))*100.0)
+        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {MAX_TOKEN_LIMIT}), completion={run_usage.completion_tokens}"
+
     context_srcs:List[str]; context_srcs_links:List[ContextSource]
     context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
     
