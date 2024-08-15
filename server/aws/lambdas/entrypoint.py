@@ -9,6 +9,7 @@ from periodic import periodic
 from utils import respond
 from chat import chat_completions
 from table_qa_lambda import table_qa_handler
+from send_email import send_email
 
 fnxmap = {
         '/rest/entrypoint/getversion': getversion,
@@ -16,7 +17,8 @@ fnxmap = {
         '/rest/entrypoint/login': login,
         '/rest/entrypoint/periodic': periodic,
         '/rest/v1/chat/completions': chat_completions,
-        '/rest/entrypoint/tableqa': table_qa_handler
+        '/rest/entrypoint/tableqa': table_qa_handler,
+        '/rest/v1/send-email': send_email 
 }
 
 def entrypoint(event, context):

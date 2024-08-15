@@ -11,7 +11,17 @@ export interface Message {
 export interface ChatHistory {
     name: string;
     content: Message[];
-    time: Date
+    time: Date;
+    isNew?: boolean;
+    selected: boolean; 
+}
+
+
+
+export interface ExportOptionsModalProps {
+    chat: ChatHistory; 
+    isVisible: boolean;
+    onClose: () => void; 
 }
 
 export interface SourceFile {

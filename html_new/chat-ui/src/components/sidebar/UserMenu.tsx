@@ -140,10 +140,10 @@ const UserMenu = ({isCollapsed}: any) => {
               }
             >
               <Menu.Item key="Settings" onClick={showModal}>
-                <span style={{display: 'flex', justifyContent:'center', alignItems:'center', gap: '5px'}}> <Settings size={16} /> Setting </span>
+                <span style={{display: 'flex', justifyContent:'center', alignItems:'center', gap: '5px'}}> <Settings size={16} /> Settings </span>
               </Menu.Item>
               <Menu.Item key="SignOut"  onClick={handleSignoutClick}>
-                <div style={{display: 'flex', justifyContent:'center', alignItems:'center',  gap: '5px'}}> <LogOut size={16} /> SignOut </div>
+                <div style={{display: 'flex', justifyContent:'center', alignItems:'center',  gap: '5px'}}> <LogOut size={16} /> Sign Out </div>
               </Menu.Item>
             </SubMenu>
           </Menu>

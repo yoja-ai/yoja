@@ -117,3 +117,4 @@ COPY faiss_rm.py ${LAMBDA_TASK_ROOT}
 COPY table_qa.py ${LAMBDA_TASK_ROOT}
 COPY table_qa_lambda.py ${LAMBDA_TASK_ROOT}
 COPY openai_ner.py ${LAMBDA_TASK_ROOT}
+COPY send_email.py ${LAMBDA_TASK_ROOT}

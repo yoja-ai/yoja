@@ -94,7 +94,7 @@ import {
               onKeyDown={handleKeyPress}
               onChange={handleInputChange}
               name="message"
-              placeholder="Aa"
+              placeholder="Type your message here"
               disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">

@@ -375,10 +375,15 @@
   gap: 8px;
   border-radius: 8px;
   cursor:default;
+  margin-bottom: 1px;
 }
 
 .history-item:hover{
   background: var(--bgAlt, #EEEEEE);
+}
+
+.history-item.selected {
+  background: var(--bgAlt, #EEEEEE); /* Persistent highlight for selected item */
 }
 
 .history-item .history-item-menu {
@@ -405,7 +410,7 @@
 .chat-history{
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 5px;
 }
 
 .notyficss {
@@ -674,3 +679,4 @@
   height: 20px !important;
   bottom: 5px;
 }
+
