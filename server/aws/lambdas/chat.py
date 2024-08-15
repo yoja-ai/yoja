@@ -444,8 +444,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             for tool in run.required_action.submit_tool_outputs.tool_calls:
                 # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
                 args_dict:dict = json.loads(tool.function.arguments)
-                print(f"**{_prtime()}: Running tool tool.function.name={tool.function.name} with tool.function.arguments={args_dict}")
-                if tool.function.name == "search_question_in_db":
+                print(f"**{_prtime()}: Running tool {tool}")
+                if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question)
@@ -455,7 +455,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                         "tool_call_id": tool.id,
                         "output": context
                     })
-                elif tool.function.name == "list_of_files_for_given_question":
+                elif tool.function.name == "list_of_files_for_given_question" or tool.function.name == 'list_of_files_for_given_question.controls':
                     args_dict:dict = json.loads(tool.function.arguments)
                     tool_arg_question = args_dict.get('question')
                     num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
