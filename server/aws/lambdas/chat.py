@@ -687,22 +687,17 @@ def _calc_cross_score_diffs(reranked_indices, sorted_summed_scores):
         chosen_reranked_index = reranked_indices[ind]
         chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
         dif = prev_chunk_det.cross_encoder_score - chunk_det.cross_encoder_score
-        print(f"_calc_cross_score_diffs## {ind} ## dif={dif}, prev_chosen_reranked_index={prev_chosen_reranked_index}, prev chunk details={prev_chunk_det}, chosen_reranked_index={chosen_reranked_index}, chunk details={chunk_det}")
         rv.append((ind, dif))
     return rv
 
 def _truncate_reranked_indices(reranked_indices, sorted_summed_scores, most_relevant):
     print(f"_truncate_reranked_indices: before truncating. reranked_indices={reranked_indices}, most_relevant={most_relevant}")
     csd=_calc_cross_score_diffs(reranked_indices, sorted_summed_scores)
-    ps=""
-    for i in range(len(csd)):
-        ps = ps + f"    {csd[i][0]}"
-    print(f"_truncate_reranked_indices: cross score diffs={ps}")
-
     sorted_csd = sorted(csd, key=lambda x: x[1], reverse=True)
+
     ps=""
     for i in range(len(sorted_csd)):
-        ps = ps + f"    {sorted_csd[i][0]}"
+        ps = ps + f"    {sorted_csd[i][0]},{sorted_csd[i][1]}"
     print(f"_truncate_reranked_indices: sorted cross score diffs={ps}")
 
     if most_relevant:
