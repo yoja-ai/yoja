@@ -314,7 +314,24 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 "type": "function",
                 "function": {
                     "name": "search_question_in_db",
-                    "description": "Search confidential and private information and return relevant passsages for the given question or search and return relevant passages that provide details of the mentioned subject",
+                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question for which passages need to be searched"
+                            },
+                        },
+                    "required": ["question"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_question_in_db_return_more",
+                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject. Use this tool only if you want additional results than those returned by the tool search_question_in_db",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -331,7 +348,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 "type": "function",
                 "function": {
                     "name": "list_of_files_for_given_question",
-                    "description": "Search confidential and private information and return file names that can answer the given question",
+                    "description": "Search confidential and private information and return file names that can answer the given question. Use this tool only if the search_question_in_db tool does not work",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -448,7 +465,17 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question)
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False)
+                    print(f"**{_prtime()}: Tool output:** context={context}")
+                    tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
+                    tool_outputs.append({
+                        "tool_call_id": tool.id,
+                        "output": context
+                    })
+                elif tool.function.name == "search_question_in_db_return_more" or tool.function.name == 'search_question_in_db_return_more.controls':
+                    tool_arg_question = args_dict.get('question')
+                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True)
                     print(f"**{_prtime()}: Tool output:** context={context}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                     tool_outputs.append({
@@ -664,9 +691,8 @@ def _calc_cross_score_diffs(reranked_indices, sorted_summed_scores):
         rv.append((ind, dif))
     return rv
 
-def _truncate_reranked_indices(reranked_indices, sorted_summed_scores):
-    print(f"_truncate_reranked_indices: before truncating. reranked_indices={reranked_indices}")
-
+def _truncate_reranked_indices(reranked_indices, sorted_summed_scores, most_relevant):
+    print(f"_truncate_reranked_indices: before truncating. reranked_indices={reranked_indices}, most_relevant={most_relevant}")
     csd=_calc_cross_score_diffs(reranked_indices, sorted_summed_scores)
     ps=""
     for i in range(len(csd)):
@@ -679,12 +705,16 @@ def _truncate_reranked_indices(reranked_indices, sorted_summed_scores):
         ps = ps + f"    {sorted_csd[i][0]}"
     print(f"_truncate_reranked_indices: sorted cross score diffs={ps}")
 
-    rv = reranked_indices[:sorted_csd[0][0]]
+    if most_relevant:
+        rv = reranked_indices[:sorted_csd[0][0]]
+    else:
+        rv = reranked_indices[sorted_csd[0][0]:]
     print(f"_truncate_reranked_indices: after truncating. reranked_indices={rv}")
     return rv
 
 def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str):
+                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                    chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool, least_relevant_only:bool):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -693,8 +723,12 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     """
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
     reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
-    
-    reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores)
+
+    # if most_relevant_only and least_relevant_only are both False, return all
+    if most_relevant_only:
+        reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, True)
+    elif least_relevant_only:
+        reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, False)
 
     context:str = ''
     all_docs_token_count = 0
