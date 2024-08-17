@@ -26,8 +26,16 @@ import dataclasses
 import enum
 import copy
 import jsons
+import tiktoken
 
 MAX_TOKEN_LIMIT=2048
+#ASSISTANTS_MODEL="gpt-4"
+ASSISTANTS_MODEL="gpt-4-1106-preview"
+encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
+
+def calc_tokens(context):
+    global encoding_model
+    return len(encoding_model.encode(context))
 
 def _prtime():
     nw=datetime.datetime.now()
@@ -308,7 +316,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         # of a full instruction such as 'give me details of android crypto policy'
         instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
         # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
-        model="gpt-4",
+        model=ASSISTANTS_MODEL,
         tools=[
             {
                 "type": "function",
@@ -780,8 +788,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                 fparagraphs.insert(0,formatted_para)
                 chunk_range.start_para_id = idx
                 print(f"including prior     chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
-                token_count += int(len(formatted_para) / 3)
-                all_docs_token_count += int(len(formatted_para) / 3)
+                tiktoken_count = calc_tokens(formatted_para)
+                token_count += tiktoken_count
+                all_docs_token_count += tiktoken_count
                 if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
 
             token_count:int = 0
@@ -794,8 +803,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                     chunk_range.end_para_id = idx
                     print(f"including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
                     
-                    token_count += int(len(formatted_para) / 3)
-                    all_docs_token_count += int(len(formatted_para) / 3)
+                    tiktoken_count = calc_tokens(formatted_para)
+                    token_count += tiktoken_count
+                    all_docs_token_count += tiktoken_count
                     if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
             
             prelude = f"Name of the file is {chunk_det.file_name}"

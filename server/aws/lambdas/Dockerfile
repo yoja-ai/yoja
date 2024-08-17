@@ -102,6 +102,7 @@ RUN pip3 install pandasql
 RUN pip3 install traceback_with_variables pylaprof
 RUN pip3 install tenacity
 RUN pip3 install dropbox
+RUN pip3 install tiktoken
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
