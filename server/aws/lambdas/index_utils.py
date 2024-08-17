@@ -1244,17 +1244,27 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
             # pick word/ppt files smaller than 100K and pdfs smaller than 200K
             fn = item['name'].lower()
             size = int(item['size'])
-            if fn.endswith('.pdf') and size > (200*1024):
-                print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 200k")
-                continue
-            if (fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx')) and size > (100*1024):
-                print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
-                continue
-            needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
+            if fn.endswith('.pdf') or item['mimeType'] == 'application/pdf':
+                if size > (200*1024):
+                    print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 200k")
+                    continue
+                else:
+                    needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
                                 'mtime': from_rfc3339(item['modifiedTime']), 'mimetype': item['mimeType'],
                                 'size': size}
+            if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx'):
+                if size > (100*1024):
+                    print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
+                    continue
+                else:
+                    needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
+                                'mtime': from_rfc3339(item['modifiedTime']), 'mimetype': item['mimeType'],
+                                'size': size}
+            else:
+                print(f"create_sample_index: skipping unsupported file {item['name']} of mimetype {item['mimeType']}")
+                continue
             if len(needs_embedding) == 5:
-                print(f"create_sample_index: Chose the following files {needs_embedding}")
+                print(f"create_sample_index: Chosen files={needs_embedding}")
                 break
         sub_prefix = "sample"
         user_prefix = f"{prefix}/{email}/{sub_prefix}"
