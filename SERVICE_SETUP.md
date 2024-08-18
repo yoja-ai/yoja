@@ -1,6 +1,6 @@
 # Setting up the service for the first time
 
-## First, request a certification for chat.<domain> and get it validaded using DNS
+## First, request a certificate for chat.<domain> and get it validaded using DNS
 
 ## Gdrive Client
 
