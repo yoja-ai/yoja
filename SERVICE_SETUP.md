@@ -1,42 +1,44 @@
-# Setting up the service for the first time
+# Setting up the Yoja service for the first time
+<br>
 
-## First, request a certificate for chat.<domain> and get it validaded using DNS
+## 1. Request a certificate for `chat.<domain>` and get it validated using DNS
+<br>
 
-## Gdrive Client
-
+## 2. Configure Google Drive Client
 - Go to https://console.cloud.google.com and choose 'APIs and Services'
 - Choose 'Credentials'
 - Click on 'Create Credentials'
-- Credentials type is 'Oauth client ID'
+- Credentials type is 'OAuth client ID'
 - Application type is 'Web Application'
-- Give it a name such as oauth_for_staging6
-- Add authorized javascript origins - https://chat.<domain>
-- Add authorized redirect URI - https://chat.<domain>/rest/entrypoint/oauth2cb
+- Give it a name such as `oauth_for_staging6`
+- Add authorized javascript origins - `https://chat.<domain>`
+- Add authorized redirect URI - `https://chat.<domain>/rest/entrypoint/oauth2cb`
 - Create and save the client ID and client secret
+<br>
 
-## Dropbox Client
-
-- Go to https://www.dropbox.com/developers/apps/info and choose the 'create app' button
+## 3. Configure Dropbox Client
+- Go to https://www.dropbox.com/developers/apps/info and choose the 'Create App' button
 - Choose scoped application
 - In the settings tab:
     - Click on the 'Enable Additional Users'
-    - Redirect URIs: https://chat.<yourdomain>/rest/entrypoint/oauth2cb
-    - Webhook URI: https://chat.<yourdomain>/webhook/webhook_dropbox
+    - Redirect URIs: `https://chat.<yourdomain>/rest/entrypoint/oauth2cb`
+    - Webhook URI: `https://chat.<yourdomain>/webhook/webhook_dropbox`
 - In the Permissions tab:
     - select file.content.read
     - select openid scopes -> email
+<br>
 
-## OpenAI Key
+## 4. Create an OpenAI Key
+- Login to the OpenAI REST API account and create a new secret key
+<br>
 
-Login to the OpenAI REST API account and create a new secret key
+## 5. Create S3 buckets
+- a new s3 bucket for scratch
+- a bucket for storing html/javascript called yoja-html-<something_domain_based> e.g. yoja-html-staging9 for a service at `chat.staging9.example.com`
+- a bucket for storing indexes called yoja-index-<something_domain_based> e.g. yoja-index-staging9 for a service at `chat.staging9.example.com`
+<br>
 
-## Create S3 buckets
-    - a new s3 bucket for scratch
-    - a bucket for storing html/javascript called yoja-html-<something_domain_based> e.g. yoja-html-staging9 for a service at chat.staging9.example.com
-    - a bucket for storing indexes called yoja-index-<something_domain_based> e.g. yoja-index-staging9 for a service at chat.staging9.example.com
-
-## DDB Tables
-
+## 6. Create DynamoDB tables
 - yoja-ServiceConf
     - Capacity is on-demand
     - Primary Key is configVersion of type N
@@ -45,19 +47,22 @@ Login to the OpenAI REST API account and create a new secret key
     - Primary Key is email
     - Global Secondary Index:
         - dropbox_sub of type String is the Partition Key
+<br>
 
-## Deploy Main Lambda from <yoja_root>/server/aws
-    - create-container.sh
-    - build-and-deploy.sh
+## 7. Deploy Main Lambda from `<yoja_root>/server/aws`
+- create container using `scripts/create-container.sh`
+- deploy using `scripts/build-and-deploy.sh`
+<br>
 
-## Deply Webhook Lambda from <yoja_root>/server/aws-webhook
-    - create layer using scripts/create-layer.sh
-    - deploy using scripts/build-and-deploy.sh
+## 8. Deploy Webhook Lambda from `<yoja_root>/server/aws-webhook`
+- create layer using `scripts/create-layer.sh`
+- deploy using `scripts/build-and-deploy.sh`
+<br>
 
-## Create CloudFront
-    - First create a CF distro using the html S3 bucket as the origin
+## 9. Create CloudFront distribution
+    - First create a CloudFront distro using the html S3 bucket as the origin
         - Use OAC for the S3 bucket
-        - setup Alternate Domain Name (chat.<domain>) and cert using the cert that was created in the first step
+        - setup Alternate Domain Name (`chat.<domain>`) and cert using the cert that was created in the first step
         - Copy OAC policy and configure S3 bucket
     - Second, add an origin for the main Lambda using the Lambda Function displayed in the Lambda Console for the 'entrypoint' Lambda
         - Set Response Timeout to 60 seconds
@@ -68,9 +73,10 @@ Login to the OpenAI REST API account and create a new secret key
     - Add origin for webhook_dropbox Lambda
         - Copy the Lambda's Function URL from the Lambda console and use it to create a new Origin
         - Add Behavior pointing /webhook/webhook_dropbox to this newly created origin
+<br>
 
-## Add DNS entry pointing chat.<domain> to the above CloudFront distro's URL
+## 10. Add DNS entry pointing `chat.<domain>` to the above CloudFront distro's URL
+<br>
 
-## Publish html from <yoja_root>/html_new
-
-- Use the script html_new/scripts/copy-to-s3.sh
+## 11. Publish HTML from <yoja_root>/html_new
+- Use the script `html_new/scripts/copy-to-s3.sh`
