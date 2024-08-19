@@ -117,7 +117,7 @@ else
   # https://github.com/aws/aws-sam-cli/issues/6691: the image repo has to be private
   # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-package.html
   # sam package --profile yojadist_root --image-repository  058264066930.dkr.ecr.us-east-1.amazonaws.com/yoja-img --template-file template.yaml --output-template-file packaged.yaml --s3-bucket scratch-bucket-yoja-dist
-  sam package --profile ${AWS_CREDS} --image-repository  $image_repo --template-file template.yaml --output-template-file packaged.yaml --s3-bucket $scratch_bucket --s3-prefix yoja-api || { echo "Failed: error: $!"; exit 1; }
+  sam package --profile ${AWS_CREDS} --region ${AWS_REGN} --image-repository  $image_repo --template-file template.yaml --output-template-file packaged.yaml --s3-bucket $scratch_bucket --s3-prefix yoja-api || { echo "Failed: error: $!"; exit 1; }
 
   # Publish your application to the AWS Serverless Application Repository using the AWS SAM CLI or the AWS Management Console. When publishing, you'll need to provide information like the application name, description, semantic version, and a link to the source code.
   # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-publishing-applications.html : s3 policy to allow SAR to read S3 bucket

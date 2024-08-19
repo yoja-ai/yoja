@@ -9,7 +9,7 @@ Parameters:
     Default: 0.0.1
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.18
+    Default: 0.0.19
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.0.3
@@ -359,7 +359,7 @@ Resources:
   YojaStaticFilesLambdaFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
-      Description: 'Create s3 bucket and populate with static html/js for mflowui and dashboard'
+      Description: 'Create s3 bucket and populate with static html/js for yoja'
       Handler: index.handler
       Role: !GetAtt CustomLambdasRole.Arn
       Timeout: 900
@@ -876,7 +876,7 @@ Resources:
                 # don't populate the 'key' in serviceconf; autopopulated by the backend in the api if it doesn't exist
                 # keyStr:str  = '' #Fernet.generate_key().decode()
                 
-                success, errmsg = _insert_serviceconf_partiql(serviceConfTableName, indexBucketName, keyStr)
+                success, errmsg = _insert_serviceconf_partiql(serviceConfTableName, indexBucketName)
                   
                 responseData = {}
                 print(responseData)
