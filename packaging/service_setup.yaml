@@ -9,7 +9,7 @@ Parameters:
     Default: 0.0.1
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.19
+    Default: 0.0.21
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.0.3

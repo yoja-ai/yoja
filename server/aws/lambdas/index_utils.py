@@ -48,11 +48,6 @@ from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
 from faiss_rm import FaissRM, DocStorageType
 
-import llama_index
-import llama_index.core
-import llama_index.readers.file
-import llama_index.core.node_parser
-
 if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
     vectorizer = MsmarcoDistilbertBaseDotProdV3(
             tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
