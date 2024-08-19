@@ -23,10 +23,6 @@ Parameters:
   PreexistingWildcardCertificateARN:
     Type: String
     Description: 'ARN of pre-existing wildcard certificate in the region where stack is being installed. Leave empty if CreateCertificates above is true'
-  YojaApiLambdaVersion:
-    Type: String
-    Description: Version of Lambdas
-    Default: VVVVVVVVVV
   OauthClientId:
     Type: String
   OauthClientSecret:
@@ -262,7 +258,6 @@ Resources:
         SemanticVersion:
           Ref: YojaApiServiceSemanticVersionParameter
       Parameters:
-        LambdaVersion:  !Ref YojaApiLambdaVersion
         OauthClientId: !Ref OauthClientId
         OauthClientSecret: !Ref OauthClientSecret
         DropboxOauthClientId: !Ref DropboxOauthClientId
