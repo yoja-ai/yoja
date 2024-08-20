@@ -7,6 +7,7 @@ Parameters:
   cftVersion:
     Type: String
     Default: 0.0.1
+    Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
     Default: 0.0.22
@@ -230,9 +231,6 @@ Resources:
         -
           AttributeName: "email"
           KeyType: "HASH"
-        # -
-        #   AttributeName: "productCode"
-        #   KeyType: "RANGE"
       BillingMode: "PAY_PER_REQUEST"
       GlobalSecondaryIndexes: 
         -
@@ -241,9 +239,6 @@ Resources:
             -
               AttributeName: "dropbox_sub"
               KeyType: "HASH"
-            # -
-            #   AttributeName: "productCode"
-            #   KeyType: "RANGE"
           Projection:
             ProjectionType: ALL
   YojaApiService:
