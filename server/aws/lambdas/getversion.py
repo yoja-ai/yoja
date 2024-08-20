@@ -15,10 +15,5 @@ from sentence_transformers import SentenceTransformer
 from utils import respond
 
 def getversion(event, context):
-    print('## ENVIRONMENT VARIABLES')
-    print(os.environ)
-    print('## EVENT')
-    print(event)
-
     operation = event['requestContext']['http']['method']
     return respond(None, res={'version': os.environ['LAMBDA_VERSION']})

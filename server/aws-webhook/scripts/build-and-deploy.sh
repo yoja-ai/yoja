@@ -31,12 +31,9 @@ echo "Using AWS Region $AWS_REGN"
 aws_account_id=`aws --profile ${AWS_CREDS} --region ${AWS_REGN} sts get-caller-identity --query "Account" --output text`
 echo "AWS Account ID= $aws_account_id"
 
-[ "$aws_account_id" == "058264066930" ] && YOJADIST="True"
-
 export AWS_PROFILE=${AWS_CREDS}
 export AWS_DEFAULT_REGION=${AWS_REGN}
 
-if [ -z "$YOJADIST" ]; then
   c=`cat <<EOF
 import boto3
 import sys
@@ -100,15 +97,3 @@ EOF`
   retval=$?
 
   exit $retval
-else
-  # https://github.com/aws/aws-sam-cli/issues/6691: the image repo has to be private
-  # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-package.html
-  # sam package --profile yojadist_root --image-repository  058264066930.dkr.ecr.us-east-1.amazonaws.com/yoja-img --template-file template.yaml --output-template-file packaged.yaml --s3-bucket scratch-bucket-yoja-dist
-  sam package --profile ${AWS_CREDS} --template-file template.yaml --output-template-file packaged.yaml --s3-bucket $scratch_bucket --s3-prefix yoja-webhook  || { echo "Failed: error: $!"; exit 1; }
-
-  # Publish your application to the AWS Serverless Application Repository using the AWS SAM CLI or the AWS Management Console. When publishing, you'll need to provide information like the application name, description, semantic version, and a link to the source code.
-  # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-publishing-applications.html : s3 policy to allow SAR to read S3 bucket
-  # https://docs.aws.amazon.com/serverlessrepo/latest/devguide/serverlessrepo-how-to-publish.html: to setup s3 policies
-  # sam publish --profile yojadist_root --template packaged.yaml --region us-east-1 --semantic-version 0.0.2
-  sam publish --profile ${AWS_CREDS} --template packaged.yaml --region $AWS_REGN --semantic-version $sam_semantic_version || { echo "Failed: error: $!"; exit 1; }
-fi

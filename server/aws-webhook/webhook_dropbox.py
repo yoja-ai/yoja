@@ -48,7 +48,7 @@ def invoke_periodic_lambda(function_arn, dropbox_sub):
                         Payload=json.dumps(run_params))
         return True
     except Exception as ex:
-        print(f"Caught {ex} while invoking periodic run lambda")
+        print(f"Caught {ex} invoking periodic run lambda")
         return False
 
 def get_user_table_entry_dropbox_sub(dropbox_sub):

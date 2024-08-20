@@ -9,7 +9,7 @@ Parameters:
     Default: 0.0.1
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.21
+    Default: 0.0.22
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.0.3
@@ -20,9 +20,9 @@ Parameters:
     Type: String
     Description: subdomain under yojaServiceDnsName
     Default: chat
-  PreexistingWildcardCertificateARN:
+  PreexistingCertificateARN:
     Type: String
-    Description: 'ARN of pre-existing wildcard certificate in the region where stack is being installed. Leave empty if CreateCertificates above is true'
+    Description: 'ARN of pre-existing certificate in the region where stack is being installed e.g. ARN of cert for chat.yoja.ai'
   OauthClientId:
     Type: String
   OauthClientSecret:
@@ -745,7 +745,7 @@ Resources:
             - YojaResponseHeaderPolicy
             - Id
         ViewerCertificate:
-          AcmCertificateArn: !Ref PreexistingWildcardCertificateARN
+          AcmCertificateArn: !Ref PreexistingCertificateARN
           MinimumProtocolVersion: TLSv1.2_2018
           SslSupportMethod: sni-only
   PopulateDDBLambda:

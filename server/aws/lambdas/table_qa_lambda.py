@@ -20,11 +20,6 @@ from typing import Dict, List, Any, Optional, Tuple
 
 def table_qa_handler(event:dict, context) -> Dict[str, Any]:
     try: 
-        print('## ENVIRONMENT VARIABLES')
-        print(os.environ)
-        print('## EVENT')
-        print(event)
-
         operation = event['requestContext']['http']['method']
         if (operation != 'POST'):
             return respond({"error_msg": "Error. http operation {operation} not supported"}, status=400)
