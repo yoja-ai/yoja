@@ -12,7 +12,7 @@ Parameters:
     Default: 0.0.22
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.3
+    Default: 0.0.4
   yojaServiceDnsName:
     Type: String
     Description: the DNS name for the service.  For example, yoja.com.  chat.yoja.com is a subdomain needed under this
