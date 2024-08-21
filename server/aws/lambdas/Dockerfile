@@ -81,7 +81,8 @@ RUN pip3 install --upgrade google-api-python-client google-auth-httplib2 google-
 RUN pip3 install cryptography 
 RUN pip3 install python-pptx 
 RUN pip3 install einops 
-RUN pip3 install python-docx 
+RUN pip3 install python-docx
+RUN pip3 install reportlab 
 
 RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
 RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
@@ -119,5 +120,6 @@ COPY table_qa.py ${LAMBDA_TASK_ROOT}
 COPY table_qa_lambda.py ${LAMBDA_TASK_ROOT}
 COPY openai_ner.py ${LAMBDA_TASK_ROOT}
 COPY send_email.py ${LAMBDA_TASK_ROOT}
+COPY generate_pdf.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

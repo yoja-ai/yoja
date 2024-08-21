@@ -10,6 +10,7 @@ from utils import respond
 from chat import chat_completions
 from table_qa_lambda import table_qa_handler
 from send_email import send_email
+from generate_pdf import generate_pdf
 
 fnxmap = {
         '/rest/entrypoint/getversion': getversion,
@@ -18,7 +19,8 @@ fnxmap = {
         '/rest/entrypoint/periodic': periodic,
         '/rest/v1/chat/completions': chat_completions,
         '/rest/entrypoint/tableqa': table_qa_handler,
-        '/rest/v1/send-email': send_email 
+        '/rest/v1/send-email': send_email,
+        '/rest/entrypoint/generate-pdf': generate_pdf
 }
 
 def entrypoint(event, context):
