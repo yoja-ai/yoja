@@ -8,6 +8,7 @@ import time
 import base64
 import zlib
 import datetime
+from datetime import timezone
 from urllib.parse import unquote
 import numpy as np
 import faiss
@@ -132,14 +133,23 @@ def encrypt_email(email, service_conf):
     fky = Fernet(service_conf['key']['S'])
     return fky.encrypt(email.encode()).decode()
 
+user_table_cache = {}
 def get_user_table_entry(email):
+    global user_table_cache
+    if email in user_table_cache:
+        return user_table_cache[email]
     try:
         client = boto3.client('dynamodb')
-        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}})
-        return response['Item']
+        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}}, ConsistentRead=True)
+        user_table_cache[email] = response['Item']
+        return user_table_cache[email]
     except Exception as ex:
         print(f"Caught {ex} while getting info for {email} from users table")
         return None
+
+def set_user_table_cache_entry(email, entry):
+    global user_table_cache
+    user_table_cache[email] = entry
 
 def get_user_table_entry_dropbox_sub(dropbox_sub):
     try:
@@ -193,12 +203,14 @@ def init_gdrive_webhook(item, email, service_conf):
             print(f"init_gdrive_webhook: In changes.watch for user {email}, caught {ex}")
         return False
     try:
-        boto3.client('dynamodb').update_item(
+        response = boto3.client('dynamodb').update_item(
                         TableName=os.environ['USERS_TABLE'],
                         Key={'email': {'S': email}},
                         UpdateExpression="SET gdrive_next_page_token = :tk",
-                        ExpressionAttributeValues={':tk': {'S': start_page_token}}
+                        ExpressionAttributeValues={':tk': {'S': start_page_token}},
+                        ReturnValues="ALL_NEW"
                     )
+        set_user_table_cache_entry(email, response['Attributes'])
     except Exception as ex:
         print(f"init_gdrive_webhook: Error. Caught {ex} while saving nextPageToken in yoja-users")
         return False
@@ -294,12 +306,14 @@ def update_users_table(email, refresh_token, access_token, expires_in, id_token=
         if picture:
             ue = f"{ue}, picture = :pc"
             eav[':pc'] = {'S': picture}
-        boto3.client('dynamodb').update_item(
+        response = boto3.client('dynamodb').update_item(
                     TableName=os.environ['USERS_TABLE'],
                     Key={'email': {'S': email}},
                     UpdateExpression=ue,
-                    ExpressionAttributeValues=eav
+                    ExpressionAttributeValues=eav,
+                    ReturnValues="ALL_NEW"
                 )
+        set_user_table_cache_entry(email, response['Attributes'])
         return True
     except Exception as ex:
         print(f"Caught {ex} while updating users table")
@@ -360,31 +374,76 @@ def refresh_user_dropbox(item):
         print(f"while refreshing dropbox access token, post caught {ex}")
         return None
     try:
-        boto3.client('dynamodb').update_item(
+        response = boto3.client('dynamodb').update_item(
                         TableName=os.environ['USERS_TABLE'],
                         Key={'email': {'S': email}},
                         UpdateExpression="SET dropbox_access_token = :at, dropbox_created = :ct, dropbox_expires_in = :exp",
-                        ExpressionAttributeValues={':at': {'S': access_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} }
+                        ExpressionAttributeValues={':at': {'S': access_token}, ':ct': {'N': str(int(time.time()))}, ':exp':{'N': str(expires_in)} },
+                        ReturnValues="ALL_NEW"
                     )
+        set_user_table_cache_entry(email, response['Attributes'])
     except Exception as ex:
         print(f"Caught {ex} while saving dropbox_access_token, dropbox_refresh_token for {email}")
         return None
     return access_token
 
 g_start_time:datetime.datetime = None # initialized further below
-g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))
+g_time_limit = int(os.getenv("PERIOIDIC_PROCESS_FILES_TIME_LIMIT", 12))*60
 
 def set_start_time(start_time):
     global g_start_time
     g_start_time = start_time
+
+def set_time_limit(time_limit):
+    global g_time_limit
+    g_time_limit = time_limit
+
+def extend_ddb_time(email, time_left):
+    if 'AWS_LAMBDA_FUNCTION_NAME' not in os.environ:
+        print(f"Not operating in Lambda. Hence, extending ddb time if necessary")
+        item = get_user_table_entry(email)
+        if not item:
+            print(f"extend_ddb_time: Error. Cannot get user entry for {email}")
+            return
+        print(f"extend_ddb_time: user table item={item}")
+        now = time.time()
+        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
+        if 'lambda_end_time' in item:
+            print(f"extend_ddb_time: lambda_end_time={item['lambda_end_time']['N']}")
+            l_e_t = int(item['lambda_end_time']['N'])
+            l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
+            print(f"extend_ddb_time: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+            # if lambda_end_time is less than 3 minutes away, push it out by 12 minutes
+            if (l_e_t - int(now)) < (3 * 60):
+                time_to_add = (12*60) if time_left > (12*60) else time_left
+                try:
+                    response = boto3.client('dynamodb').update_item(
+                        TableName=os.environ['USERS_TABLE'],
+                        Key={'email': {'S': email}},
+                        UpdateExpression="set #lm = :st",
+                        ConditionExpression=f"#lm = :ev",
+                        ExpressionAttributeNames={'#lm': 'lambda_end_time'},
+                        ExpressionAttributeValues={':ev': {'N': item['lambda_end_time']['N']}, ':st': {'N': str(int(now)+time_to_add)} },
+                        ReturnValues="ALL_NEW"
+                    )
+                    set_user_table_cache_entry(email, response['Attributes'])
+                except ClientError as e:
+                    if e.response['Error']['Code'] == "ConditionalCheckFailedException":
+                        # This should not happen
+                        print(f"extend_ddb_time: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
+                        g_time_limit = 0
+                    else:
+                        raise
+        else:
+            print(f"extend_ddb_time: Error. No lambda_end_time entry for user {email}")
 
 def lambda_timelimit_exceeded() -> bool:
     global g_start_time, g_time_limit
     now = datetime.datetime.now()
     if not g_start_time:
         g_start_time = now
-    return True if (now - g_start_time) > datetime.timedelta(minutes=g_time_limit) else False
+    return True if (now - g_start_time) > datetime.timedelta(seconds=g_time_limit) else False
 
 def lambda_time_left_seconds() -> float:
     global g_start_time, g_time_limit
-    return (g_time_limit * 60) - (datetime.datetime.now() - g_start_time).total_seconds()  
+    return g_time_limit - (datetime.datetime.now() - g_start_time).total_seconds()  

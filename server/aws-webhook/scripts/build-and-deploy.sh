@@ -34,30 +34,6 @@ echo "AWS Account ID= $aws_account_id"
 export AWS_PROFILE=${AWS_CREDS}
 export AWS_DEFAULT_REGION=${AWS_REGN}
 
-  c=`cat <<EOF
-import boto3
-import sys
-
-client = boto3.client('lambda')
-result = client.list_layers(
-    CompatibleRuntime='python3.11',
-    MaxItems=50,
-    CompatibleArchitecture='x86_64'
-    )
-if 'Layers' in result:
-    for lyr in result['Layers']:
-        if lyr['LayerName'] == 'yoja-webhook-layer':
-            print(lyr['LatestMatchingVersion']['LayerVersionArn'])
-            sys.exit(0)
-sys.exit(255)
-EOF`
-  LAYER=`python3 -c "$c"`
-  if [ $? != 0 ] ; then
-    echo "Could not determine layer ARN"
-    exit 255
-  fi
-  echo "Layer ARN is ${LAYER}"
-
   d=`cat <<EOF
 import boto3
 import sys
@@ -66,25 +42,41 @@ client = boto3.client('lambda')
 result = client.list_functions()
 if 'Functions' in result:
     for fnx in result['Functions']:
-        if fnx['FunctionName'].startswith('yoja-entrypoint-'):
+        if 'YojaApiService' in fnx['FunctionName']:
             print(fnx['FunctionArn'])
             sys.exit(0)
 sys.exit(255)
 EOF`
-  FUNCTION_ARN=`python3 -c "$d"`
-  if [ $? != 0 ] ; then
+FUNCTION_ARN=`python3 -c "$d"`
+if [ $? != 0 ] ; then
     echo "Could not determine Function ARN"
     exit 255
-  fi
-  echo "Function ARN is ${FUNCTION_ARN}"
+fi
+echo "Main Lambda Function ARN is ${FUNCTION_ARN}"
 
-  /bin/rm -f template.yaml
-  #sed -e "s/BBBBBBBBBB/${LAYER}/" template.yaml.tmpl | sed -e "s/AAAAAAAAAA/${FUNCTION_ARN}/" > template.yaml
+# get the existing stack name
+c=`cat <<EOF
+import boto3
+import sys
 
-  aws --profile ${AWS_CREDS} --region ${AWS_REGN} s3 ls "s3://${scratch_bucket}" || { echo "Error: unable to access the specified s3 bucket ${scratch_bucket}.  Fix and try again"; exit 1; }
+client = boto3.Session(profile_name='$AWS_CREDS', region_name='$AWS_REGN').client('cloudformation')
+stacks = client.list_stacks()
+ssum = stacks['StackSummaries']
 
-  sam build --profile ${AWS_CREDS} --region ${AWS_REGN} || exit 1 
-  sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml --stack-name yoja-webhook \
+for os in ssum: 
+    if os['StackStatus'] == 'CREATE_COMPLETE' or os['StackStatus'] == 'UPDATE_COMPLETE' or os['StackStatus'] == 'UPDATE_ROLLBACK_COMPLETE':
+      # CFT stack names have YojaApiService in it.  manual stack name was 'yoja'
+      if 'YojaWebhookService' in os['StackName'] :
+        print(os['StackName'])
+        sys.exit(0)
+sys.exit(255)
+EOF`
+STACK_NAME=`python3 -c "$c"`
+
+aws --profile ${AWS_CREDS} --region ${AWS_REGN} s3 ls "s3://${scratch_bucket}" || { echo "Error: unable to access the specified s3 bucket ${scratch_bucket}.  Fix and try again"; exit 1; }
+
+sam build --profile ${AWS_CREDS} --region ${AWS_REGN} || exit 1 
+sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml --stack-name ${STACK_NAME} \
     --s3-bucket ${scratch_bucket} --s3-prefix yoja-webhook \
     --region ${AWS_REGN} --capabilities CAPABILITY_IAM \
     --parameter-overrides ParameterKey=OauthClientId,ParameterValue=${oauth_client_id} \
@@ -94,6 +86,6 @@ EOF`
       ParameterKey=UsersTable,ParameterValue=${users_table_name} \
       ParameterKey=ServiceconfTable,ParameterValue=${serviceconf_table_name} \
       ParameterKey=YojaApiEntrypointFunctionArn,ParameterValue=${FUNCTION_ARN}
-  retval=$?
+retval=$?
 
-  exit $retval
+exit $retval

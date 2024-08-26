@@ -10,7 +10,7 @@ import zlib
 from urllib.parse import unquote
 import faiss
 import boto3
-from utils import respond, get_service_conf, get_user_table_entry, get_user_table_entry_dropbox_sub, set_start_time
+from utils import respond, get_service_conf, get_user_table_entry, get_user_table_entry_dropbox_sub, set_start_time, set_time_limit
 import os.path
 import io
 from index_utils import update_index_for_user, lock_user, unlock_user
@@ -19,26 +19,46 @@ import dataclasses
 from typing import List, Dict, Optional, Any
 import time
 import datetime
+import signal
+from ecs import get_ecs_task_count, start_ecs_task
 
 @dataclasses.dataclass
 class PeriodicBody:
     username:Optional[str] = ''
     dropbox_sub:Optional[str] = ''
 
-def upd(client, item, s3client, bucket, prefix, start_time):
+def upd(service_conf, email, client, item, s3client, bucket, prefix, start_time):
     gdrive_next_page_token, dropbox_next_page_token, status = lock_user(item, client)
     if status:
         print(f"periodic.upd: before updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
-        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(item, s3client,
-                                                bucket=bucket, prefix=prefix,
-                                                start_time=start_time, only_create_index=False,
-                                                gdrive_next_page_token=gdrive_next_page_token, dropbox_next_page_token=dropbox_next_page_token)
-        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+        if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
+            print(f"upd: Running in LAMBDA. Testing whether we should kick off ECS task..")
+            if not gdrive_next_page_token and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf:
+                print(f"upd: No gdrive next page token, ecs_clustername={ecs_clustername}, ecs_maxtasks={ecs_maxtasks}. Checking num of current ECS tasks")
+                ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
+                ecs_clustername = service_conf['ecs_clustername']['S']
+                try:
+                    ecs_client = boto3.client('ecs')
+                    task_count = get_ecs_task_count(ecs_client, ecs_clustername)
+                    if task_count < ecs_maxtasks:
+                        unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token)
+                        start_ecs_task(ecs_client, ecs_clustername, email)
+                        print(f"periodic.upd: task_count {task_count} less than ecs_maxtasks. Kicking off ECS task")
+                        return gdrive_next_page_token, dropbox_next_page_token
+                except Exception as ex:
+                    print(f"upd: ecs: caught exception {ex}")
+        else:
+            print(f"upd: Not running in LAMBDA")
 
-        unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token)
+        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(item, s3client,
+                            bucket=bucket, prefix=prefix,
+                            start_time=start_time, only_create_index=False,
+                            gdrive_next_page_token=gdrive_next_page_token,
+                            dropbox_next_page_token=dropbox_next_page_token)
+        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
     return gdrive_next_page_token, dropbox_next_page_token
 
-def do_full_scan(s3client, client, bucket, prefix, start_time):
+def do_full_scan(service_conf, s3client, client, bucket, prefix, start_time):
     try:
         last_evaluated_key = None
         while True:
@@ -51,7 +71,7 @@ def do_full_scan(s3client, client, bucket, prefix, start_time):
                 for item in resp['Items']:
                     email = item['email']['S']
                     print(f"do_full_scan: Updating user {email}")
-                    upd(client, item, s3client, bucket, prefix, start_time)
+                    upd(service_conf, email, client, item, s3client, bucket, prefix, start_time)
                 if 'LastEvaluatedKey' in resp:
                     last_evaluated_key = resp['LastEvaluatedKey']
                 else:
@@ -64,12 +84,12 @@ def do_full_scan(s3client, client, bucket, prefix, start_time):
         return respond({"error_msg": f"Caught {ex} while scanning users table"}, status=403)
     return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
 
-def update_gdrive_user(s3client, client, email, bucket, prefix, start_time):
+def update_gdrive_user(service_conf, s3client, client, email, bucket, prefix, start_time):
     item = get_user_table_entry(email)
     if not item:
         print(f"update_gdrive_user: Hmm. user table entry not found for {email}")
         return respond({"error_msg": f"update_gdrive_user: Hmm. user table entry not found for {email}"}, status=403)
-    gdrive_next_page_token, dropbox_next_page_token = upd(client, item, s3client, bucket, prefix, start_time)
+    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, email, client, item, s3client, bucket, prefix, start_time)
     res={'version': os.environ['LAMBDA_VERSION']}
     if gdrive_next_page_token:
         res['gdrive_next_page_token'] = gdrive_next_page_token
@@ -77,12 +97,12 @@ def update_gdrive_user(s3client, client, email, bucket, prefix, start_time):
         res['dropbox_next_page_token'] = dropbox_next_page_token
     return respond(None, res=res)
 
-def update_dropbox_user(s3client, client, dropbox_sub, bucket, prefix, start_time):
+def update_dropbox_user(service_conf, s3client, client, dropbox_sub, bucket, prefix, start_time):
     item = get_user_table_entry_dropbox_sub(dropbox_sub)
     if not item:
         print(f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
         return respond({"error_msg": f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub{dropbox_sub}"}, status=403)
-    gdrive_next_page_token, dropbox_next_page_token = upd(client, item, s3client, bucket, prefix, start_time)
+    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, dropbox_sub, client, item, s3client, bucket, prefix, start_time)
     res={'version': os.environ['LAMBDA_VERSION']}
     if gdrive_next_page_token:
         res['gdrive_next_page_token'] = gdrive_next_page_token
@@ -128,13 +148,13 @@ def periodic(event:dict, context) -> dict:
     set_start_time(start_time)
     if post_body.username:
         print(f"periodic: post_body contains username {post_body.username}. Updating")
-        return update_gdrive_user(s3client, client, post_body.username, bucket, prefix, start_time)
+        return update_gdrive_user(service_conf, s3client, client, post_body.username, bucket, prefix, start_time)
     elif post_body.dropbox_sub:
         print(f"periodic: post_body contains dropbox_sub {post_body.dropbox_sub}. Updating")
-        return update_dropbox_user(s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
+        return update_dropbox_user(service_conf, s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
     else:
         print(f"periodic: post_body does not contain username or dropbox_sub. Doing a full scan")
-        return do_full_scan(s3client, client, bucket, prefix, start_time)
+        return do_full_scan(service_conf, s3client, client, bucket, prefix, start_time)
 
 # You can invoke and run the periodic lambda in your local machine as follows
 #
@@ -145,14 +165,23 @@ def periodic(event:dict, context) -> dict:
 # Then run 'docker run --interactive --tty --entrypoint /bin/bash yoja-img'
 # When the docker container starts up, copy the aws credentials profile in the above command (example.ai) into a file called credentials in /var/task. Then add AWS_SHARED_CREDENTIALS_FILE=./credentials to the above command line.
 #
+def exit_gracefully(signum, frame):
+    print(f"Received {signum} signal")
+    set_time_limit(0)
+
 if __name__=="__main__":
+    signal.signal(signal.SIGINT, exit_gracefully)
+    signal.signal(signal.SIGTERM, exit_gracefully)
+
+    event = {'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}}}
     if len(sys.argv) < 2:
-        print(f"Usage: periodic.py user_email")
-        sys.exit(255)
-    event = {
-            'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}},
-            'body': json.dumps({'username': sys.argv[1]})
-        }
+        if 'YOJA_USER' in os.environ:
+            event['body'] = json.dumps({'username': os.environ['YOJA_USER']})
+        else:
+            print(f"Usage: periodic.py user_email")
+            sys.exit(255)
+    else:
+        event['body'] = json.dumps({'username': sys.argv[1]})
     res = periodic(event, None)
     if 'gdrive_next_page_token' in res:
         sys.exit(0)

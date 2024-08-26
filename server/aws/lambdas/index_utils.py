@@ -16,7 +16,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_ddb_time, set_user_table_cache_entry
 from typing import Dict, List, Tuple, Any, Optional, Union
 import traceback_with_variables
 from dataclasses import dataclass
@@ -71,6 +71,8 @@ def lock_user(item, client):
             l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
             print(f"lock_user: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
         time_left = int(lambda_time_left_seconds())
+        if time_left > (60 * 15):
+            time_left = 60*15
         response = client.update_item(
             TableName=os.environ['USERS_TABLE'],
             Key={'email': {'S': email}},
@@ -80,6 +82,7 @@ def lock_user(item, client):
             ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(time_left))} },
             ReturnValues="ALL_NEW"
         )
+        set_user_table_cache_entry(email, response['Attributes'])
         if 'Attributes' in response:
             if 'gdrive_next_page_token' in response['Attributes']:
                 gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
@@ -132,8 +135,9 @@ def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
                 UpdateExpression=ue,
-                ReturnValues="UPDATED_NEW"
+                ReturnValues="ALL_NEW"
             )
+        set_user_table_cache_entry(email, response['Attributes'])
     except ClientError as e:
         print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
         return False
@@ -155,6 +159,7 @@ def lock_sample_dir(email, client):
             ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(15*60))} },
             ReturnValues="ALL_NEW"
         )
+        set_user_table_cache_entry(email, response['Attributes'])
         print(f"lock_sample_dir: conditional check success. No other instance of lambda is creating the sample dir for user {email}")
         return True
     except ClientError as e:
@@ -172,8 +177,9 @@ def unlock_sample_dir(email, client):
             TableName=os.environ['USERS_TABLE'],
             Key={'email': {'S': email}},
             UpdateExpression=ue,
-            ReturnValues="UPDATED_NEW"
+            ReturnValues="ALL_NEW"
         )
+        set_user_table_cache_entry(email, response['Attributes'])
     except ClientError as e:
         print(f"unlock_sample_dir: Error {e.response['Error']['Message']} while unlocking")
         return False
@@ -541,7 +547,7 @@ class DropboxReader(StorageReader):
         file.seek(0, os.SEEK_SET)
         return file
 
-def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
+def process_files(email, storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
     """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
@@ -614,7 +620,7 @@ def process_files(storage_reader:StorageReader, needs_embedding, s3client, bucke
                 else:
                     prev_paras = []
                     print(f"process_files: fn={filename}. did not find partial")
-                pdf_dict:Dict[str,Any] = read_pdf(filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
+                pdf_dict:Dict[str,Any] = read_pdf(email, filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
                 file_item['paragraphs'] = pdf_dict['paragraphs']
                 file_item['filetype'] = 'pdf'
                 if 'partial' in pdf_dict:
@@ -766,6 +772,7 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
     # if faiss index needs to be updated and we have at least 5 minutes
     if index_metadata.is_vdb_index_stale():
         time_left:float = lambda_time_left_seconds()
+        extend_ddb_time(email, time_left)
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
             # we update the index only when we have 1 to 100 embeddings that need to be updated..
@@ -889,7 +896,7 @@ def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, o
     for td in to_del:
         del unmodified[td]
 
-    done_embedding, time_limit_exceeded = process_files(DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
+    done_embedding, time_limit_exceeded = process_files(email, DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or num_deleted_files > 0:
         update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
     else:
@@ -1186,7 +1193,7 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         for td in to_del:
             del unmodified[td]
 
-        done_embedding, time_limit_exceeded = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
             update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
         else:
@@ -1270,7 +1277,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/index_metadata.json")
 
         fnx_start = datetime.datetime.now()
-        done_embedding, time_limit_exceeded = process_files(GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0:
             update_files_index_jsonl(done_embedding, {}, bucket, user_prefix, s3client)
         else:
@@ -1290,7 +1297,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
 if __name__=="__main__":
     with open(sys.argv[1], 'rb') as f:
         bio = io.BytesIO(f.read())
-    rv = read_pdf(sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
+    rv = read_pdf(None, sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))
     sys.exit(0)

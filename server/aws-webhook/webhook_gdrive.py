@@ -239,6 +239,7 @@ def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
         else:
             return email, None
     except Exception as ex:
+        traceback.print_exc()
         print(f"check_user: cookie={cookie_val}, refresh_access_token={refresh_access_token}, user_type={user_type}: caught {ex}")
         return None
 

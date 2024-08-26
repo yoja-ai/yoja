@@ -6,7 +6,7 @@ import subprocess
 import io
 import datetime
 import os
-from utils import lambda_timelimit_exceeded, lambda_time_left_seconds
+from utils import lambda_timelimit_exceeded, lambda_time_left_seconds, extend_ddb_time
 import base64
 import traceback
 import traceback_with_variables
@@ -50,7 +50,7 @@ def _lsdir(ldir):
         print(f"_lsdir: dir={ldir}, Caught {ex}")
         return
 
-def render_png(filename, start_page, num_pages_this_time, tmpdir):
+def render_png(email, filename, start_page, num_pages_this_time, tmpdir):
     print(f"render_png: Entered. filename {filename}, start_page {start_page}, num_pages_this_time {num_pages_this_time}, tmpdir {tmpdir}")
     try:
         renv=os.environ.copy()
@@ -60,6 +60,7 @@ def render_png(filename, start_page, num_pages_this_time, tmpdir):
         print(f"render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
             print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
+            extend_ddb_time(email, lambda_time_left_seconds())
             processes=[]
             fd_to_process={}
             poller=select.poll()
@@ -120,7 +121,7 @@ class ProcessInfo:
     def __str__(self):
         return f"page={self.page}, pid={self.process.pid}, outfn={self.outfn}"
 
-def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
+def tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
     print(f"tesseract_pages: Entered. filename {filename}, start_page {start_page}, num_pages_this_time={num_pages_this_time}, pages_in_pdf={pages_in_pdf}, tmpdir {tmpdir}")
     rv = ['' for ind in range(num_pages_this_time)]
     try:
@@ -133,6 +134,7 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
         print(f"render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
             print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
+            extend_ddb_time(email, lambda_time_left_seconds())
             fd_to_processinfo = {}
             poller=select.poll()
             items_in_poll=0
@@ -196,13 +198,14 @@ def tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmp
         traceback.print_exc()
     return rv
 
-def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
+def read_pdf(email, filename, fileid, bio, mtime, vectorizer, prev_paras):
     print(f"read_pdf: Entered. filename={filename}, fileid={fileid}, len(prev_paras)={len(prev_paras)}")
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     tmpdir = None
     tmpfp = None
     try:
         time_left = lambda_time_left_seconds()
+        extend_ddb_time(email, time_left)
         time_for_this_pdf = int(time_left) - 180
         max_pages_this_time = int(time_for_this_pdf/5)
         print(f"read_pdf: time_left={time_left}, time_for_this_pdf={time_for_this_pdf}, max_pages_this_time={max_pages_this_time}")
@@ -225,10 +228,11 @@ def read_pdf(filename, fileid, bio, mtime, vectorizer, prev_paras):
             is_partial = True
 
         print(f"read_pdf: pages_in_pdf={pages_in_pdf}, pdfsize={pdfsize}, start_page={start_page}, num_pages_this_time={num_pages_this_time}")
-        if not render_png(tmpfp.name, start_page, num_pages_this_time, tmpdir):
+        if not render_png(email, tmpfp.name, start_page, num_pages_this_time, tmpdir):
             return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
-        chunks:List[str] = tesseract_pages(filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
+        chunks:List[str] = tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
         for ind in range(len(chunks)):
+            extend_ddb_time(email, lambda_time_left_seconds())
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             try:
