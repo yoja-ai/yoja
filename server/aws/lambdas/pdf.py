@@ -232,7 +232,8 @@ def read_pdf(email, filename, fileid, bio, mtime, vectorizer, prev_paras):
             return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
         chunks:List[str] = tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
         for ind in range(len(chunks)):
-            extend_ddb_time(email, lambda_time_left_seconds())
+            if ind % 100 == 0:
+                extend_ddb_time(email, lambda_time_left_seconds())
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             try:

@@ -34,9 +34,9 @@ def upd(service_conf, email, client, item, s3client, bucket, prefix, start_time)
         if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
             print(f"upd: Running in LAMBDA. Testing whether we should kick off ECS task..")
             if not gdrive_next_page_token and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf:
-                print(f"upd: No gdrive next page token, ecs_clustername={ecs_clustername}, ecs_maxtasks={ecs_maxtasks}. Checking num of current ECS tasks")
                 ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
                 ecs_clustername = service_conf['ecs_clustername']['S']
+                print(f"upd: No gdrive next page token, ecs_clustername={ecs_clustername}, ecs_maxtasks={ecs_maxtasks}. Checking num of current ECS tasks")
                 try:
                     ecs_client = boto3.client('ecs')
                     task_count = get_ecs_task_count(ecs_client, ecs_clustername)
