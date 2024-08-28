@@ -16,7 +16,7 @@ def get_ecs_task_count(ecs_client, ecs_clustername):
     else:
         return 0
 
-def start_ecs_task(ecs_client, ecs_clustername, email):
+def start_ecs_task(ecs_client, ecs_clustername, ecs_subnets, ecs_securitygroups, email):
     item = get_user_table_entry(email)
     takeover_lock_end_time = int(item['lock_end_time']['N'])
     print(f"start_ecs_task: Entered. clustername={ecs_clustername}, email={email}, takeover_lock_end_time={takeover_lock_end_time}")
@@ -34,8 +34,8 @@ def start_ecs_task(ecs_client, ecs_clustername, email):
         enableExecuteCommand=True,
         networkConfiguration={
             'awsvpcConfiguration': {
-                'subnets': ['subnet-0868138880e84997a', 'subnet-06016fd0cd6c75ee0', 'subnet-07eb8a31dcbf7d02d', 'subnet-0a0525d59ba82b072', 'subnet-0d9571415523c4745', 'subnet-0bd258d61a5d69d3d'],
-                'securityGroups': ['sg-0d84a6e50fee1a231'],
+                'subnets': ecs_subnets.strip().split(','),
+                'securityGroups': ecs_securitygroups.strip().split(','),
                 'assignPublicIp': 'ENABLED'
             }
         },

@@ -114,8 +114,8 @@ def lock_user(email, client, takeover_lock_end_time=0):
         else:
             raise
 
-def unlock_user(email, client, gdrive_next_page_token, dropbox_next_page_token):
-    print(f"unlock_user: Entered. email={email}")
+def update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token):
+    print(f"update_next_page_tokens: Entered. email={email}")
     try:
         if gdrive_next_page_token and dropbox_next_page_token:
             ue="SET gdrive_next_page_token = :pt, dropbox_next_page_token = :db"
@@ -154,7 +154,7 @@ def unlock_user(email, client, gdrive_next_page_token, dropbox_next_page_token):
             )
         set_user_table_cache_entry(email, response['Attributes'])
     except ClientError as e:
-        print(f"unlock_user: Error {e.response['Error']['Message']} while unlocking")
+        print(f"update_next_page_tokens: Error {e.response['Error']['Message']} while unlocking")
         return False
     return True
 

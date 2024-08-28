@@ -13,7 +13,7 @@ import boto3
 from utils import respond, get_service_conf, get_user_table_entry, get_user_table_entry_dropbox_sub, set_start_time, set_time_limit
 import os.path
 import io
-from index_utils import update_index_for_user, lock_user, unlock_user
+from index_utils import update_index_for_user, lock_user, update_next_page_tokens
 import jsons
 import dataclasses
 from typing import List, Dict, Optional, Any
@@ -27,42 +27,67 @@ class PeriodicBody:
     username:Optional[str] = ''
     dropbox_sub:Optional[str] = ''
 
-def upd(service_conf, email, client, s3client, bucket, prefix, start_time):
+def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_time):
+    print(f"upd_in_lambda: Entered {email}")
+    gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
+    if status:
+        if not gdrive_next_page_token and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
+                            and 'ecs_subnets' in service_conf and 'ecs_securitygroups' in service_conf:
+            ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
+            ecs_clustername = service_conf['ecs_clustername']['S']
+            ecs_subnets = service_conf['ecs_subnets']['S']
+            ecs_securitygroups = service_conf['ecs_securitygroups']['S']
+            print(f"upd_in_lambda: No gdrive next page token, ecs_clustername={ecs_clustername}, ecs_maxtasks={ecs_maxtasks}, ecs_subnets={ecs_subnets}, ecs_securitygroups={ecs_securitygroups}. Checking num of current ECS tasks")
+            try:
+                ecs_client = boto3.client('ecs')
+                task_count = get_ecs_task_count(ecs_client, ecs_clustername)
+                if task_count < ecs_maxtasks:
+                    print(f"periodic.upd_in_lambda: task_count {task_count} less than ecs_maxtasks. Kicking off ECS task")
+                    update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token)
+                    start_ecs_task(ecs_client, ecs_clustername, ecs_subnets, ecs_securitygroups, email)
+                    return gdrive_next_page_token, dropbox_next_page_token
+                else:
+                    print(f"periodic.upd_in_lambda: task_count {task_count} greater than ecs_maxtasks. Not kicking off ECS task. Processing in lambda..")
+            except Exception as ex:
+                print(f"upd_in_lambda: ecs: caught exception {ex}")
+        else:
+            print(f"upd_in_lambda: gdrive_next_page_token present, or ecs config absent. Processing in lambda..")
+        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
+                                bucket=bucket, prefix=prefix,
+                                start_time=start_time, only_create_index=False,
+                                gdrive_next_page_token=gdrive_next_page_token,
+                                dropbox_next_page_token=dropbox_next_page_token)
+        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+    else:
+        print(f"periodic.upd_in_lambda: failed to get lock for {email}. Returning without doing any work..")
+    return gdrive_next_page_token, dropbox_next_page_token
+
+def upd_in_non_lambda(service_conf, email, client, s3client, bucket, prefix, start_time):
+    print(f"periodic.upd_in_non_lambda: Entered {email}")
     if 'YOJA_TAKEOVER_LOCK_END_TIME' in os.environ:
+        print(f"periodic.upd_in_non_lambda: {email} YOJA_TAKEOVER_LOCK_END_TIME present. Trying to lock")
         gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client,
                                     takeover_lock_end_time=int(os.environ['YOJA_TAKEOVER_LOCK_END_TIME']))
     else:
+        print(f"periodic.upd_in_non_lambda: {email} YOJA_TAKEOVER_LOCK_END_TIME absent. Trying to lock")
         gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
     if status:
-        print(f"periodic.upd: before updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
-        if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
-            print(f"upd: Running in LAMBDA. Testing whether we should kick off ECS task..")
-            if not gdrive_next_page_token and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf:
-                ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
-                ecs_clustername = service_conf['ecs_clustername']['S']
-                print(f"upd: No gdrive next page token, ecs_clustername={ecs_clustername}, ecs_maxtasks={ecs_maxtasks}. Checking num of current ECS tasks")
-                try:
-                    ecs_client = boto3.client('ecs')
-                    task_count = get_ecs_task_count(ecs_client, ecs_clustername)
-                    if task_count < ecs_maxtasks:
-                        unlock_user(email, client, gdrive_next_page_token, dropbox_next_page_token)
-                        start_ecs_task(ecs_client, ecs_clustername, email)
-                        print(f"periodic.upd: task_count {task_count} less than ecs_maxtasks. Kicking off ECS task")
-                        return gdrive_next_page_token, dropbox_next_page_token
-                except Exception as ex:
-                    print(f"upd: ecs: caught exception {ex}")
-        else:
-            print(f"upd: Not running in LAMBDA")
-
         gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
                             bucket=bucket, prefix=prefix,
                             start_time=start_time, only_create_index=False,
                             gdrive_next_page_token=gdrive_next_page_token,
                             dropbox_next_page_token=dropbox_next_page_token)
-        print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+        print(f"periodic.upd_in_non_lambda: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+        update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token)
     else:
-        print(f"periodic.upd: failed to get lock for {email}. Returning without doing any work..")
+        print(f"periodic.upd_in_non_lambda: failed to get lock for {email}. Returning without doing any work..")
     return gdrive_next_page_token, dropbox_next_page_token
+
+def upd(service_conf, email, client, s3client, bucket, prefix, start_time):
+    if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
+        return upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_time)
+    else:
+        return upd_in_non_lambda(service_conf, email, client, s3client, bucket, prefix, start_time)
 
 def do_full_scan(service_conf, s3client, client, bucket, prefix, start_time):
     try:
