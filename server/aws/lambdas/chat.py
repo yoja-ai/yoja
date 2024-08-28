@@ -47,7 +47,7 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
         # get the last line of the last 'message'
         l_line:str = lines[-1].strip()
         # Line format example: **Context Source: ....docx**\t<!-- ID=0B-qJbLgl53j..../0 -->; thread_id=<thread_id>
-        match:re.Match = re.search("thread_id=([^\s;]+)", l_line, re.IGNORECASE)
+        match:re.Match = re.search("thread_id=([^\\s;]+)", l_line, re.IGNORECASE)
         if match:
             thread_id = match.group(1)
             print(f"Extracted thread_id={thread_id}")
@@ -456,9 +456,10 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
-            logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}"
+            seconds = 2**loopcnt
+            logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
             print(logmsg); tracebuf.append(logmsg)
-            return None, None, None
+            continue
         else: # run is incomplete
             print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
             tracebuf.append(f"**{_prtime()}: run incomplete:**")
@@ -520,6 +521,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             else:
                 logmsg = "**{_prtime()}: No tool outputs to submit.**"
                 print(logmsg); tracebuf.append(logmsg)
+    logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing exited loop without reaching complete. returning None"
+    print(logmsg); tracebuf.append(logmsg)
     return None, None, None
 
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
