@@ -31,8 +31,9 @@ def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_t
     print(f"upd_in_lambda: Entered {email}")
     gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
     if status:
-        if not gdrive_next_page_token and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
-                            and 'ecs_subnets' in service_conf and 'ecs_securitygroups' in service_conf:
+        if (not gdrive_next_page_token or gdrive_next_page_token == '1') \
+                        and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
+                        and 'ecs_subnets' in service_conf and 'ecs_securitygroups' in service_conf:
             ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
             ecs_clustername = service_conf['ecs_clustername']['S']
             ecs_subnets = service_conf['ecs_subnets']['S']
