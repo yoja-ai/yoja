@@ -2,6 +2,7 @@ import os
 import sys
 import io
 import boto3
+from utils import get_user_table_entry
 
 def get_ecs_task_count(ecs_client, ecs_clustername):
     print(f"get_ecs_task_count: Entered. clustername={ecs_clustername}")
@@ -16,7 +17,9 @@ def get_ecs_task_count(ecs_client, ecs_clustername):
         return 0
 
 def start_ecs_task(ecs_client, ecs_clustername, email):
-    print(f"start_ecs_task: Entered. clustername={ecs_clustername}, email={email}")
+    item = get_user_table_entry(email)
+    takeover_lock_end_time = int(item['lock_end_time']['N'])
+    print(f"start_ecs_task: Entered. clustername={ecs_clustername}, email={email}, takeover_lock_end_time={takeover_lock_end_time}")
     resp = ecs_client.run_task(
         capacityProviderStrategy = [
             {
@@ -31,6 +34,8 @@ def start_ecs_task(ecs_client, ecs_clustername, email):
         enableExecuteCommand=True,
         networkConfiguration={
             'awsvpcConfiguration': {
+                'subnets': ['subnet-0868138880e84997a', 'subnet-06016fd0cd6c75ee0', 'subnet-07eb8a31dcbf7d02d', 'subnet-0a0525d59ba82b072', 'subnet-0d9571415523c4745', 'subnet-0bd258d61a5d69d3d'],
+                'securityGroups': ['sg-0d84a6e50fee1a231'],
                 'assignPublicIp': 'ENABLED'
             }
         },
@@ -42,6 +47,10 @@ def start_ecs_task(ecs_client, ecs_clustername, email):
                         {
                             'name': 'YOJA_USER',
                             'value': email
+                        },
+                        {
+                            'name': 'YOJA_TAKEOVER_LOCK_END_TIME',
+                            'value': str(takeover_lock_end_time)
                         }
                     ]
                 }

@@ -56,20 +56,36 @@ if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-pr
 else:
     vectorizer = MsmarcoDistilbertBaseDotProdV3()
     
-def lock_user(item, client):
-    email=item['email']['S']
+def lock_user(email, client, takeover_lock_end_time=0):
     print(f"lock_user: Entered. Trying to lock for email={email}")
+    item = get_user_table_entry(email)
+    print(f"lock_user: User table entry for {email}={item}")
+    now = time.time()
+    now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
     gdrive_next_page_token = None
     dropbox_next_page_token = None
-    try:
-        now = time.time()
-        now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
-        if not 'lambda_end_time' in item:
-            print(f"lock_user: no lambda_end_time in ddb. now={now}/{now_s}")
+    if not 'lock_end_time' in item:
+        print(f"lock_user: no lock_end_time in ddb. now={now}/{now_s}")
+        l_e_t = None
+        l_e_t_s = None
+    else:
+        l_e_t=int(item['lock_end_time']['N'])
+        l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
+        print(f"lock_user: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+        if takeover_lock_end_time != 0:
+            if takeover_lock_end_time == l_e_t:
+                if 'gdrive_next_page_token' in item:
+                    gdrive_next_page_token = item['gdrive_next_page_token']['S']
+                if 'dropbox_next_page_token' in item:
+                    dropbox_next_page_token = item['dropbox_next_page_token']['S']
+                print(f"lock_user: Takeover successful for {email}. lock_end_time {l_e_t}/{l_e_t_s}")
+                return gdrive_next_page_token, dropbox_next_page_token, True
+            else:
+                print(f"lock_user: Takeover unsuccessful for {email}. ddb lock_end_time {l_e_t}/{l_e_t_s}, takeover_lock_end_time={takeover_lock_end_time}")
+                return gdrive_next_page_token, dropbox_next_page_token, False
         else:
-            l_e_t=int(item['lambda_end_time']['N'])
-            l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
-            print(f"lock_user: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+            print(f"lock_user: takeover_lock_end_time is 0. Not attempting to take over existing lock. Proceeding with new lock attempt")
+    try:
         time_left = int(lambda_time_left_seconds())
         if time_left > (60 * 15):
             time_left = 60*15
@@ -78,7 +94,7 @@ def lock_user(item, client):
             Key={'email': {'S': email}},
             UpdateExpression="set #lm = :st",
             ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
-            ExpressionAttributeNames={'#lm': 'lambda_end_time'},
+            ExpressionAttributeNames={'#lm': 'lock_end_time'},
             ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(time_left))} },
             ReturnValues="ALL_NEW"
         )
@@ -98,8 +114,7 @@ def lock_user(item, client):
         else:
             raise
 
-def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
-    email=item['email']['S']
+def unlock_user(email, client, gdrive_next_page_token, dropbox_next_page_token):
     print(f"unlock_user: Entered. email={email}")
     try:
         if gdrive_next_page_token and dropbox_next_page_token:
@@ -109,25 +124,25 @@ def unlock_user(item, client, gdrive_next_page_token, dropbox_next_page_token):
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
                 UpdateExpression=ue, ExpressionAttributeValues=eav,
-                ReturnValues="UPDATED_NEW"
+                ReturnValues="ALL_NEW"
             )
         elif gdrive_next_page_token and not dropbox_next_page_token:
-            ue="SET gdrive_next_page_token = :pt REMOVE dropbox_next_page_token"
+            ue="SET gdrive_next_page_token = :pt  REMOVE dropbox_next_page_token"
             eav={':pt': {'S': gdrive_next_page_token}}
             response = client.update_item(
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
                 UpdateExpression=ue, ExpressionAttributeValues=eav,
-                ReturnValues="UPDATED_NEW"
+                ReturnValues="ALL_NEW"
             )
         elif not gdrive_next_page_token and dropbox_next_page_token:
-            ue="REMOVE gdrive_next_page_token SET dropbox_next_page_token = :db"
+            ue="REMOVE gdrive_next_page_token  SET dropbox_next_page_token = :db"
             eav={':db': {'S': dropbox_next_page_token}}
             response = client.update_item(
                 TableName=os.environ['USERS_TABLE'],
                 Key={'email': {'S': email}},
                 UpdateExpression=ue, ExpressionAttributeValues=eav,
-                ReturnValues="UPDATED_NEW"
+                ReturnValues="ALL_NEW"
             )
         else:
             ue = "REMOVE gdrive_next_page_token, dropbox_next_page_token"
@@ -853,9 +868,9 @@ def partial_present(done_embedding):
             return True
     return False
 
-def update_index_for_user_dropbox(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
-    print(f'update_index_for_user_dropbox: Entered. {item}')
-    email:str = item['email']['S']
+def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
+    print(f'update_index_for_user_dropbox: Entered. {email}')
+    item = get_user_table_entry(email)
     sub_prefix = "dropbox"
     user_prefix = f"{prefix}/{email}/{sub_prefix}"
     try:
@@ -1140,10 +1155,10 @@ def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, 
         print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
         _process_gdrive_items(gdrive_listing, folder_details, files + dirs)
     
-def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, only_create_index:bool=False, gdrive_next_page_token:str=None):
+def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, only_create_index:bool=False, gdrive_next_page_token:str=None):
     """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
-    print(f'update_index_for_user_gdrive: Entered. {item}, gdrive_next_page_token={gdrive_next_page_token}')
-    email:str = item['email']['S']
+    print(f'update_index_for_user_gdrive: Entered. {email}, gdrive_next_page_token={gdrive_next_page_token}')
+    item = get_user_table_entry(email)
     # index1/xyz@abc.com
     user_prefix = f"{prefix}/{email}"
     folder_id = item['folder_id']['S'] if item.get('folder_id') else None
@@ -1216,12 +1231,12 @@ def update_index_for_user_gdrive(item:dict, s3client, bucket:str, prefix:str, on
         traceback.print_exc()
     return gdrive_next_page_token
 
-def update_index_for_user(item:dict, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
+def update_index_for_user(email, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
                             only_create_index:bool=False, gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
     if not lambda_timelimit_exceeded():
-        gdrive_next_page_token = update_index_for_user_gdrive(item, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
+        gdrive_next_page_token = update_index_for_user_gdrive(email, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
     if not lambda_timelimit_exceeded():
-        dropbox_next_page_token = update_index_for_user_dropbox(item, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
+        dropbox_next_page_token = update_index_for_user_dropbox(email, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
     return gdrive_next_page_token, dropbox_next_page_token
 
 def create_sample_index(email, start_time, s3client, bucket, prefix):

@@ -73,18 +73,18 @@ def test_invoke(dropbox_sub):
         print(f"test_invoke: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
         return False
     email=item['email']['S']
-    if 'lambda_end_time' in  item:
-        l_e_t = int(item['lambda_end_time']['N'])
+    if 'lock_end_time' in  item:
+        l_e_t = int(item['lock_end_time']['N'])
         l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
         if l_e_t < now:
-            print(f"test_invoke: email={email}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
+            print(f"test_invoke: email={email}, lock_end_time={l_e_t_s} before now={now_s}. Invoking...")
             invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], dropbox_sub)
         else:
-            print(f"test_invoke: email={email}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
+            print(f"test_invoke: email={email}, lock_end_time={l_e_t_s} after now={now_s}. Not invoking...")
     else:
-        print(f"test_invoke: lambda_end_time not present. Invoking yoja lambda...")
+        print(f"test_invoke: lock_end_time not present. Invoking yoja lambda...")
         invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], dropbox_sub)
 
 cached_service_conf = None

@@ -85,20 +85,20 @@ def process_sync(event, context, email):
         print("webhook_gdrive.process_sync: Error updating users table")
         return respond(None, res={})
 
-def process_msg(event, context, email, lambda_end_time, state):
-    print(f"process_msg: Entered. email={email}, state={state}, lambda_end_time={lambda_end_time}")
-    if lambda_end_time:
-        l_e_t = int(lambda_end_time)
+def process_msg(event, context, email, lock_end_time, state):
+    print(f"process_msg: Entered. email={email}, state={state}, lock_end_time={lock_end_time}")
+    if lock_end_time:
+        l_e_t = int(lock_end_time)
         l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
         if l_e_t < now:
-            print(f"process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} before now={now_s}. Invoking...")
+            print(f"process_msg: email={email}, state={state}, lock_end_time={l_e_t_s} before now={now_s}. Invoking...")
             invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
         else:
-            print(f"process_msg: email={email}, state={state}, lambda_end_time={l_e_t_s} after now={now_s}. Not invoking...")
+            print(f"process_msg: email={email}, state={state}, lock_end_time={l_e_t_s} after now={now_s}. Not invoking...")
     else:
-        print(f"process_msg: lambda_end_time not present. Invoking yoja lambda...")
+        print(f"process_msg: lock_end_time not present. Invoking yoja lambda...")
         invoke_periodic_lambda(os.environ['YOJA_LAMBDA_ARN'], email)
     return {
         'statusCode': 204,
@@ -140,7 +140,7 @@ def get_service_conf():
 def get_user_table_entry(email):
     try:
         client = boto3.client('dynamodb')
-        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}})
+        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}}, ConsistentRead=True)
         return response['Item']
     except Exception as ex:
         print(f"Caught {ex} while getting info for {email} from users table")
@@ -234,8 +234,8 @@ def check_user(service_conf, cookie_val:str, refresh_access_token, user_type):
                 refresh_user_google(item)
             elif user_type == 'dropbox':
                 refresh_user_dropbox(item)
-        if 'lambda_end_time' in  item:
-            return email, item['lambda_end_time']['N']
+        if 'lock_end_time' in  item:
+            return email, item['lock_end_time']['N']
         else:
             return email, None
     except Exception as ex:
@@ -259,7 +259,7 @@ def webhook_gdrive(event, context):
     else:
         print("webhook_gdrive: Error. x-goog-channel-token not present")
         return respond(None, res={})
-    email, lambda_end_time = check_user(service_conf, token.strip(), True, 'google')
+    email, lock_end_time = check_user(service_conf, token.strip(), True, 'google')
     if not email:
         print("webhook_gdrive: Error. Unable to process token")
         return respond(None, res={})
@@ -273,17 +273,17 @@ def webhook_gdrive(event, context):
     if resource_state == 'sync':
         return process_sync(event, context, email)
     elif resource_state == 'add':
-        return process_msg(event, context, email, lambda_end_time, 'add')
+        return process_msg(event, context, email, lock_end_time, 'add')
     elif resource_state == 'remove':
-        return process_msg(event, context, email, lambda_end_time, 'remove')
+        return process_msg(event, context, email, lock_end_time, 'remove')
     elif resource_state == 'update':
-        return process_msg(event, context, email, lambda_end_time, 'update')
+        return process_msg(event, context, email, lock_end_time, 'update')
     elif resource_state == 'trash':
-        return process_msg(event, context, email, lambda_end_time, 'trash')
+        return process_msg(event, context, email, lock_end_time, 'trash')
     elif resource_state == 'untrash':
-        return process_msg(event, context, email, lambda_end_time, 'untrash')
+        return process_msg(event, context, email, lock_end_time, 'untrash')
     elif resource_state == 'change':
-        return process_msg(event, context, email, lambda_end_time, 'change')
+        return process_msg(event, context, email, lock_end_time, 'change')
     else:
         print(f"webhook_gdrive: Unknown resource state {resource_state}")
         return respond(None, res={})

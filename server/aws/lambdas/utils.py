@@ -408,12 +408,12 @@ def extend_ddb_time(email, time_left):
         print(f"extend_ddb_time: user table item={item}")
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
-        if 'lambda_end_time' in item:
-            print(f"extend_ddb_time: lambda_end_time={item['lambda_end_time']['N']}")
-            l_e_t = int(item['lambda_end_time']['N'])
+        if 'lock_end_time' in item:
+            print(f"extend_ddb_time: lock_end_time={item['lock_end_time']['N']}")
+            l_e_t = int(item['lock_end_time']['N'])
             l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
-            print(f"extend_ddb_time: lambda_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
-            # if lambda_end_time is less than 3 minutes away, push it out by 12 minutes
+            print(f"extend_ddb_time: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+            # if lock_end_time is less than 3 minutes away, push it out by 12 minutes
             if (l_e_t - int(now)) < (3 * 60):
                 time_to_add = (12*60) if time_left > (12*60) else time_left
                 try:
@@ -422,8 +422,8 @@ def extend_ddb_time(email, time_left):
                         Key={'email': {'S': email}},
                         UpdateExpression="set #lm = :st",
                         ConditionExpression=f"#lm = :ev",
-                        ExpressionAttributeNames={'#lm': 'lambda_end_time'},
-                        ExpressionAttributeValues={':ev': {'N': item['lambda_end_time']['N']}, ':st': {'N': str(int(now)+time_to_add)} },
+                        ExpressionAttributeNames={'#lm': 'lock_end_time'},
+                        ExpressionAttributeValues={':ev': {'N': item['lock_end_time']['N']}, ':st': {'N': str(int(now)+time_to_add)} },
                         ReturnValues="ALL_NEW"
                     )
                     set_user_table_cache_entry(email, response['Attributes'])
@@ -435,7 +435,7 @@ def extend_ddb_time(email, time_left):
                     else:
                         raise
         else:
-            print(f"extend_ddb_time: Error. No lambda_end_time entry for user {email}")
+            print(f"extend_ddb_time: Error. No lock_end_time entry for user {email}")
 
 def lambda_timelimit_exceeded() -> bool:
     global g_start_time, g_time_limit
