@@ -173,6 +173,28 @@ Resources:
               Action: s3:*Object
               Resource:
               - arn:aws:s3:::*/*
+        - PolicyName: allow-ecs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Sid: AllowListTasksRunTask
+              Effect: Allow
+              Action:
+              - ecs:RunTask
+              - ecs:ListTasks
+              Resource:
+              - !Sub arn:aws:ecs:*:${AWS::AccountId}:task-definition/*:*
+              - !Sub arn:aws:ecs:*:${AWS::AccountId}:container-instance/*/*
+        - PolicyName: iam-passrole-for-ecs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Sid: AllowPassRoleForECS
+              Effect: Allow
+              Action:
+              - iam:PassRole
+              Resource:
+              - !Sub arn:aws:iam::${AWS::AccountId}:role/*
   YojaApi:
     Type: AWS::Serverless::Api
     Properties:

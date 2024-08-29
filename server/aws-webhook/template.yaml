@@ -129,7 +129,7 @@ Resources:
   webhookgdrive:
     Type: 'AWS::Serverless::Function'
     Properties:
-      CodeUri: .
+      CodeUri: src
       Layers:
         - !Ref LayerVersion
       Architectures:
@@ -167,7 +167,7 @@ Resources:
   webhookdropbox:
     Type: 'AWS::Serverless::Function'
     Properties:
-      CodeUri: .
+      CodeUri: src
       Layers:
         - !Ref LayerVersion
       Architectures:
