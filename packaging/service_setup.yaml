@@ -10,10 +10,10 @@ Parameters:
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.25
+    Default: 0.1.0
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
-    Default: 0.0.6
+    Default: 0.1.0
   yojaServiceDnsName:
     Type: String
     Description: the DNS name for the service.  For example, yoja.com.  chat.yoja.com is a subdomain needed under this
