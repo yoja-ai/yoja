@@ -45,6 +45,38 @@ def start_ecs_task(ecs_client, ecs_clustername, ecs_subnets, ecs_securitygroups,
                     'name': 'periodic',
                     'environment': [
                         {
+                            'name': 'OAUTH_REDIRECT_URI',
+                            'value': os.environ['OAUTH_REDIRECT_URI']
+                        },
+                        {
+                            'name': 'LAMBDA_VERSION',
+                            'value': os.environ['LAMBDA_VERSION']
+                        },
+                        {
+                            'name': 'OAUTH_CLIENT_ID',
+                            'value': os.environ['OAUTH_CLIENT_ID']
+                        },
+                        {
+                            'name': 'OAUTH_CLIENT_SECRET',
+                            'value': os.environ['OAUTH_CLIENT_SECRET']
+                        },
+                        {
+                            'name': 'DROPBOX_OAUTH_CLIENT_ID',
+                            'value': os.environ['DROPBOX_OAUTH_CLIENT_ID']
+                        },
+                        {
+                            'name': 'DROPBOX_OAUTH_CLIENT_SECRET',
+                            'value': os.environ['DROPBOX_OAUTH_CLIENT_SECRET']
+                        },
+                        {
+                            'name': 'SERVICECONF_TABLE',
+                            'value': 'yoja-ServiceConf'
+                        },
+                        {
+                            'name': 'USERS_TABLE',
+                            'value': 'yoja-users'
+                        },
+                        {
                             'name': 'YOJA_USER',
                             'value': email
                         },
