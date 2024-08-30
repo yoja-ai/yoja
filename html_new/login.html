@@ -1,236 +1,148 @@
-<!--
-Copyright 2018 Google LLC
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
--->
-<!-- [START picker_hello_world] -->
-<!DOCTYPE html>
 <html>
-<head>
-  <title>Yoja</title>
-  <meta charset="utf-8" />
-  <script src="serviceconfig.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/promise-polyfill@7/dist/polyfill.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/2.0.3/fetch.js"></script>
-  <script src="Dropbox-sdk.min.js"></script>
-  <style>
-    body, html {
-      height: 100%;
-      margin: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-family: Arial, sans-serif;
-    }
-    .button-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    .button-container button {
-      margin: 10px;
-      padding: 10px 20px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-  </style>
-</head>
-<body>
-  <div class="button-container">
-    <button id="authorize_gdrive_button" onclick="handleAuthGoogleClick()">Authorize Gdrive</button>
-    <button id="authorize_dropbox_button" onclick="handleAuthDropboxClick()">Authorize Dropbox</button>
-    <button id="signout_button" onclick="handleSignoutClick()">Sign Out</button>
-  </div>
-<div id="waitingFlyout">
-  <p>Initializing Yoja. Please wait ...</p>
-</div>
-
-<pre id="content" style="white-space: pre-wrap;"></pre>
-
-<script type="text/javascript">
-  /* exported gisLoaded */
-  /* exported handleAuthGoogleClick */
-  /* exported handleAuthDropboxClick */
-  /* exported handleSignoutClick */
-
-  // Authorization scopes required by the API; multiple scopes can be
-  // included, separated by spaces.
-  const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
-  const DROPBOX_SCOPES = ['account_info.read', 'files.metadata.read', 'files.content.read', 'openid', 'email'];
-
-  // client ID and API key from the Developer Console
-  const GOOGLE_CLIENT_ID = ServiceConfig.GOOGLE_CLIENT_ID;
-  const DROPBOX_CLIENT_ID = ServiceConfig.DROPBOX_CLIENT_ID;
-
-  let primaryEmail = null;
-
-  let codeClient;
-  let accessToken = null;
-  let gisInited = false;
-
-  let loginRestFinished = false;
-  let gdriveLoginSuccess = false;
-  let gdriveEmail = "";
-  let dropboxLoginSuccess = false;
-  let dropboxEmail = "";
-  let fullname = "";
-  let picture = "";
-
-  document.getElementById('authorize_gdrive_button').style.visibility = 'hidden';
-  document.getElementById('authorize_dropbox_button').style.visibility = 'hidden';
-  document.getElementById('signout_button').style.visibility = 'hidden';
-
-  /**
-   * Callback after Google Identity Services are loaded.
-   */
-  function gisLoaded() {
-    codeClient = google.accounts.oauth2.initCodeClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: SCOPES,
-      ux_mode: 'redirect',
-      redirect_uri: ServiceConfig.OAUTH_REDIRECT_URI,
-      state: "xyzzy",
-      include_granted_scopes: false,
-      prompt: "none"
-    });
-    gisInited = true;
-    maybeEnableButtons();
-  }
-
-  /**
-   * Enables user interaction after all libraries are loaded.
-   */
-  function maybeEnableButtons() {
-    if (gisInited && loginRestFinished) {
-      if (!gdriveLoginSuccess && !dropboxLoginSuccess) {
-        document.getElementById('authorize_gdrive_button').innerText = 'Login using Google and allow us to index your Gdrive';
-        document.getElementById('authorize_dropbox_button').innerText = 'Login using Dropbox and allow us to index your Dropbox';
-        document.getElementById('authorize_gdrive_button').style.visibility = 'visible';
-        document.getElementById('authorize_dropbox_button').style.visibility = 'visible';
-        document.getElementById('signout_button').style.visibility = 'hidden';
-      } else {
-        const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
-                                    + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
-        window.location.href = "index.html?" + params;
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yoja Login</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Arial, sans-serif;
+        background-color: #f0f0f0; /* Optional: for better visibility */
       }
-    }
-  }
-
-  /**
-   *  Sign in the user upon button click.
-   */
-  function handleAuthGoogleClick() {
-    codeClient.requestCode();
-  }
-
-  /**
-   *  Sign out the user upon button click.
-   */
-  function handleSignoutClick() {
-    if (accessToken) {
-      accessToken = null;
-      google.accounts.oauth2.revoke(accessToken);
-      document.getElementById('content').innerText = '';
-      document.getElementById('authorize_gdrive_button').innerText = 'Authorize Gdrive';
-      document.getElementById('authorize_dropbox_button').innerText = 'Authorize Dropbox';
-      document.getElementById('signout_button').style.visibility = 'hidden';
-    }
-  }
-
-  function handleAuthDropboxClick() {
-    var dbx = new Dropbox.Dropbox({ clientId: DROPBOX_CLIENT_ID });
-    var authUrl = dbx.auth.getAuthenticationUrl(ServiceConfig.OAUTH_REDIRECT_URI,
-                        "dropbox",
-                        "code",
-                        "offline",
-                        DROPBOX_SCOPES,
-                        "none",
-                        false)
-      .then((authUrl) => {
-        console.log("login success++++++++++++")
-        window.location.href = authUrl;
-      })
-  }
-
-  async function getLoginJson() {
-    return fetch('/rest/entrypoint/login', {
-      method: 'POST',
-      body: "initial login",
-      headers: {
-        'Content-Type': 'application/json'
+      .centered-text {
+        font-size: 1.5em;
+        color: #333; /* Optional: for better visibility */
       }
-    })
-      .then((response)=>response.json())
-      .then((responseJson)=>{return responseJson});
-  }
-  async function tryLogin() {
-    const myJson = await this.getLoginJson();
-    gdriveLoginSuccess = false;
-    dropboxLoginSuccess = false;
-    if (myJson.google.length > 0) {
-      gdriveLoginSuccess = true;
-      gdriveEmail = myJson.google;
-    }
-    if (myJson.dropbox.length > 0) {
-      dropboxLoginSuccess = true;
-      dropboxEmail = myJson.dropbox;
-    }
-    if (myJson.fullname.length > 0) {
-        fullname = myJson.fullname;
-    }
-    if (myJson.picture.length > 0) {
-        picture = myJson.picture;
-    }
-    console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
-        + ", dropboxLoginSuccess=" + dropboxLoginSuccess);
-    loginRestFinished = true;
-  }
+    </style>
+  </head>
 
-  function showWaitingFlyout() {
-    const waitingFlyout = document.getElementById('waitingFlyout');
-    waitingFlyout.style.display = 'block';
-  }
+  <body>
+    <div class="centered-text" id="waitingFlyout">
+      Initializing Yoja. Please wait...
+    </div>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <script src="serviceconfig.js"></script>
+    <script>
+      /* exported gisLoaded */
+      const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
 
-  async function waitForVariableChange() {
-    showWaitingFlyout();
+      let gisInited = false;
+      let loginRestFinished = false;
+      let gdriveLoginSuccess = false;
+      let gdriveEmail = "";
+      let dropboxLoginSuccess = false;
+      let dropboxEmail = "";
+      let fullname = "";
+      let picture = "";
 
-    tryLogin();
+      function parseJwt (token) {
+        var base64Url = token.split('.')[1];
+        var base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        var jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      }
 
-    while (!loginRestFinished) {
-      // Simulate a short delay before checking again
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+      function showWaitingFlyout() {
+        const waitingFlyout = document.getElementById('waitingFlyout');
+        waitingFlyout.style.display = 'block';
+      }
 
-    // Hide the waiting flyout when the variable changes
-    document.getElementById('waitingFlyout').style.display = 'none';
-    
-    // Perform actions after the variable changes
-    console.log('loginRestFinished is true!');
+      async function getLoginJson() {
+        return fetch('/rest/entrypoint/login', {
+          method: 'POST',
+          body: "initial login",
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        })
+          .then((response)=>response.json())
+          .then((responseJson)=>{return responseJson});
+      }
+      async function tryLogin() {
+        const myJson = await this.getLoginJson();
+        gdriveLoginSuccess = false;
+        dropboxLoginSuccess = false;
+        if (myJson.google.length > 0) {
+          gdriveLoginSuccess = true;
+          gdriveEmail = myJson.google;
+        }
+        if (myJson.dropbox.length > 0) {
+          dropboxLoginSuccess = true;
+          dropboxEmail = myJson.dropbox;
+        }
+        if (myJson.fullname.length > 0) {
+            fullname = myJson.fullname;
+        }
+        if (myJson.picture.length > 0) {
+            picture = myJson.picture;
+        }
+        console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
+            + ", dropboxLoginSuccess=" + dropboxLoginSuccess);
+        loginRestFinished = true;
+      }
 
-    if (gdriveLoginSuccess && dropboxLoginSuccess) {
-      console.log("login of gdrive and dropbox success!!!!!!!!!!!!. gdriveEmail=" + gdriveEmail
-                                                                + ", dropboxEmail=" + dropboxEmail);
-      const params = "google=" + encodeURIComponent(gdriveEmail) + "&dropbox=" + encodeURIComponent(dropboxEmail)
-                                + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
-      window.location.href = "index.html?" + params;
-    } else {
-      maybeEnableButtons();
-    }
-  }
+      function handleCredentialResponse(response) {
+        console.log("Encoded JWT ID token: " + response.credential);
+        cred = parseJwt(response.credential);
+        console.log("Parsed Encoded JWT ID token: " + JSON.stringify(cred));
+        console.log("Email: " + cred['email']);
+        console.log("family_name: " + cred['family_name']);
+        console.log("given_name: " + cred['given_name']);
+        console.log("picture: " + cred['picture']);
+        console.log("name: " + cred['name']);
+        codeClient = google.accounts.oauth2.initCodeClient({
+          client_id: ServiceConfig.GOOGLE_CLIENT_ID,
+          scope: SCOPES,
+          ux_mode: 'redirect',
+          redirect_uri: ServiceConfig.OAUTH_REDIRECT_URI,
+          state: "xyzzy",
+          include_granted_scopes: false,
+          hint: cred['email'],
+          prompt: "none"
+        });
+        codeClient.requestCode();
+        gisInited = true;
+      }
 
-  waitForVariableChange();
-</script>
-<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
-</body>
+      async function loginToYoja() {
+        showWaitingFlyout();
+        tryLogin();
+        while (!loginRestFinished) {
+          // Simulate a short delay before checking again
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        // Hide the waiting flyout when the variable changes
+        document.getElementById('waitingFlyout').style.display = 'none';
+
+        if (gdriveLoginSuccess) {
+          console.log("login of gdrive success!!!!!!!!!!!!. gdriveEmail=" + gdriveEmail);
+          const params = "google=" + encodeURIComponent(gdriveEmail)
+                            + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
+          window.location.href = "index.html?" + params;
+        } else {
+          google.accounts.id.initialize({
+            client_id: ServiceConfig.GOOGLE_CLIENT_ID,
+            callback: handleCredentialResponse
+          });
+          google.accounts.id.renderButton(
+            document.getElementById("buttonDiv"),
+            { theme: "outline", size: "large" }  // customization attributes
+          );
+          google.accounts.id.prompt(); // also display the One Tap dialog
+        }
+      }
+
+      function gisLoaded() {
+        loginToYoja();
+      }
+    </script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+    <div id="buttonDiv"></div>
+  </body>
 </html>
-<!-- [END picker_hello_world] -->
