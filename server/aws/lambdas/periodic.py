@@ -31,8 +31,7 @@ def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_t
     print(f"upd_in_lambda: Entered {email}")
     gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
     if status:
-        if (not gdrive_next_page_token or gdrive_next_page_token == '1') \
-                        and 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
+        if 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
                         and 'ecs_subnets' in service_conf and 'ecs_securitygroups' in service_conf:
             ecs_maxtasks = int(service_conf['ecs_maxtasks']['N'])
             ecs_clustername = service_conf['ecs_clustername']['S']
@@ -134,7 +133,7 @@ def update_dropbox_user(service_conf, s3client, client, dropbox_sub, bucket, pre
     if not item:
         print(f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
         return respond({"error_msg": f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub{dropbox_sub}"}, status=403)
-    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, dropbox_sub, client, s3client, bucket, prefix, start_time)
+    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, item['email']['S'], client, s3client, bucket, prefix, start_time)
     res={'version': os.environ['LAMBDA_VERSION']}
     if gdrive_next_page_token:
         res['gdrive_next_page_token'] = gdrive_next_page_token
