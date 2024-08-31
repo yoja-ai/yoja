@@ -1017,6 +1017,7 @@ def _get_start_page_token(item):
         return None
 
 def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id):
+    status = False
     gdrive_listing = {}
     folder_details = {}
     deleted_files = {}
@@ -1028,8 +1029,7 @@ def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_to
         folder_details[driveid] = {'filename': 'My Drive'}
     except Exception as ex:
         print(f"_get_gdrive_listing_incremental: Exception {ex} while getting driveid")
-        return gdrive_listing, deleted_files, new_start_page_token
-        return gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
+        return status, gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
 
     escape = 0
     while not new_start_page_token:
@@ -1096,6 +1096,7 @@ def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_to
                 new_start_page_token = respj['newStartPageToken']
             else:
                 next_token = respj['nextPageToken']
+            status = True
         except Exception as ex:
             if resp:
                 print(f"_get_gdrive_listing_incremental: caught {ex}")
@@ -1104,7 +1105,8 @@ def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_to
                 print(f"_get_gdrive_listing_incremental: headers={str(resp.headers)}")
             else:
                 print(f"_get_gdrive_listing_incremental: caught {ex}")
-    return gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
+            status = False
+    return status, gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
 
 def _get_gdrive_listing_full(service, item, folder_id):
     gdrive_listing = {}
@@ -1187,8 +1189,14 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, only_c
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
             print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         else:
-            needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id)
-            unmodified = s3_index
+            status, needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id)
+            if status:
+                unmodified = s3_index
+            else:
+                print("gdrive incremental listin failed. trying full_listing")
+                gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
+                unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
+                print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         # remove deleted files from the index
         for fileid in deleted_files:
             if fileid in unmodified:
