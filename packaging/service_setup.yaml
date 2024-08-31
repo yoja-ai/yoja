@@ -6,14 +6,14 @@ Description: yoja.ai stack
 Parameters:
   cftVersion:
     Type: String
-    Default: 0.0.5
+    Default: 0.0.6
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.1.1
+    Default: 0.1.2
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
-    Default: 0.1.1
+    Default: 0.1.2
   yojaServiceDnsName:
     Type: String
     Description: the DNS name for the service.  For example, yoja.com.  chat.yoja.com is a subdomain needed under this
