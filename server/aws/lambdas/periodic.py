@@ -54,7 +54,7 @@ def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_t
             print(f"upd_in_lambda: gdrive_next_page_token present, or ecs config absent. Processing in lambda..")
         gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
                                 bucket=bucket, prefix=prefix,
-                                start_time=start_time, only_create_index=False,
+                                start_time=start_time,
                                 gdrive_next_page_token=gdrive_next_page_token,
                                 dropbox_next_page_token=dropbox_next_page_token)
         print(f"periodic.upd: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
@@ -74,7 +74,7 @@ def upd_in_non_lambda(service_conf, email, client, s3client, bucket, prefix, sta
     if status:
         gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
                             bucket=bucket, prefix=prefix,
-                            start_time=start_time, only_create_index=False,
+                            start_time=start_time,
                             gdrive_next_page_token=gdrive_next_page_token,
                             dropbox_next_page_token=dropbox_next_page_token)
         print(f"periodic.upd_in_non_lambda: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")

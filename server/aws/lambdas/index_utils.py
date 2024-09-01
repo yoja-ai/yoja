@@ -868,17 +868,13 @@ def partial_present(done_embedding):
             return True
     return False
 
-def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, only_create_index:bool=False, dropbox_next_page_token=None):
+def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropbox_next_page_token=None):
     print(f'update_index_for_user_dropbox: Entered. {email}')
     item = get_user_table_entry(email)
     sub_prefix = "dropbox"
     user_prefix = f"{prefix}/{email}/{sub_prefix}"
     try:
         s3_index = get_s3_index(s3client, bucket, user_prefix)
-        # if index already exists and ask is to not update it (only create if not found), then return.
-        if s3_index and only_create_index: 
-            print(f"update_index_for_user_dropbox: Not updating index for {user_prefix} since index already exists and only_create_index={only_create_index} ")
-            return
         access_token = refresh_user_dropbox(item)
     except HttpError as error:
         print(f"HttpError occurred: {error}")
@@ -1157,8 +1153,7 @@ def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, 
         print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
         _process_gdrive_items(gdrive_listing, folder_details, files + dirs)
     
-def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, only_create_index:bool=False, gdrive_next_page_token:str=None):
-    """ only_create_index: only create the index if it doesn't exist; do not update existing index; used when called from 'chat' since we don't want to update the index from chat """
+def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive_next_page_token:str=None):
     print(f'update_index_for_user_gdrive: Entered. {email}, gdrive_next_page_token={gdrive_next_page_token}')
     item = get_user_table_entry(email)
     # index1/xyz@abc.com
@@ -1167,12 +1162,6 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, only_c
     try:
         # user_prefix = 'index1/raj@yoja.ai' 
         s3_index:Dict[str, dict] = get_s3_index(s3client, bucket, user_prefix)
-        
-        # if index already exists and ask is to not update it (only create if not found), then return.
-        if s3_index and only_create_index: 
-            print(f"Not updating index for {user_prefix} since index already exists and only_create_index={only_create_index} ")
-            return
-        
         try:
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
@@ -1240,11 +1229,11 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, only_c
     return gdrive_next_page_token
 
 def update_index_for_user(email, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
-                            only_create_index:bool=False, gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
+                            gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
     if not lambda_timelimit_exceeded():
-        gdrive_next_page_token = update_index_for_user_gdrive(email, s3client, bucket, prefix, only_create_index, gdrive_next_page_token)
+        gdrive_next_page_token = update_index_for_user_gdrive(email, s3client, bucket, prefix, gdrive_next_page_token)
     if not lambda_timelimit_exceeded():
-        dropbox_next_page_token = update_index_for_user_dropbox(email, s3client, bucket, prefix, only_create_index, dropbox_next_page_token)
+        dropbox_next_page_token = update_index_for_user_dropbox(email, s3client, bucket, prefix, dropbox_next_page_token)
     return gdrive_next_page_token, dropbox_next_page_token
 
 def create_sample_index(email, start_time, s3client, bucket, prefix):
