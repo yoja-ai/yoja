@@ -187,7 +187,13 @@
 .gpt-msg-icon{
   cursor: pointer;
 }
-.gpt-msg-sourece{
+.gpt-msg-source-title{
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 19.1px;
+  text-align: left;
+}
+.gpt-msg-source{
   display: flex;
   align-items: center;
   width: fit-content;

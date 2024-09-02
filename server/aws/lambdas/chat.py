@@ -194,7 +194,8 @@ class DocumentChunkRange:
                 
         return out_chunk_range_list
         
-def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat'):
+def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
+                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat', sample_source=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)]; the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -940,7 +941,8 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     return respond(None, res=res)
 
 g_cross_encoder = None
-def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat'):
+def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
+                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat', sample_source=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -996,7 +998,11 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
             "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
+    if sample_source:
+        res['choices'][0]['sample_source'] = sample_source
+
     res_str = json.dumps(res)
+    print(f"new_chat: Returning {res_str}")
     return {
         'statusCode': 200,
         'body': f"data:{res_str}",
@@ -1009,6 +1015,13 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
         },
     }
     return respond(None, res=res)
+
+def get_first_five_fn(faiss_rm_vdb):
+    rv = []
+    fls = faiss_rm_vdb.get_documents()
+    for fileid, finfo in fls.items():
+        rv.append(f"{finfo['path']}{finfo['filename']}" if 'path' in finfo else f"/{finfo['filename']}")
+    return rv
 
 def chat_completions(event, context):
     operation = event['requestContext']['http']['method']
@@ -1044,6 +1057,7 @@ def chat_completions(event, context):
     body = json.loads(event['body'])
     print(f"body={body}")
 
+    sample_source=None
     faiss_rm_vdbs:List[faiss_rm.FaissRM] = []
     for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive], ['dropbox', faiss_rm.DocStorageType.DropBox] ):
         faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, doc_storage_type, build_faiss_indexes=False, sub_prefix=index)
@@ -1083,6 +1097,7 @@ def chat_completions(event, context):
             else:
                 print(f"chat_completions: sample index for user {email} is being created by another lambda instance.")
                 return respond({"error_msg": f"No document index found and sample index being created by another lambda. Please wait and try later.."}, status=503)
+        sample_source = get_first_five_fn(faiss_rm_vdbs[0])
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []
@@ -1092,8 +1107,8 @@ def chat_completions(event, context):
 
     messages = body['messages']
     if len(messages) == 1:
-        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list) #, 'ivfadc')
+        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source)
     else:
-        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list) #, 'ivfadc')
+        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source)
         
 if __name__ != '__main1__': traceback_with_variables.global_print_exc()

@@ -263,14 +263,32 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                       </div>
                       {  (msg.source &&  msg.source.length > 0) && 
                         <div>
-                          <span className="gpt-msg-text"> Sources </span>
+                          <span className="gpt-msg-source-title">
+                            {msg.source.length > 1 ? "Sources" : "Source"}
+                          </span>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                             {
                               msg.source?.map((source) =>  
-                                <a className="gpt-msg-sourece" href={source.fullPath} target="_blank">
+                                <a className="gpt-msg-source" href={source.fullPath} target="_blank">
                                   <img style={{width:'16px', height: '16px'}} src={source.extension === "doc" || source.extension === "docx" ? "docs.png" : "slide.png"}/>
                                   <span className="gpt-source-name"> {source.name} </span>
                                 </a>
+                              )
+                            }
+                          </div>
+                        </div>
+                      }
+                      {  (msg.sample_source &&  msg.sample_source.length > 0) && 
+                        <div>
+                          <span className="gpt-msg-source-title">
+                            Note: Indexing of your personal files is in progress. In the meantime, a sample dataset of the following files is used
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                            {
+                              msg.sample_source?.map((sample_source) =>  
+                                <span className="gpt-msg-source">
+                                  <span className="gpt-source-name"> {sample_source} </span>
+                                </span>
                               )
                             }
                           </div>

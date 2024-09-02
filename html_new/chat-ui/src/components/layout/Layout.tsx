@@ -138,12 +138,19 @@ const sendMessage = (newMessage: Message) => {
 
   chatApi(updatedCurrentChat).then(async (res: any) => {
       const text = await res.text();
+      console.log("chatApi: res text=" + text);
       const result = JSON.parse(text.slice(5));
       if (result) {
           const resMessage = {
               ...result.choices[0].delta,
               source: convertFileNameAndID(result.choices[0].delta.content)
           };
+          if (result.choices[0].hasOwnProperty("sample_source")) {
+            console.log("chatApi: sample_source=" + result.choices[0].sample_source);
+            resMessage.sample_source = result.choices[0].sample_source;
+          } else {
+            console.log("chatApi: sample_source is not present.");
+          }
           const fullUpdatedChat = [...updatedCurrentChat, resMessage];
 
           // Update the current chat in state and localStorage

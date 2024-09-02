@@ -6,6 +6,7 @@ export interface Message {
     like?: boolean;
     dislike?: boolean;
     copied?: boolean;
+    sample_source?:string[];
 }
 
 export interface ChatHistory {
