@@ -563,7 +563,7 @@ class DropboxReader(StorageReader):
         return file
 
 def process_files(email, storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
-    """ processs the files in google drive. uses folder_id for the user, if specified. returns a dict:  { fileid: {filename, fileid, mtime} }
+    """ processs the files in google drive. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
     """
@@ -1012,7 +1012,7 @@ def _get_start_page_token(item):
             print(f"_get_start_page_token: In changes.getStartPageToken for user {item['email']['S']}, caught {ex}")
         return None
 
-def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id):
+def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token):
     status = False
     gdrive_listing = {}
     folder_details = {}
@@ -1104,7 +1104,7 @@ def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_to
             status = False
     return status, gdrive_listing, deleted_files, new_start_page_token if new_start_page_token else next_token
 
-def _get_gdrive_listing_full(service, item, folder_id):
+def _get_gdrive_listing_full(service, item):
     gdrive_listing = {}
     pageToken = None
     kwargs = {}
@@ -1117,48 +1117,35 @@ def _get_gdrive_listing_full(service, item, folder_id):
         print(f"_get_gdrive_listing_full: Exception {ex} while getting driveid")
         return gdrive_listing, folder_details, gdrive_next_page_token
     
-    # folder_id is specified, then only index the folder's contents
-    #if folder_id: kwargs['q'] = "'" + folder_id + "' in parents"
-    if folder_id:
-        _get_gdrive_rooted_at_folder_id(service, folder_id, gdrive_listing, folder_details)
-    else:
-        total_items = 0
-        while True:
-            # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
-            results = (
-                service.files()
-                .list(pageSize=100, orderBy="folder,modifiedTime desc, name",
-                                        fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
-                .execute()
-            )
-            items = results.get("files", [])
-            total_items += len(items)
-            print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
-            # print(f"files = {[ item['name'] for item in items]}")
-            
-            _process_gdrive_items(gdrive_listing, folder_details, items)
-            
-            pageToken = results.get("nextPageToken", None)
-            kwargs['pageToken']=pageToken
-            if not pageToken:
-                gdrive_next_page_token = _get_start_page_token(item)
-                print(f"_get_gdrive_listing_full: no pageToken. next_page_token={gdrive_next_page_token}")
-                break
+    total_items = 0
+    while True:
+        # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
+        results = (
+            service.files()
+            .list(pageSize=100, orderBy="folder,modifiedTime desc, name",
+                                    fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
+            .execute()
+        )
+        items = results.get("files", [])
+        total_items += len(items)
+        print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
+        # print(f"files = {[ item['name'] for item in items]}")
+
+        _process_gdrive_items(gdrive_listing, folder_details, items)
+
+        pageToken = results.get("nextPageToken", None)
+        kwargs['pageToken']=pageToken
+        if not pageToken:
+            gdrive_next_page_token = _get_start_page_token(item)
+            print(f"_get_gdrive_listing_full: no pageToken. next_page_token={gdrive_next_page_token}")
+            break
     return gdrive_listing, folder_details, gdrive_next_page_token
 
-def _get_gdrive_rooted_at_folder_id(service:googleapiclient.discovery.Resource, folder_id:str, gdrive_listing:dict, folder_details:dict):
-    total_items = 0
-    for path, root, dirs, files in walk(service, top=folder_id, by_name=False):
-        total_items += (len(dirs) + len(files))
-        print(f'_get_gdrive_rooted_at_folder_id(): total_items={total_items}', '/'.join(path), f'{len(dirs):d} {len(files):d}', sep='\t')
-        _process_gdrive_items(gdrive_listing, folder_details, files + dirs)
-    
 def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive_next_page_token:str=None):
     print(f'update_index_for_user_gdrive: Entered. {email}, gdrive_next_page_token={gdrive_next_page_token}')
     item = get_user_table_entry(email)
     # index1/xyz@abc.com
     user_prefix = f"{prefix}/{email}"
-    folder_id = item['folder_id']['S'] if item.get('folder_id') else None
     try:
         # user_prefix = 'index1/raj@yoja.ai' 
         s3_index:Dict[str, dict] = get_s3_index(s3client, bucket, user_prefix)
@@ -1174,16 +1161,16 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         if not gdrive_next_page_token or gdrive_next_page_token == "1" or 'YOJA_FORCE_FULL_INDEX' in os.environ:
             if 'YOJA_FORCE_FULL_INDEX' in os.environ:
                 print("update_index_for_user_gdrive: Forcing full index because of env var YOJA_FORCE_FULL_INDEX")
-            gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
+            gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item)
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
             print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         else:
-            status, needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token, folder_id)
+            status, needs_embedding, deleted_files, gdrive_next_page_token = _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_token)
             if status:
                 unmodified = s3_index
             else:
                 print("gdrive incremental listin failed. trying full_listing")
-                gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item, folder_id)
+                gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item)
                 unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
                 print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
         # remove deleted files from the index
