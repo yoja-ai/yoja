@@ -1112,7 +1112,7 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         
         unmodified:dict; needs_embedding:dict;  deleted_files: dict
         service:googleapiclient.discovery.Resource = build("drive", "v3", credentials=creds)
-        if not gdrive_next_page_token or gdrive_next_page_token == "1" or 'YOJA_FORCE_FULL_INDEX' in os.environ:
+        if not s3_index or not gdrive_next_page_token or gdrive_next_page_token == "1" or 'YOJA_FORCE_FULL_INDEX' in os.environ:
             if 'YOJA_FORCE_FULL_INDEX' in os.environ:
                 print("update_index_for_user_gdrive: Forcing full index because of env var YOJA_FORCE_FULL_INDEX")
             gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item)

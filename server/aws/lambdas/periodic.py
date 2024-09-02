@@ -147,6 +147,8 @@ def update_dropbox_user(service_conf, s3client, client, dropbox_sub, bucket, pre
 ## {"requestContext": { "http": { "method":"POST", "path": "/rest/entrypoint/periodic" } }, "body":"{\"username\":\"raj@yoja.ai\"}" }
 ## Dropbox
 ## {"requestContext": { "http": { "method":"POST", "path": "/rest/entrypoint/periodic" } }, "body":"{\"dropbox_sub\":\"dbid:AACGAAAlllfungvklgiugkfvknskshdhhXM\"}" }
+## Full Scan
+## {"requestContext": { "http": { "method":"POST", "path": "/rest/entrypoint/periodic" } }}
 #######
 def periodic(event:dict, context) -> dict:
     body_str:str = None
@@ -177,15 +179,15 @@ def periodic(event:dict, context) -> dict:
     client = boto3.client('dynamodb')
     start_time:datetime.datetime = datetime.datetime.now()
     set_start_time(start_time)
-    if post_body.username:
-        print(f"periodic: post_body contains username {post_body.username}. Updating")
-        return update_gdrive_user(service_conf, s3client, client, post_body.username, bucket, prefix, start_time)
-    elif post_body.dropbox_sub:
-        print(f"periodic: post_body contains dropbox_sub {post_body.dropbox_sub}. Updating")
-        return update_dropbox_user(service_conf, s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
-    else:
-        print(f"periodic: post_body does not contain username or dropbox_sub. Doing a full scan")
-        return do_full_scan(service_conf, s3client, client, bucket, prefix, start_time)
+    if post_body:
+        if post_body.username:
+            print(f"periodic: post_body contains username {post_body.username}. Updating")
+            return update_gdrive_user(service_conf, s3client, client, post_body.username, bucket, prefix, start_time)
+        elif post_body.dropbox_sub:
+            print(f"periodic: post_body contains dropbox_sub {post_body.dropbox_sub}. Updating")
+            return update_dropbox_user(service_conf, s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
+    print(f"periodic: no post_body or post_body does not contain username or dropbox_sub. Doing a full scan")
+    return do_full_scan(service_conf, s3client, client, bucket, prefix, start_time)
 
 # You can invoke and run the periodic lambda in your local machine as follows
 #

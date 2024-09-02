@@ -1016,7 +1016,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     }
     return respond(None, res=res)
 
-def get_first_five_fn(faiss_rm_vdb):
+def get_filenames(faiss_rm_vdb):
     rv = []
     fls = faiss_rm_vdb.get_documents()
     for fileid, finfo in fls.items():
@@ -1097,7 +1097,7 @@ def chat_completions(event, context):
             else:
                 print(f"chat_completions: sample index for user {email} is being created by another lambda instance.")
                 return respond({"error_msg": f"No document index found and sample index being created by another lambda. Please wait and try later.."}, status=503)
-        sample_source = get_first_five_fn(faiss_rm_vdbs[0])
+        sample_source = get_filenames(faiss_rm_vdbs[0])
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []
