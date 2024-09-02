@@ -1257,6 +1257,9 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         for item in items:
             # pick word/ppt files smaller than 100K and pdfs smaller than 200K
             fn = item['name'].lower()
+            if not 'size' in item:
+                print(f"create_sample_index: skipping file {item} since it does not have size")
+                continue
             size = int(item['size'])
             if fn.endswith('.pdf') or item['mimeType'] == 'application/pdf':
                 if size > (200*1024):

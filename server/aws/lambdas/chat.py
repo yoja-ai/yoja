@@ -408,10 +408,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             )
             print(f"**{_prtime()}: run completed:**run={run}")
             logmsgs = [f"**{_prtime()}: run completed:**"]
-            ms = iter(messages)
-            for msg in ms:
+            for msg in messages:
                 logmsgs.append(f"{msg.content[0].text.value[:64]}...")
-                _ = next(ms)
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id, run.usage
@@ -448,10 +446,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 logmsgs = [f"**{_prtime()}: run completed:** completion_tokens={run.usage.completion_tokens}, prompt_tokens={run.usage.prompt_tokens}, total_tokens={run.usage.total_tokens}"]
             else:
                 logmsgs = [f"**{_prtime()}: run completed:**"]
-            ms = iter(messages)
-            for msg in ms:
+            for msg in messages:
                 logmsgs.append(f"{msg.content[0].text.value[:64]}...")
-                _ = next(ms)
             tracebuf.extend(logmsgs)
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id, run.usage
