@@ -925,52 +925,6 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
     
 FOLDER = 'application/vnd.google-apps.folder'
 
-def iterfiles(service:googleapiclient.discovery.Resource, name=None, *, is_folder=None, parent=None,
-              order_by='folder,name,createdTime'):
-    q = []
-    if name is not None:
-        q.append("name = '{}'".format(name.replace("'", "\\'")))
-    if is_folder is not None:
-        q.append("mimeType {} '{}'".format('=' if is_folder else '!=', FOLDER))
-    if parent is not None:
-        q.append("'{}' in parents".format(parent.replace("'", "\\'")))
-
-    params = {'pageToken': None, 'orderBy': order_by, "fields":"nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)"}
-    
-    if q:
-        params['q'] = ' and '.join(q)
-
-    while True:
-        response = service.files().list(**params).execute()
-        for f in response['files']:
-            yield f
-        try:
-            params['pageToken'] = response['nextPageToken']
-        except KeyError:
-            return
-
-
-def walk(service:googleapiclient.discovery.Resource, top='root', *, by_name: bool = False):
-    if by_name:
-        top, = iterfiles(name=top, is_folder=True)
-    else:
-        top = service.files().get(fileId=top).execute()
-        if top['mimeType'] != FOLDER:
-            raise ValueError(f'not a folder: {top!r}')
-
-    stack = [((top['name'],), top)]
-    while stack:
-        path, top = stack.pop()
-
-        dirs, files = is_file = [], []
-        for f in iterfiles(service, parent=top['id']):
-            is_file[f['mimeType'] != FOLDER].append(f)
-
-        yield path, top, dirs, files
-
-        if dirs:
-            stack.extend((path + (d['name'],), d) for d in reversed(dirs))
-
 def _process_gdrive_items(gdrive_listing, folder_details, items):
     if not items:
         print("No more files found.")
