@@ -7,6 +7,18 @@ Parameters:
     Type: String
     Description: Version of Lambdas
     Default: VVVVVVVVVV
+  MainLambdasSarSemanticVersion:
+    Type: String
+    Description: Serverless Application Repository Semantic Version of Main Lambdas
+    Default: 99.99.99
+  WebhookLambdasSarSemanticVersion:
+    Type: String
+    Description: Serverless Application Repository Semantic Version of Webhook Lambdas
+    Default: 99.99.99
+  UiSemanticVersion:
+    Type: String
+    Description: Semantic Version of UI HTML/JS stored in dist s3 bucket
+    Default: 99.99.99
   OauthClientId:
     Type: String
   OauthClientSecret:
@@ -30,6 +42,9 @@ Globals:
     Environment:
       Variables:
         LAMBDA_VERSION: !Ref LambdaVersion
+        MAIN_LAMBDAS_SAR_SEMANTIC_VERSION: !Ref MainLambdasSarSemanticVersion
+        WEBHOOK_LAMBDAS_SAR_SEMANTIC_VERSION: !Ref WebhookLambdasSarSemanticVersion
+        UI_SEMANTIC_VERSION: !Ref UiSemanticVersion
         OAUTH_CLIENT_ID: !Ref OauthClientId
         OAUTH_CLIENT_SECRET: !Ref OauthClientSecret
         DROPBOX_OAUTH_CLIENT_ID: !Ref DropboxOauthClientId

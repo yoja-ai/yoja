@@ -13,6 +13,9 @@ const SettingsModel = () => {
   const [dropboxEmail, setDropboxEmail] = React.useState(false);
   const [userEmail, setUserEmail] = React.useState('');
   const DROPBOX_CLIENT_ID = servicesConfig?.DROPBOX_CLIENT_ID;
+  const [mainLambdasVersion, setMainLambdasVersion] = React.useState('1.1.1');
+  const [webhookLambdasVersion, setWebhookLambdasVersion] = React.useState('1.1.1');
+  const [uiVersion, setUiVersion] = React.useState('1.1.1');
 
   useEffect(() => {
     console.log('login api');
@@ -28,6 +31,18 @@ const SettingsModel = () => {
       } else {
         setDropboxEmail(true);
         setUserEmail(res.dropbox);
+      }
+      if (typeof res.main_lambdas_sar_semantic_version === 'undefined' || res.main_lambdas_sar_semantic_version.length == 0) {
+      } else {
+        setMainLambdasVersion(res.main_lambdas_sar_semantic_version);
+      }
+      if (typeof res.webhook_lambdas_sar_semantic_version === 'undefined' || res.webhook_lambdas_sar_semantic_version.length == 0) {
+      } else {
+        setWebhookLambdasVersion(res.webhook_lambdas_sar_semantic_version);
+      }
+      if (typeof res.ui_semantic_version === 'undefined' || res.ui_semantic_version.length == 0) {
+      } else {
+        setUiVersion(res.ui_semantic_version);
       }
       } else {
         setIsAuthorized(false);
@@ -96,6 +111,10 @@ const SettingsModel = () => {
             <div style={{display: 'flex', justifyContent:'space-between'}}>
               <span className="settings-subhedder"> Email  </span>
               <span style={{ color: '1C1B1F', fontSize: '14px', fontWeight: '700'}}> { userEmail } </span>
+            </div>
+            <div style={{display: 'flex', justifyContent:'space-between'}}>
+              <span className="settings-subhedder"> Versions  </span>
+              <span style={{ color: '1C1B1F', fontSize: '14px', fontWeight: '700'}}> Main={mainLambdasVersion},Webhook={webhookLambdasVersion},UI={uiVersion} </span>
             </div>
           </div>
 

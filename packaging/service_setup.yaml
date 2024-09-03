@@ -262,6 +262,9 @@ Resources:
         ServiceconfTable: !Ref YojaServiceConfTable
         CookieDomain: !Ref yojaServiceDnsName
         OpenaiApiKey: !Ref OpenaiApiKey
+        MainLambdasSarSemanticVersion: !Ref YojaApiServiceSemanticVersionParameter
+        WebhookLambdasSarSemanticVersion: !Ref YojaWebhookServiceSemanticVersionParameter
+        UiSemanticVersion: !Ref cftVersion
   YojaApiInvokePermission:
     Type: AWS::Lambda::Permission
     DependsOn: YojaApiService
