@@ -33,6 +33,63 @@ MAX_TOKEN_LIMIT=2048
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
 
+# Tool definitions
+TOOL_SEARCH_QUESTION_IN_DB = {
+    "type": "function",
+    "function": {
+        "name": "search_question_in_db",
+        "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question for which passages need to be searched"
+                },
+            },
+        "required": ["question"]
+        }
+    }
+}
+TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE = {
+    "type": "function",
+    "function": {
+        "name": "search_question_in_db_return_more",
+        "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject. Use this tool only if you want additional results than those returned by the tool search_question_in_db",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question for which passages need to be searched"
+                },
+            },
+        "required": ["question"]
+        }
+    }
+}
+TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION = {
+    "type": "function",
+    "function": {
+        "name": "list_of_files_for_given_question",
+        "description": "Search confidential and private information and return file names that can answer the given question. Use this tool only if the search_question_in_db tool does not work",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question for which file names need to be listed"
+                },
+                "number_of_files": {
+                    "type":"integer",
+                    "description":"The number of file names to return.  Default is to return 10 file names"
+                }
+            },
+        "required": ["question"] #, "number_of_files"]
+        }
+    }
+}
+
 def calc_tokens(context):
     global encoding_model
     return len(encoding_model.encode(context))
@@ -318,63 +375,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
         # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
         model=ASSISTANTS_MODEL,
-        tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_question_in_db",
-                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which passages need to be searched"
-                            },
-                        },
-                    "required": ["question"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_question_in_db_return_more",
-                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject. Use this tool only if you want additional results than those returned by the tool search_question_in_db",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which passages need to be searched"
-                            },
-                        },
-                    "required": ["question"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_of_files_for_given_question",
-                    "description": "Search confidential and private information and return file names that can answer the given question. Use this tool only if the search_question_in_db tool does not work",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which file names need to be listed"
-                            },
-                            "number_of_files": {
-                                "type":"integer",
-                                "description":"The number of file names to return.  Default is to return 10 file names"
-                            }
-                        },
-                    "required": ["question"] #, "number_of_files"]
-                    }
-                }
-            }
-        ]
+        tools=[TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE]
     )
 
     if not assistants_thread_id:
