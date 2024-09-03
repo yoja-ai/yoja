@@ -90,23 +90,48 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
   }
 
   function displayMessage(message: Message): React.ReactNode {
-    if(message.content) {
-      let length = message.content.indexOf('**Context Source');
-      if(length < 1) {
-        length = message.content.indexOf('<!--');
-        if(length < 1) {
-          return message.content;
-        } else {
-          return message.content.substring(0, length);
-        }
-      } else {
-        return message.content.substring(0, length);
-      }
-    } else {
-      const dis = `\n\nI'm sorry, but I'm not sure what you're asking.`;
-      return dis;
+    let content = message.content;
+    let tokenInfo: React.ReactNode = null;
+
+    // Regex to match the token information pattern
+    const tokenRegex = /\*\*Tokens:\*\*\s*prompt=(\d+)\(([\d.]+)%\sof\s2048\),\s*completion=(\d+)/;
+
+    // Extract token information if present in the content
+    const match = content.match(tokenRegex);
+    if (match) {
+        const promptTokens = match[1];
+        const promptPercentage = match[2];
+        const completionTokens = match[3];
+
+        tokenInfo = (
+            <div className="token-info">
+                <span className="gpt-msg-text" style={{ fontWeight: 'bold' }}>Tokens</span>
+                <div>
+                    <div>Prompt: {promptTokens} ({promptPercentage}% of 2048)</div>
+                    <div>Completion: {completionTokens}</div>
+                </div>
+            </div>
+        );
+
+        // Remove the token info from the content, but preserve context sources
+        content = content.replace(tokenRegex, '').trim();
     }
-  }
+
+    // Now process the message content to remove the context source indicators
+    let length = content.indexOf('**Context Source');
+    if (length >= 0) {
+        content = content.substring(0, length);
+    }
+
+    return (
+        <div>
+            <div>{content}</div>
+            {tokenInfo}
+        </div>
+    );
+}
+
+
 
   const copyMessage = (message: any) => {
     let msg: string = "";

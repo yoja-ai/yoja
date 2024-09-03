@@ -6,6 +6,10 @@ export interface Message {
     like?: boolean;
     dislike?: boolean;
     copied?: boolean;
+    tokens?: {   
+        prompt: number;
+        completion: number;
+    };
     sample_source?:string[];
 }
 
@@ -47,3 +51,4 @@ export const loggedInUserData = {
 };
 
 export type LoggedInUserData = (typeof loggedInUserData);
+

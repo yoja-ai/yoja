@@ -22,8 +22,21 @@ async function generatePDF(request: PdfGenerationRequest): Promise<Blob> {
 const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible, onClose }) => {
     const [email, setEmail] = useState('');
     const [buttonState, setButtonState] = useState<'default' | 'loading' | 'success' | 'error'>('default');
+    const [inputError, setInputError] = useState(false);
 
     const handleEmailTranscript = async () => {
+        if (!email) {
+            setInputError(true);
+            setEmail('');  // Clear the input field
+            return;
+        }
+
+        if (!/^\S+@\S+\.\S+$/.test(email)) {
+            setInputError(true);
+            setEmail('');  // Clear the input field
+            return;
+        }
+
         try {
             setButtonState('loading');
             const pdfBlob = await generatePDF({ chatHistory: chat });
@@ -69,6 +82,13 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
         }
     };
 
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setEmail(e.target.value);
+        if (inputError) {
+            setInputError(false); // Reset the error state when the user starts typing
+        }
+    };
+
     const renderButtonContent = () => {
         switch (buttonState) {
             case 'loading':
@@ -82,6 +102,8 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
         }
     };
 
+    const isButtonDisabled = buttonState !== 'default';
+
     return (
         <Modal
             title="Export Chat Transcript"
@@ -91,11 +113,16 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
         >
             <p>Enter the email address to receive the chat transcript:</p>
             <Input
-                placeholder="Email address"
+                placeholder={inputError ? "Please enter a valid email address" : "Email address"}
                 type="email"
                 value={email}
-                onChange={e => setEmail(e.target.value)}
-                style={{ marginBottom: '20px' }}
+                onChange={handleInputChange}
+                className={inputError ? 'input-error' : ''}
+                style={{
+                    marginBottom: '20px',
+                    borderColor: inputError ? 'red' : undefined, // Red border on error
+                    color: inputError ? 'red' : undefined // Red text on error
+                }}
             />
             <div style={{ display: 'flex', justifyContent: 'space-evenly', margin: '20px 0' }}>
                 <Button
@@ -104,6 +131,7 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
                     style={buttonState === 'success' ? { backgroundColor: '#52c41a', borderColor: '#52c41a' } : {}}
                     icon={renderButtonContent().icon}
                     onClick={handleEmailTranscript}
+                    disabled={isButtonDisabled} // Only clickable in the default state
                 >
                     {renderButtonContent().text}
                 </Button>
@@ -111,6 +139,11 @@ const ExportOptionsModal: React.FC<ExportOptionsModalProps> = ({ chat, isVisible
                     Download Transcript
                 </Button>
             </div>
+            <style>{`
+                .input-error::placeholder {
+                    color: red !important; /* Red placeholder text on error */
+                }
+            `}</style>
         </Modal>
     );
 };

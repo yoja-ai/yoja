@@ -6,8 +6,13 @@ interface EmailContent {
 }
 
 export const sendEmail = async (emailContent: EmailContent): Promise<Response> => {
-    const API_URL = "/v1/send-email";  
+    const API_URL = "/v1/send-email";  // Update this path to your email sending endpoint
     const requestUrl = servicesConfig.envAPIEndpoint + API_URL;
+    console.log(requestUrl);
+
+    // Log the email content for debugging
+    console.log("Recipient Email:", emailContent.recipient);
+    console.log("PDF Data (Base64):", emailContent.pdfData);
 
     const requestBody = JSON.stringify({
         recipient: emailContent.recipient,
