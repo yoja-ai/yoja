@@ -98,7 +98,7 @@ def oauth2cb_google(qs):
         service_conf = get_service_conf()
         print(f"service_conf={service_conf}")
         e_email = encrypt_email(email, service_conf)
-        cookie = f"__Host-yoja-user={e_email}; Path=/; Secure; Max-Age=604800"
+        cookie = f"__Host-yoja-user={e_email}; Path=/; Secure; SameSite=Strict; Max-Age=604800"
         print(f"email={email}, cookie={cookie}")
         get_params={'google': email, 'dropbox': '', 'fullname': '', 'picture': ''}
         if fullname:
@@ -191,8 +191,13 @@ def oauth2cb_dropbox(qs):
         service_conf = get_service_conf()
         print(f"service_conf={service_conf}")
         e_email = encrypt_email(email, service_conf)
-        cookie = f"__Host-yoja-dropbox-user={e_email}; Path=/; Secure; Max-Age=604800"
+        cookie = f"__Host-yoja-dropbox-user={e_email}; Path=/; Secure; SameSite=Strict; Max-Age=604800"
         print(f"email={email}, cookie={cookie}")
+        get_params={'google': email, 'dropbox': email, 'fullname': '', 'picture': ''}
+        if fullname:
+            get_params['fullname'] = fullname
+        if picture:
+            get_params['picture'] = picture
         return {
             'statusCode': 302,
             'body': f"<html>{email} logged in to software version {os.environ['LAMBDA_VERSION']}</html>",

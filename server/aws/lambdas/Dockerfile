@@ -28,7 +28,7 @@ RUN yum install -y vim
 # End tesseract block
 
 RUN set -xo pipefail && \
-    curl "https://mirror.clarkson.edu/tdf/libreoffice/stable/7.6.7/rpm/x86_64/LibreOffice_7.6.7_Linux_x86-64_rpm.tar.gz" | tar -xz
+    curl "https://downloadarchive.documentfoundation.org/libreoffice/old/7.6.7.2/rpm/x86_64/LibreOffice_7.6.7.2_Linux_x86-64_rpm.tar.gz" | tar -xz
 
 RUN cd LibreOffice_7.6.7.2_Linux_x86-64_rpm/RPMS && \
     yum install *.rpm -y && \
