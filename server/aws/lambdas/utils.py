@@ -269,7 +269,7 @@ def check_cookie(event, refresh_access_token):
                     cookie_val=cookie[ind+1:]
                     print(f"check_cookie: key={cookie_name} val={cookie_val}")
                     cn = cookie_name.strip()
-                    if cn == 'yoja-user':
+                    if cn == '__Host-yoja-user':
                         email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'google')
                         if email:
                             rv['google'] = email
@@ -279,7 +279,7 @@ def check_cookie(event, refresh_access_token):
                                 rv['fullname'] = item['fullname']['S']
                             if 'picture' in item:
                                 rv['picture'] = item['picture']['S']
-                    elif cn == 'yoja-dropbox-user':
+                    elif cn == '__Host-yoja-dropbox-user':
                         dropbox_email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'dropbox')
                         if dropbox_email:
                             rv['dropbox'] = dropbox_email

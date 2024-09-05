@@ -98,7 +98,7 @@ def oauth2cb_google(qs):
         service_conf = get_service_conf()
         print(f"service_conf={service_conf}")
         e_email = encrypt_email(email, service_conf)
-        cookie = f"yoja-user={e_email}; domain={os.environ['COOKIE_DOMAIN']}; Path=/; Secure; Max-Age=604800"
+        cookie = f"__Host-yoja-user={e_email}; Path=/; Secure; Max-Age=604800"
         print(f"email={email}, cookie={cookie}")
         get_params={'google': email, 'dropbox': '', 'fullname': '', 'picture': ''}
         if fullname:
@@ -191,7 +191,7 @@ def oauth2cb_dropbox(qs):
         service_conf = get_service_conf()
         print(f"service_conf={service_conf}")
         e_email = encrypt_email(email, service_conf)
-        cookie = f"yoja-dropbox-user={e_email}; domain={os.environ['COOKIE_DOMAIN']}; Path=/; Secure; Max-Age=604800"
+        cookie = f"__Host-yoja-dropbox-user={e_email}; Path=/; Secure; Max-Age=604800"
         print(f"email={email}, cookie={cookie}")
         return {
             'statusCode': 302,
