@@ -68,18 +68,22 @@
         const myJson = await this.getLoginJson();
         gdriveLoginSuccess = false;
         dropboxLoginSuccess = false;
-        if (myJson.google.length > 0) {
+        if (typeof myJson.google === 'undefined' || myJson.google.length == 0) {
+        } else {
           gdriveLoginSuccess = true;
           gdriveEmail = myJson.google;
         }
-        if (myJson.dropbox.length > 0) {
+        if (typeof myJson.dropbox === 'undefined' || myJson.dropbox.length == 0) {
+        } else {
           dropboxLoginSuccess = true;
           dropboxEmail = myJson.dropbox;
         }
-        if (myJson.fullname.length > 0) {
-            fullname = myJson.fullname;
+        if (typeof myJson.fullname === 'undefined' || myJson.fullname.length == 0) {
+        } else {
+          fullname = myJson.fullname;
         }
-        if (myJson.picture.length > 0) {
+        if (typeof myJson.picture === 'undefined' || myJson.picture.length == 0) {
+        } else {
             picture = myJson.picture;
         }
         console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
