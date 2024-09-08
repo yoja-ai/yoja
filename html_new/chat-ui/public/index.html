@@ -12,25 +12,10 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/yoja.ico" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <script src="%PUBLIC_URL%/serviceconfig.js"></script>
-    <script async defer src="https://accounts.google.com/gsi/client"></script>
-    <script src="Dropbox-sdk.min.js"></script>
     <title>Yoja.ai</title>
   </head>
   <body>
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        window.google = urlParams.get('google');
-        window.dropbox = urlParams.get('dropbox');
-        window.fullname = urlParams.get('fullname');
-        window.picture = urlParams.get('picture');
-        if (window.picture == null) {
-            window.picture = "./user.png";
-        }
-        console.log("index.html: google=" + window.google
-                            + ", dropbox=" + window.dropbox
-                            + ", fullname=" + window.fullname
-                            + ", picture=" + window.picture)
-    </script>
+    <script src="setupglobals.js"></script>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
   </body>

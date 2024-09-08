@@ -1,0 +1,13 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Arial, sans-serif;
+  background-color: #f0f0f0; /* Optional: for better visibility */
+}
+.centered-text {
+  font-size: 1.5em;
+  color: #333; /* Optional: for better visibility */
+}
