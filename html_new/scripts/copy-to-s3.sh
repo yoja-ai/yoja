@@ -15,7 +15,12 @@ envAPIEndpoint="$3"
 GOOGLE_CLIENT_ID="$4"
 DROPBOX_CLIENT_ID="$5"
 AWS_CREDS="$6"
-[ -n "${7}" ] && nonce=${7}
+if [ x"$7" == "x" ] ; then
+  echo "Nonce not supplied"
+else
+  nonce="$7"
+  echo "Using nonce ${nonce}"
+fi
 
 aws --profile ${AWS_CREDS} s3 ls s3://"$1"/ || {
     echo "Error access s3 bucket $1. Configure aws credentials and try again"
@@ -50,7 +55,10 @@ done
 (cd chat-ui; rm -rf build)
 (cd chat-ui; rm -rf node_modules)
 (cd chat-ui; npm install --force)
-if [ -n "${nonce}" ] ; then
+
+if [ x"${nonce}" == "x" ] ; then
+  echo "Nonce not supplied. Not ejecting and patching source code"
+else
   echo "Nonce supplied. Patching source code so that nonce is added to dynamic css"
   (cd chat-ui; npm install --force)
   (cd chat-ui; npm run eject)
@@ -59,10 +67,15 @@ if [ -n "${nonce}" ] ; then
   (sed -e "s/WEBPACK_NONCE/$1/" ${SCRIPT_DIR}/dynamiccss.patch > /tmp/dynamiccss.patch)
   (cd chat-ui/node_modules/rc-util/es/Dom/; patch < /tmp/dynamiccss.patch )
 fi
+
 (cd chat-ui/; npm run build)
 (cd chat-ui/build; aws --profile ${AWS_CREDS} s3 sync . s3://$1/html/ )
-if [ -n "${nonce}" ] ; then
+
+if [ x"${nonce}" == "x" ] ; then
+  echo "Nonce not supplied. Not resetting git"
+else
   git reset --hard
   /bin/rm -rf chat-ui/config
 fi
+
 exit 0
