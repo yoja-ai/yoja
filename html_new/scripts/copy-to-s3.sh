@@ -48,6 +48,7 @@ do
 done
 
 (cd chat-ui; rm -rf build)
+(cd chat-ui; rm -rf node_modules)
 (cd chat-ui; npm install --force)
 if [ -n "${nonce}" ] ; then
   echo "Nonce supplied. Patching source code so that nonce is added to dynamic css"
