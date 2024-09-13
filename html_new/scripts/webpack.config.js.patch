@@ -1,0 +1,12 @@
+--- webpack.config.js.orig	2024-09-12 23:32:11.350283565 -0700
++++ webpack.config.js	2024-09-12 21:28:26.991544364 -0700
+@@ -565,6 +565,9 @@
+       ].filter(Boolean),
+     },
+     plugins: [
++      new webpack.DefinePlugin({
++        '__webpack_nonce__': JSON.stringify('WEBPACK_NONCE'),
++      }),
+       // Generates an `index.html` file with the <script> injected.
+       new HtmlWebpackPlugin(
+         Object.assign(

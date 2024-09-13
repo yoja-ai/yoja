@@ -1,0 +1,18 @@
+--- dynamicCSS.js.orig	2024-09-13 13:44:46.803351988 -0700
++++ dynamicCSS.js	2024-09-13 13:45:19.121202054 -0700
+@@ -53,6 +53,8 @@
+   }
+   if (csp !== null && csp !== void 0 && csp.nonce) {
+     styleNode.nonce = csp === null || csp === void 0 ? void 0 : csp.nonce;
++  } else {
++    styleNode.nonce = 'WEBPACK_NONCE'
+   }
+   styleNode.innerHTML = css;
+   var container = getContainer(option);
+@@ -145,4 +147,4 @@
+   var newNode = injectCSS(css, option);
+   newNode.setAttribute(getMark(option), key);
+   return newNode;
+-}
+\ No newline at end of file
++}
