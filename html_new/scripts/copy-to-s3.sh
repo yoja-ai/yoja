@@ -62,5 +62,6 @@ fi
 (cd chat-ui/build; aws --profile ${AWS_CREDS} s3 sync . s3://$1/html/ )
 if [ -n "${nonce}" ] ; then
   git reset --hard
+  /bin/rm -rf chat-ui/config
 fi
 exit 0
