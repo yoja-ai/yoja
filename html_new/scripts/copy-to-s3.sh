@@ -62,9 +62,9 @@ else
   echo "Nonce supplied. Patching source code so that nonce is added to dynamic css"
   (cd chat-ui; npm install --force)
   (cd chat-ui; npm run eject)
-  (sed -e "s/WEBPACK_NONCE/$1/" ${SCRIPT_DIR}/webpack.config.js.patch > /tmp/webpack.config.js.patch)
+  (sed -e "s/WEBPACK_NONCE/${nonce}/" ${SCRIPT_DIR}/webpack.config.js.patch > /tmp/webpack.config.js.patch)
   (cd chat-ui/config; patch < /tmp/webpack.config.js.patch )
-  (sed -e "s/WEBPACK_NONCE/$1/" ${SCRIPT_DIR}/dynamiccss.patch > /tmp/dynamiccss.patch)
+  (sed -e "s/WEBPACK_NONCE/${nonce}/" ${SCRIPT_DIR}/dynamiccss.patch > /tmp/dynamiccss.patch)
   (cd chat-ui/node_modules/rc-util/es/Dom/; patch < /tmp/dynamiccss.patch )
 fi
 
