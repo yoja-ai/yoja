@@ -100,15 +100,20 @@ async function loginToYoja() {
                       + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
     window.location.href = "index.html?" + params;
   } else {
-    google.accounts.id.initialize({
-      client_id: ServiceConfig.GOOGLE_CLIENT_ID,
-      callback: handleCredentialResponse
-    });
-    google.accounts.id.renderButton(
-      document.getElementById("buttonDiv"),
-      { theme: "outline", size: "large" }  // customization attributes
-    );
-    google.accounts.id.prompt(); // also display the One Tap dialog
+    var script = document.createElement('script');
+    script.onload = function () {
+      google.accounts.id.initialize({
+        client_id: ServiceConfig.GOOGLE_CLIENT_ID,
+        callback: handleCredentialResponse
+      });
+      google.accounts.id.renderButton(
+        document.getElementById("buttonDiv"),
+        { theme: "outline", size: "large" }  // customization attributes
+      );
+      google.accounts.id.prompt(); // also display the One Tap dialog
+    }
+    script.src = "https://accounts.google.com/gsi/client";
+    document.head.appendChild(script);
   }
 }
 
