@@ -35,6 +35,8 @@ Parameters:
     Description: similar to https://chat.xxxxxxx/rest/entrypoint/oauth2cb
   OpenaiApiKey:
     Type: String
+  CspNonce:
+    Type: String
 Mappings:
   RegionMap:
     us-east-1:
@@ -294,7 +296,11 @@ Resources:
             ReferrerPolicy: strict-origin-when-cross-origin
           ContentSecurityPolicy:
             Override: false
-            ContentSecurityPolicy: default-src 'self' accounts.google.com; font-src fonts.gstatic.com; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-rAnd0m'; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self';
+            ContentSecurityPolicy: !Join
+                - ''
+                - - default-src 'self' accounts.google.com; font-src fonts.gstatic.com; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self'; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-
+                  - !Ref CspNonce
+                  - ';
           ContentTypeOptions:
             Override: true
           StrictTransportSecurity:
@@ -308,6 +314,83 @@ Resources:
             - Header: Permissions-Policy
               Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
               Override: false
+  YojaUnwatedHeadersCloudFrontFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: unwanted-headers
+      AutoPublish: true 
+      FunctionCode: |
+        function handler(event) {
+            try {
+                const request = event.request;
+                const headers = request.headers;
+                console.log('headers=' + headers);
+                if ('x-original-url' in headers) {
+                    console.log('x-original-url present in headers. Returning 403');
+                    var response = {
+                        statusCode: 403,
+                        statusDescription: 'x-original-url header not permitted',
+                        headers: {
+                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                        }
+                    };
+                    return response;
+                } else {
+                    return request;
+                }
+            } catch (error) {
+                console.log('Caught Exception ' + error);
+                var eresp = {
+                        statusCode: 500,
+                        statusDescription: 'unwanted header function failed',
+                        headers: {
+                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                        }
+                    };
+                return eresp;
+            }
+        }
+      FunctionConfig:
+        Comment: Rejects requests with certain headers present. For OWASP Zap testing.
+        Runtime: cloudfront-js-2.0
+  YojaDisallowTraceCloudFrontFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: disallow-trace
+      AutoPublish: true 
+      FunctionCode: |
+        function handler(event) {
+            try {
+                const request = event.request;
+                console.log('request.method=' + request.method);
+                if (request.method == 'TRACE' || request.method == 'OPTIONS') {
+                    console.log('TRACE.OPTIONS methods not allowed. Returning 403');
+                    var response = {
+                        statusCode: 403,
+                        statusDescription: 'TRACE,OPTIONS methods not permitted',
+                        headers: {
+                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                        }
+                    };
+                    return response;
+                } else {
+                    return request;
+                }
+            } catch (error) {
+                console.log('Caught Exception ' + error);
+                var eresp = {
+                        statusCode: 500,
+                        statusDescription: 'disallow trace options function failed',
+                        headers: {
+                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                        }
+                    };
+                return eresp;
+            }
+        }
+      FunctionConfig:
+        Comment: Rejects requests with certain methods. For OWASP Zap testing.
+        Runtime: cloudfront-js-2.0
   YojaStaticFilesLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -559,6 +642,9 @@ Resources:
                 - /
                 - !GetAtt YojaApiService.Outputs.EntrypointFunctionUrlConfig
             ViewerProtocolPolicy: https-only
+            FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt YojaDisallowTraceCloudFrontFunction
           - Compress: false
             PathPattern: /webhook/webhook_gdrive
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
@@ -606,6 +692,9 @@ Resources:
           ViewerProtocolPolicy: https-only
           OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
           ResponseHeadersPolicyId: !GetAtt YojaResponseHeaderPolicy.Id
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction
         ViewerCertificate:
           AcmCertificateArn: !Ref PreexistingCertificateARN
           MinimumProtocolVersion: TLSv1.2_2018
