@@ -1,14 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
+Transform : AWS::Serverless-2016-10-31
+
 Description: yoja.ai stack
+
 Parameters:
   cftVersion:
     Type: String
-    Default: 0.1.2
-    Description: Version of Yoja UI static HTML and Javascript files
+    Default: 0.1.3
+    Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.1.6
+    Default: 0.1.7
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.1.2
@@ -21,7 +23,7 @@ Parameters:
     Default: chat
   PreexistingCertificateARN:
     Type: String
-    Description: ARN of pre-existing certificate in the region where stack is being installed e.g. ARN of cert for chat.yoja.ai
+    Description: 'ARN of pre-existing certificate in the region where stack is being installed e.g. ARN of cert for chat.yoja.ai'
   OauthClientId:
     Type: String
   OauthClientSecret:
@@ -30,9 +32,9 @@ Parameters:
     Type: String
   DropboxOauthClientSecret:
     Type: String
-  OauthRedirectUri:
+  OauthRedirectUri: 
     Type: String
-    Description: similar to https://chat.xxxxxxx/rest/entrypoint/oauth2cb
+    Description:  similar to https://chat.xxxxxxx/rest/entrypoint/oauth2cb
   OpenaiApiKey:
     Type: String
   CspNonce:
@@ -49,66 +51,74 @@ Resources:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action:
-              - sts:AssumeRole
-      Description: Role for the Lambda that generates ddb table name by replacing . with - and prefixing infinstor-mlflow-server-
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Description: Role for the Lambda that generates ddb table name by replacing
+        . with - and prefixing infinstor-mlflow-server-
       Path: /
-      RoleName: !Join
+      RoleName:
+        Fn::Join:
         - '-'
         - - CustomLambdasRole
-          - !Select
+          - Fn::Select:
             - 2
-            - !Split
+            - Fn::Split:
               - /
-              - !Ref AWS::StackId
+              - Ref: AWS::StackId
       Policies:
-        - PolicyName: AllowCustomLambdaToWriteCloudWatchLogs
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: arn:aws:logs:*:*:*
-        - PolicyName: AllowS3Operations
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:*
-                Resource: arn:aws:s3:::*
-        - PolicyName: AllowDBT
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:query
-                  - dynamodb:PutItem
-                  - dynamodb:DescribeTable
-                  - dynamodb:scan
-                  - dynamodb:BatchGetItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:ListTables
-                  - dynamodb:BatchWriteItem
-                  - dynamodb:PartiQLInsert
-                  - dynamodb:PartiQLUpdate
-                  - dynamodb:PartiQLDelete
-                  - dynamodb:PartiQLSelect
-                Resource: '*'
+      - PolicyName: AllowCustomLambdaToWriteCloudWatchLogs
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+        # Needed for custom resource lambda CreateTableName below to make S3 calls
+      - PolicyName: AllowS3Operations
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: arn:aws:s3:::*
+      -
+        PolicyName: 'AllowDBT'
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Action:
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:query
+              - dynamodb:PutItem
+              - dynamodb:DescribeTable
+              - dynamodb:scan
+              - dynamodb:BatchGetItem
+              - dynamodb:DeleteItem
+              - dynamodb:ListTables  
+              - dynamodb:BatchWriteItem
+              - dynamodb:PartiQLInsert      # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-iam.html
+              - dynamodb:PartiQLUpdate
+              - dynamodb:PartiQLDelete  
+              - dynamodb:PartiQLSelect
+              Resource: '*'  
   CustomResourceLambda:
     Type: AWS::Lambda::Function
     Properties:
-      Role: !GetAtt CustomLambdasRole.Arn
+      Role:
+        Fn::GetAtt:
+        - CustomLambdasRole
+        - Arn
       Runtime: python3.8
       Handler: index.lambda_handler
       Code:
@@ -118,6 +128,7 @@ Resources:
           import re
           import logging
           import boto3
+          
           def lambda_handler(event, context):
             print('evt=' + str(event))
             request_type:str = event['RequestType']
@@ -128,12 +139,16 @@ Resources:
                 htmlBucketPrefix:str = event['ResourceProperties']['htmlBucketPrefix']
                 indexBucketPrefix:str = event['ResourceProperties']['indexBucketPrefix']
                 scratchBucketPrefix:str = event['ResourceProperties']['scratchBucketPrefix']
+                
                 yojaServiceDnsNameWithDashes:str = yojaServiceDnsName.replace('.', '-')
+                
                 htmlBucketName:str; indexBucketName:str; scratchBucketName:str
                 htmlBucketName, indexBucketName, scratchBucketName = [ bucket_name_pre + '-' + yojaServiceDnsNameWithDashes for bucket_name_pre in [htmlBucketPrefix, indexBucketPrefix, scratchBucketPrefix] ]
+            
                 # https://docs.python.org/3/library/re.html
                 # https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html: Bucket names must be between 3 (min) and 63 (max) characters long; Bucket names can consist only of lowercase letters, numbers, dots (.), and hyphens (-)
                 # output_bucket_name,count_subs = re.subn('[^a-z0-9.-]','-', output_bucket_name.lower())
+            
                 responseData = {}
                 responseData['yojaServiceDnsNameWithDashes'] = yojaServiceDnsNameWithDashes
                 responseData['htmlBucketName'] = htmlBucketName
@@ -141,7 +156,7 @@ Resources:
                 responseData['scratchBucketName'] = scratchBucketName
                 #print(responseData)
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, yojaServiceDnsName)
-              # delete
+              # delete 
               else:
                 #pass
                 cfnresponse.send(event, context, cfnresponse.SUCCESS, {},yojaServiceDnsName)
@@ -151,79 +166,94 @@ Resources:
   CustomResource:
     Type: AWS::CloudFormation::CustomResource
     Properties:
-      ServiceToken: !GetAtt CustomResourceLambda.Arn
+      ServiceToken:
+        Fn::GetAtt:
+        - CustomResourceLambda
+        - Arn
       yojaServiceDnsName: !Ref yojaServiceDnsName
-      htmlBucketPrefix: yoja-html
-      indexBucketPrefix: yoja-index
-      scratchBucketPrefix: yoja-scratch
+      htmlBucketPrefix: 'yoja-html'
+      indexBucketPrefix: 'yoja-index'
+      scratchBucketPrefix: 'yoja-scratch'
   YojaScratchBucket:
-    Type: AWS::S3::Bucket
+    Type: AWS::S3::Bucket    
     Properties:
-      BucketName: !GetAtt CustomResource.scratchBucketName
+      # https://stackoverflow.com/questions/68947257/how-to-replace-character-in-a-string-variable-using-cloudformation
+      BucketName:  !GetAtt [ CustomResource, 'scratchBucketName']
   YojaHtmlBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !GetAtt CustomResource.htmlBucketName
+         BucketName: !GetAtt [ CustomResource, 'htmlBucketName']
   YojaIndexBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !GetAtt CustomResource.indexBucketName
+         BucketName: !GetAtt [ CustomResource, 'indexBucketName']
   YojaHtmlBucketOriginAccessIdentity:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
       CloudFrontOriginAccessIdentityConfig:
-        Comment: OAI for Yoja Html bucket
+        Comment: "OAI for Yoja Html bucket"
   YojaHtmlBucketBucketPolicy:
-    Type: AWS::S3::BucketPolicy
+    Type: "AWS::S3::BucketPolicy"
     Properties:
       Bucket: !Ref YojaHtmlBucket
       PolicyDocument:
         Statement:
-          - Action: s3:Get*
-            Effect: Allow
-            Resource: !Sub arn:aws:s3:::${YojaHtmlBucket}/*
-            Principal:
-              CanonicalUser: !GetAtt YojaHtmlBucketOriginAccessIdentity.S3CanonicalUserId
-  YojaServiceConfTable:
+        - Action: "s3:Get*"
+          Effect: Allow
+          Resource: !Sub arn:aws:s3:::${YojaHtmlBucket}/*
+          Principal:
+            CanonicalUser: !GetAtt YojaHtmlBucketOriginAccessIdentity.S3CanonicalUserId          
+  YojaServiceConfTable: 
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html
     Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: yoja-ServiceConf
-      AttributeDefinitions:
-        - AttributeName: configVersion
-          AttributeType: 'N'
-      KeySchema:
-        - AttributeName: configVersion
-          KeyType: HASH
-      BillingMode: PAY_PER_REQUEST
-  YojaUsersTable:
+    Properties: 
+      TableName: 'yoja-ServiceConf'
+      AttributeDefinitions: 
+        - 
+          AttributeName: "configVersion"
+          AttributeType: "N"
+      KeySchema: 
+        - 
+          AttributeName: "configVersion"
+          KeyType: "HASH"
+      BillingMode: "PAY_PER_REQUEST"
+  YojaUsersTable: 
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-dynamodb-table.html
     Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: yoja-users
-      AttributeDefinitions:
-        - AttributeName: email
-          AttributeType: S
-        - AttributeName: dropbox_sub
-          AttributeType: S
-      KeySchema:
-        - AttributeName: email
-          KeyType: HASH
-      BillingMode: PAY_PER_REQUEST
-      GlobalSecondaryIndexes:
-        - IndexName: dropbox_sub-index
+    Properties: 
+      TableName: 'yoja-users'
+      AttributeDefinitions: 
+        -
+          AttributeName: "email"
+          AttributeType: "S"
+        -
+          AttributeName: "dropbox_sub"
+          AttributeType: "S"
+      KeySchema: 
+        -
+          AttributeName: "email"
+          KeyType: "HASH"
+      BillingMode: "PAY_PER_REQUEST"
+      GlobalSecondaryIndexes: 
+        -
+          IndexName: "dropbox_sub-index"
           KeySchema:
-            - AttributeName: dropbox_sub
-              KeyType: HASH
+            -
+              AttributeName: "dropbox_sub"
+              KeyType: "HASH"
           Projection:
             ProjectionType: ALL
   YojaApiService:
     Type: AWS::Serverless::Application
     Properties:
       Location:
-        ApplicationId: !FindInMap
+        ApplicationId:
+          Fn::FindInMap:
           - RegionMap
-          - !Ref AWS::Region
+          - Ref: AWS::Region
           - SARYojaApiService
-        SemanticVersion: !Ref YojaApiServiceSemanticVersionParameter
+        SemanticVersion:
+          Ref: YojaApiServiceSemanticVersionParameter
       Parameters:
         OauthClientId: !Ref OauthClientId
         OauthClientSecret: !Ref OauthClientSecret
@@ -241,7 +271,10 @@ Resources:
     Type: AWS::Lambda::Permission
     DependsOn: YojaApiService
     Properties:
-      FunctionName: !GetAtt YojaApiService.Outputs.GetversionFunctionArn
+      FunctionName:
+        Fn::GetAtt:
+        - YojaApiService
+        - Outputs.GetversionFunctionArn
       FunctionUrlAuthType: NONE
       Action: lambda:InvokeFunctionUrl
       Principal: '*'
@@ -249,11 +282,13 @@ Resources:
     Type: AWS::Serverless::Application
     Properties:
       Location:
-        ApplicationId: !FindInMap
+        ApplicationId:
+          Fn::FindInMap:
           - RegionMap
-          - !Ref AWS::Region
+          - Ref: AWS::Region
           - SARYojaWebhookService
-        SemanticVersion: !Ref YojaWebhookServiceSemanticVersionParameter
+        SemanticVersion:
+          Ref: YojaWebhookServiceSemanticVersionParameter
       Parameters:
         OauthClientId: !Ref OauthClientId
         OauthClientSecret: !Ref OauthClientSecret
@@ -261,12 +296,12 @@ Resources:
         DropboxOauthClientSecret: !Ref DropboxOauthClientSecret
         UsersTable: yoja-users
         ServiceconfTable: yoja-ServiceConf
-        YojaApiEntrypointFunctionArn: !GetAtt YojaApiService.Outputs.GetversionFunctionArn
+        YojaApiEntrypointFunctionArn: !GetAtt [YojaApiService, Outputs.GetversionFunctionArn]
   YojaWebhookDropboxInvokePermission:
     Type: AWS::Lambda::Permission
     DependsOn: YojaWebhookService
     Properties:
-      FunctionName: !GetAtt YojaWebhookService.Outputs.DropboxWebhookFunctionArn
+      FunctionName: !GetAtt [YojaWebhookService, Outputs.DropboxWebhookFunctionArn]
       FunctionUrlAuthType: NONE
       Action: lambda:InvokeFunctionUrl
       Principal: '*'
@@ -274,7 +309,7 @@ Resources:
     Type: AWS::Lambda::Permission
     DependsOn: YojaWebhookService
     Properties:
-      FunctionName: !GetAtt YojaWebhookService.Outputs.GDriveWebhookFunctionArn
+      FunctionName: !GetAtt [YojaWebhookService, Outputs.GDriveWebhookFunctionArn]
       FunctionUrlAuthType: NONE
       Action: lambda:InvokeFunctionUrl
       Principal: '*'
@@ -298,9 +333,9 @@ Resources:
             Override: false
             ContentSecurityPolicy: !Join
                 - ''
-                - - default-src 'self' accounts.google.com; font-src fonts.gstatic.com; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self'; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-
+                - - "default-src 'self' accounts.google.com; font-src fonts.gstatic.com; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self'; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-"
                   - !Ref CspNonce
-                  - ';
+                  - "';"
           ContentTypeOptions:
             Override: true
           StrictTransportSecurity:
@@ -309,7 +344,6 @@ Resources:
             Preload: false
             AccessControlMaxAgeSec: 31536000
         CustomHeadersConfig:
-          Quantity: 1
           Items:
             - Header: Permissions-Policy
               Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
@@ -324,14 +358,14 @@ Resources:
             try {
                 const request = event.request;
                 const headers = request.headers;
-                console.log('headers=' + headers);
-                if ('x-original-url' in headers) {
-                    console.log('x-original-url present in headers. Returning 403');
+                console.log("headers=" + headers);
+                if ("x-original-url" in headers) {
+                    console.log("x-original-url present in headers. Returning 403");
                     var response = {
                         statusCode: 403,
-                        statusDescription: 'x-original-url header not permitted',
+                        statusDescription: "x-original-url header not permitted",
                         headers: {
-                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
                         }
                     };
                     return response;
@@ -339,12 +373,12 @@ Resources:
                     return request;
                 }
             } catch (error) {
-                console.log('Caught Exception ' + error);
+                console.log("Caught Exception " + error);
                 var eresp = {
                         statusCode: 500,
-                        statusDescription: 'unwanted header function failed',
+                        statusDescription: "unwanted header function failed",
                         headers: {
-                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
                         }
                     };
                 return eresp;
@@ -362,14 +396,14 @@ Resources:
         function handler(event) {
             try {
                 const request = event.request;
-                console.log('request.method=' + request.method);
-                if (request.method == 'TRACE' || request.method == 'OPTIONS') {
-                    console.log('TRACE.OPTIONS methods not allowed. Returning 403');
+                console.log("request.method=" + request.method);
+                if (request.method == "TRACE" || request.method == "OPTIONS") {
+                    console.log("TRACE.OPTIONS methods not allowed. Returning 403");
                     var response = {
                         statusCode: 403,
-                        statusDescription: 'TRACE,OPTIONS methods not permitted',
+                        statusDescription: "TRACE,OPTIONS methods not permitted",
                         headers: {
-                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
                         }
                     };
                     return response;
@@ -377,12 +411,12 @@ Resources:
                     return request;
                 }
             } catch (error) {
-                console.log('Caught Exception ' + error);
+                console.log("Caught Exception " + error);
                 var eresp = {
                         statusCode: 500,
-                        statusDescription: 'disallow trace options function failed',
+                        statusDescription: "disallow trace options function failed",
                         headers: {
-                            'cloudfront-functions': { value: 'generated-by-CloudFront-Functions' }
+                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
                         }
                     };
                 return eresp;
@@ -392,15 +426,20 @@ Resources:
         Comment: Rejects requests with certain methods. For OWASP Zap testing.
         Runtime: cloudfront-js-2.0
   YojaStaticFilesLambdaFunction:
-    Type: AWS::Lambda::Function
+    Type: 'AWS::Lambda::Function'
     Properties:
-      Description: Create s3 bucket and populate with static html/js for yoja
+      Description: 'Create s3 bucket and populate with static html/js for yoja'
       Handler: index.handler
       Role: !GetAtt CustomLambdasRole.Arn
       Timeout: 900
+      # error in ap-southeast-2: Resource handler returned message: "'MemorySize' value failed to satisfy constraint: Member must have value less than or equal to 3008
       MemorySize: 3008
       Runtime: python3.9
       Code:
+        # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-lambda-function-code.html#cfn-lambda-function-code-zipfile
+        # (Node.js and Python) The source code of your Lambda function. If you include your function source inline with this parameter, AWS CloudFormation places it in a file named index and zips it to create a deployment package. For the Handler property, the first part of the handler identifier must be index. For example, index.handler.
+        # Your source code can contain up to 4096 characters. For JSON, you must escape quotes and special characters such as newline (\n) with a backslash.
+        # If you specify a function that interacts with an AWS CloudFormation custom resource, you don't have to write your own functions to send responses to the custom resource that invoked the function. AWS CloudFormation provides a response module (cfn-response) that simplifies sending responses. See Using AWS Lambda with AWS CloudFormation for details.
         ZipFile: |
           import boto3
           import cfnresponse
@@ -410,7 +449,9 @@ Resources:
           import zipfile
           from typing import List
           import mimetypes
+
           # pylint: disable=bad-indentation
+
           def handler(event, context):
               print(f'event={event}')
               print(f'context={context}')
@@ -428,6 +469,7 @@ Resources:
                 yojaGoogleClientId =   event['ResourceProperties']['yojaGoogleClientId']
                 yojaDropboxClientId =  event['ResourceProperties']['yojaDropboxClientId']
                 yojaCftVersion =       event['ResourceProperties']['yojaCftVersion']
+
                 if the_event == 'Create':
                   create_all(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion)
                   # Everything OK... send the signal back
@@ -449,24 +491,29 @@ Resources:
                 print(str(e))
                 response_data['Data'] = str(e)
                 cfnresponse.send(event, context, cfnresponse.FAILED, response_data, physicalResourceId=yojaHtmlBucket)
+
           def create_all(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion) :
               # create serviceconfig.js for the dashboard ui
               create_serviceconfig_1(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion)
               # copy dashboard files from infinstordist to this service bucket
               copy_dashboard_files(yojaCftVersion, s_3, yojaHtmlBucket)
+
           def create_serviceconfig_1(s_3, yojaHtmlBucket, yojaOAuthRedirectUri, yojaApiEndpoint, yojaApiKey, yojaGoogleClientId, yojaDropboxClientId, yojaCftVersion):
               with open('/tmp/serviceconfig.js', 'w') as wfp:
                   service_config_str:str = "var ServiceConfig = { " + \
-                  f"""OAUTH_REDIRECT_URI: \"{yojaOAuthRedirectUri}\",
-                    envAPIEndpoint: \"{yojaApiEndpoint}\",
-                    envAPIKey: \"{yojaApiKey}\",
-                    GOOGLE_CLIENT_ID: \"{yojaGoogleClientId}\",
+                  f"""OAUTH_REDIRECT_URI: \"{yojaOAuthRedirectUri}\", 
+                    envAPIEndpoint: \"{yojaApiEndpoint}\", 
+                    envAPIKey: \"{yojaApiKey}\", 
+                    GOOGLE_CLIENT_ID: \"{yojaGoogleClientId}\", 
                     DROPBOX_CLIENT_ID: \"{yojaDropboxClientId}\" """ + \
                   "}"
+                  
                   wfp.write(service_config_str)
+                  
               s3_prefix:str = 'html/serviceconfig.js'
               print(f"Creating s3://{yojaHtmlBucket}/{s3_prefix}")
               s_3.upload_file('/tmp/serviceconfig.js', yojaHtmlBucket, s3_prefix)
+
           def delete_all(s_3, the_bucket):
               print('Deleting all objects from bucket=' + str(the_bucket))
               delete_s_3 = boto3.client('s3')
@@ -485,12 +532,14 @@ Resources:
                     else:
                       print('Adding key=' + str(oe['Key']) + ' to del list')
                     oa.append(oe)
+
                   dobjs = {}
                   dobjs['Objects'] = oa
                   dobjs['Quiet'] = True
                   print('deleting ' + str(len(oa)) + ' object versions')
                   delete_s_3.delete_objects(Bucket=the_bucket, Delete=dobjs)
                   print('deleted ' + str(len(oa)) + ' object versions')
+
                 if ('DeleteMarkers' in page):
                   aob = page['DeleteMarkers']
                   oa = []
@@ -503,15 +552,18 @@ Resources:
                     else:
                       print('Adding delmarker=' + str(oe['Key']) + ' to del list')
                     oa.append(oe)
+
                   dobjs = {}
                   dobjs['Objects'] = oa
                   dobjs['Quiet'] = True
                   print('deleting ' + str(len(oa)) + ' delete markers')
                   delete_s_3.delete_objects(Bucket=the_bucket, Delete=dobjs)
                   print('deleted ' + str(len(oa)) + ' delete markers')
+
           def copy_dashboard_files(cftVersion, s_3, the_bucket):
               base_url = 'https://yojadist.s3.amazonaws.com/builds/' + cftVersion
               http = urllib3.PoolManager()
+              
               # download dashboard zip file and copy to s3
               web_ui_zip_fname:str = "web_ui.zip"
               resp = http.request('GET', base_url + '/' + web_ui_zip_fname)
@@ -520,10 +572,12 @@ Resources:
                 print(estr)
                 raise ValueError(estr)
               s_3.put_object(Body=resp.data, Bucket=the_bucket, Key='html/' + web_ui_zip_fname, ContentType=resp.headers['Content-Type'])
+
               # write dashboard_files.zip to /tmp directory
               web_ui_zip_fpath = '/tmp/'+web_ui_zip_fname
               with open(web_ui_zip_fpath, "wb") as fh:
                 fh.write(resp.data)
+                
               # read the .zip file and copy to s3 bucket
               zipf:zipfile.ZipFile
               with zipfile.ZipFile(web_ui_zip_fpath) as zipf:
@@ -531,7 +585,7 @@ Resources:
                   for file_zipinfo in filelist:
                       print(f"file_zipinfo={file_zipinfo}")
                       # if archive member is a file
-                      if not file_zipinfo.is_dir():
+                      if not file_zipinfo.is_dir(): 
                           # read the file
                           file_bytes:bytes = zipf.read(file_zipinfo)
                           # determine its mime type.  without this, file content type is set to binary/octet-stream, even for .html files, when http served from s3 bucket
@@ -543,12 +597,14 @@ Resources:
                             s_3.put_object(Body=file_bytes, Bucket=the_bucket, Key=s3_prefix) #, ContentType=r1.headers['Content-Type'])
                           print(f"wrote to s3://{the_bucket}/{s3_prefix} with content_type={content_type}")
   YojaStaticFilesCustomResource:
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-cfn-customresource.html
+    # In a CloudFormation template, you use the AWS::CloudFormation::CustomResource or Custom::String resource type to specify custom resources.
     Type: Custom::S3CustomResource
     Properties:
       ServiceToken: !GetAtt YojaStaticFilesLambdaFunction.Arn
       yojaHtmlBucket: !Ref YojaHtmlBucket
       yojaOAuthRedirectUri: !Ref OauthRedirectUri
-      yojaApiEndpoint: !Sub https://chat.${yojaServiceDnsName}/rest
+      yojaApiEndpoint: !Sub "https://chat.${yojaServiceDnsName}/rest"
       yojaApiKey: unused
       yojaGoogleClientId: !Ref OauthClientId
       yojaDropboxClientId: !Ref DropboxOauthClientId
@@ -644,7 +700,7 @@ Resources:
             ViewerProtocolPolicy: https-only
             FunctionAssociations:
                 - EventType: viewer-request
-                  FunctionARN: !GetAtt YojaDisallowTraceCloudFrontFunction
+                  FunctionARN: !GetAtt YojaDisallowTraceCloudFrontFunction.FunctionARN
           - Compress: false
             PathPattern: /webhook/webhook_gdrive
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
@@ -694,7 +750,7 @@ Resources:
           ResponseHeadersPolicyId: !GetAtt YojaResponseHeaderPolicy.Id
           FunctionAssociations:
             - EventType: viewer-request
-              FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction
+              FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction.FunctionARN
         ViewerCertificate:
           AcmCertificateArn: !Ref PreexistingCertificateARN
           MinimumProtocolVersion: TLSv1.2_2018
@@ -702,7 +758,10 @@ Resources:
   PopulateDDBLambda:
     Type: AWS::Lambda::Function
     Properties:
-      Role: !GetAtt CustomLambdasRole.Arn
+      Role:
+        Fn::GetAtt:
+        - CustomLambdasRole
+        - Arn
       Runtime: python3.8
       Handler: index.lambda_handler
       Code:
@@ -723,24 +782,29 @@ Resources:
               from mypy_boto3_dynamodb import DynamoDBClient
               from mypy_boto3_dynamodb.type_defs import ExecuteStatementOutputTypeDef
               from mypy_boto3_dynamodb.service_resource import Table
+              
               from mypy_boto3_s3 import S3Client
               from mypy_boto3_s3.type_defs import GetBucketLocationOutputTypeDef
           else:
               DynamoDBClient = object
               ExecuteStatementOutputTypeDef = object
               Table = object
+              
               CognitoIdentityProviderClient = object
               AdminListGroupsForUserResponseTypeDef = object; GroupTypeTypeDef=object; AdminGetUserResponseTypeDef=object; AttributeTypeTypeDef = object; AdminCreateUserResponseTypeDef = object; UserTypeTypeDef = object; EmptyResponseMetadataTypeDef = object
+              
               S3Client = object
               GetBucketLocationOutputTypeDef = object
           #from cryptography.fernet import Fernet
+
           import logging
           logger = logging.getLogger(__name__)
           logger.setLevel(logging.getLevelName(os.getenv("LAMBDA_LOG_LEVEL", "INFO")))
+
           def _insert_serviceconf_partiql(serviceconf_table_name:str, index_bucket_name:str) -> Tuple[bool, str]:
               try:
                   # # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.update.html
-                  # # UPDATE  table
+                  # # UPDATE  table  
                   # # [SET | REMOVE]  path  [=  data] […]
                   # # WHERE condition [RETURNING returnvalues]
                   # # <returnvalues>  ::= [ALL OLD | MODIFIED OLD | ALL NEW | MODIFIED NEW] *
@@ -751,24 +815,29 @@ Resources:
                   # # Error: ValidationException: Where clause does not contain a mandatory equality on all key attributes
                   # update_stmt:str = f"UPDATE \"{os.environ['SUBSCRIBERS_TABLE']}\" {set_clauses} WHERE customerId = '{customer_id}' AND productCode = '{product_code}' RETURNING ALL NEW *"
                   # print(f"Executing update_stmt for subscriber {cognito_username} = {update_stmt}")
+                  
                   ddb_client:DynamoDBClient = boto3.client('dynamodb')
                   if not ddb_client: return False, "Unable to get ddb_client for service"
+                  
                   # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.insert.html
                   insert_stmt:str = f"INSERT INTO \"{serviceconf_table_name}\" VALUE " + "{" + f"'configVersion':1, 'bucket':'{index_bucket_name}', 'prefix':'index2' " +  "}"
+                  
                   # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Client.execute_statement
                   # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ExecuteStatement.html
                   # response = {'Items': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...], 'ResponseMetadata': {'RequestId': 'CHBDU0TEJ6UH82VNOMPA9F8I3NVV4KQNSO5AEMVJF66Q9ASUAAJG', 'HTTPStatusCode': 200, 'HTTPHeaders': {...}, 'RetryAttempts': 0}}
                   exec_stmt_resp:ExecuteStatementOutputTypeDef = ddb_client.execute_statement(Statement=insert_stmt)
                   ddb_http_status_code:int = exec_stmt_resp.get('ResponseMetadata').get('HTTPStatusCode')
                   if ddb_http_status_code != 200: return False, f"dynamodb http status code={ddb_http_status_code} headers={exec_stmt_resp['ResponseMetadata'].get('HTTPHeaders')}"
+                  
                   return True, ""
               except Exception as e:
                   logger.error(f"Exception caught during ddb serviceconf statment: {e}", exc_info=e)
                   return False, str(e)
+
           def _delete_serviceconf_partiql(serviceconf_table_name:str) -> Tuple[bool, str]:
               try:
                   # # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.update.html
-                  # # UPDATE  table
+                  # # UPDATE  table  
                   # # [SET | REMOVE]  path  [=  data] […]
                   # # WHERE condition [RETURNING returnvalues]
                   # # <returnvalues>  ::= [ALL OLD | MODIFIED OLD | ALL NEW | MODIFIED NEW] *
@@ -779,20 +848,25 @@ Resources:
                   # # Error: ValidationException: Where clause does not contain a mandatory equality on all key attributes
                   # update_stmt:str = f"UPDATE \"{os.environ['SUBSCRIBERS_TABLE']}\" {set_clauses} WHERE customerId = '{customer_id}' AND productCode = '{product_code}' RETURNING ALL NEW *"
                   # print(f"Executing update_stmt for subscriber {cognito_username} = {update_stmt}")
+                  
                   ddb_client:DynamoDBClient = boto3.client('dynamodb')
                   if not ddb_client: return False, "Unable to get ddb_client for service"
+                  
                   # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ql-reference.delete.html
-                  delete_stmt:str = f"DELETE FROM \"{serviceconf_table_name}\" WHERE \"configVersion\" = 1"
+                  delete_stmt:str = f"DELETE FROM \"{serviceconf_table_name}\" WHERE \"configVersion\" = 1" 
+                  
                   # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Client.execute_statement
                   # https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ExecuteStatement.html
                   # response = {'Items': [{...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, {...}, ...], 'ResponseMetadata': {'RequestId': 'CHBDU0TEJ6UH82VNOMPA9F8I3NVV4KQNSO5AEMVJF66Q9ASUAAJG', 'HTTPStatusCode': 200, 'HTTPHeaders': {...}, 'RetryAttempts': 0}}
                   exec_stmt_resp:ExecuteStatementOutputTypeDef = ddb_client.execute_statement(Statement=delete_stmt)
                   ddb_http_status_code:int = exec_stmt_resp.get('ResponseMetadata').get('HTTPStatusCode')
                   if ddb_http_status_code != 200: return False, f"dynamodb http status code={ddb_http_status_code} headers={exec_stmt_resp['ResponseMetadata'].get('HTTPHeaders')}"
+                  
                   return True, ""
               except Exception as e:
                   logger.error(f"Exception caught during ddb serviceconf statment: {e}", exc_info=e)
                   return False, str(e)
+
           def lambda_handler(event, context):
             print('evt=' + str(event))
             request_type:str = event['RequestType']
@@ -803,7 +877,9 @@ Resources:
                 indexBucketName:str = event['ResourceProperties']['indexBucketName']
                 # don't populate the 'key' in serviceconf; autopopulated by the backend in the api if it doesn't exist
                 # keyStr:str  = '' #Fernet.generate_key().decode()
+                
                 success, errmsg = _insert_serviceconf_partiql(serviceConfTableName, indexBucketName)
+                  
                 responseData = {}
                 print(responseData)
                 cfnresponse.send(event, context, cfnresponse.SUCCESS if success else cfnresponse.FAILED, responseData if success else {'error':errmsg} , serviceConfTableName)
@@ -811,6 +887,7 @@ Resources:
               elif request_type.lower() == 'delete':
                 serviceConfTableName:str = event['ResourceProperties']['serviceConfTableName']
                 success, errmsg = _delete_serviceconf_partiql(serviceConfTableName)
+                  
                 responseData = {}
                 print(responseData)
                 cfnresponse.send(event, context, cfnresponse.SUCCESS if success else cfnresponse.FAILED, responseData if success else {'error':errmsg} , serviceConfTableName)
@@ -824,7 +901,7 @@ Resources:
   PopulateDDBCustomResource:
     Type: AWS::CloudFormation::CustomResource
     Properties:
-      ServiceToken: !GetAtt PopulateDDBLambda.Arn
+      ServiceToken: !GetAtt [PopulateDDBLambda, Arn]
       serviceConfTableName: !Ref YojaServiceConfTable
       indexBucketName: !Ref YojaIndexBucket
       keyStr: ''
