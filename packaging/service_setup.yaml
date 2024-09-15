@@ -6,7 +6,7 @@ Description: yoja.ai stack
 Parameters:
   cftVersion:
     Type: String
-    Default: 0.1.3
+    Default: 0.1.6
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
@@ -510,6 +510,7 @@ Resources:
                   
                   wfp.write(service_config_str)
                   
+              print(f"service_config_str={service_config_str}")
               s3_prefix:str = 'html/serviceconfig.js'
               print(f"Creating s3://{yojaHtmlBucket}/{s3_prefix}")
               s_3.upload_file('/tmp/serviceconfig.js', yojaHtmlBucket, s3_prefix)
