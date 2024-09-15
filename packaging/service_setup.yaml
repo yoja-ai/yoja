@@ -513,7 +513,7 @@ Resources:
               print(f"service_config_str={service_config_str}")
               s3_prefix:str = 'html/serviceconfig.js'
               print(f"Creating s3://{yojaHtmlBucket}/{s3_prefix}")
-              s_3.upload_file('/tmp/serviceconfig.js', yojaHtmlBucket, s3_prefix)
+              s_3.upload_file('/tmp/serviceconfig.js', yojaHtmlBucket, s3_prefix, ExtraArgs={'ContentType': 'application/javascript'})
 
           def delete_all(s_3, the_bucket):
               print('Deleting all objects from bucket=' + str(the_bucket))
