@@ -348,6 +348,9 @@ Resources:
             - Header: Permissions-Policy
               Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
               Override: false
+        RemoveHeadersConfig:
+          Items:
+            - Header: SERVER
   YojaUnwatedHeadersCloudFrontFunction:
     Type: AWS::CloudFront::Function
     Properties:
