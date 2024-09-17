@@ -29,6 +29,9 @@ def entrypoint(event, context):
 
     print('## EVENT')
     print(event)
+    if 'headers' in event and 'origin' in event['headers'] and event['headers']['origin'] != f"https://chat.{os.environ['COOKIE_DOMAIN']}":
+        print(f"entrypoint: origin {event['headers']['origin']} unacceptable!. Returning 401")
+        return respond({"error_msg": "Origin not permitted"}, status=401)
     operation = event['requestContext']['http']['method']
     if (operation == 'OPTIONS'):
         return respond(None, res={})

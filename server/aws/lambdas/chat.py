@@ -310,11 +310,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Methods': '*',
-            'Access-Control-Allow-Credentials': '*'
+            'Content-Type': 'application/json'
         },
     }
     return respond(None, res=res)
@@ -932,11 +928,7 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Methods': '*',
-            'Access-Control-Allow-Credentials': '*'
+            'Content-Type': 'application/json'
         },
     }
     return respond(None, res=res)
@@ -1008,11 +1000,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Methods': '*',
-            'Access-Control-Allow-Credentials': '*'
+            'Content-Type': 'application/json'
         },
     }
     return respond(None, res=res)

@@ -51,11 +51,7 @@ def table_qa_handler(event:dict, context) -> Dict[str, Any]:
             'statusCode': 200,
             'body': res_str,
             'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*',
-                'Access-Control-Allow-Credentials': '*'
+                'Content-Type': 'application/json'
             },
         }
     except Exception as e:
@@ -65,11 +61,7 @@ def table_qa_handler(event:dict, context) -> Dict[str, Any]:
             'statusCode': 403,
             'body': json.dumps({ "exception":str(e), "traceback":traceback.format_exc()}),
             'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*',
-                'Access-Control-Allow-Credentials': '*'
+                'Content-Type': 'application/json'
             },
         }
 

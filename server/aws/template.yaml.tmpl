@@ -214,11 +214,6 @@ Resources:
     Type: AWS::Serverless::Api
     Properties:
       StageName: Prod
-      Cors:
-        AllowOrigin: "'*'"
-        AllowMethods: "'GET,HEAD,OPTIONS,POST,PUT,PATCH,DELETE'"
-        AllowHeaders: "'Access-Control-Allow-Headers,Access-Control-Allow-Origin,Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers,x-requested-with,X-Api-Key,Authorization,X-Amz-Date,X-Forwarded-For,Idtoken'"
-        AllowCredentials: false
   entrypoint:
     Type: 'AWS::Serverless::Function'
     Properties:
@@ -240,20 +235,6 @@ Resources:
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
-        Cors:
-          AllowCredentials: true
-          AllowHeaders:
-            - authorization
-          AllowMethods: 
-            - '*'
-          AllowOrigins: 
-            - '*'
-          ExposeHeaders: 
-            - access-control-allow-origin
-            - access-control-allow-headers
-            - access-control-allow-methods
-            - access-control-allow-credentials
-          MaxAge: 30
       Environment:
         Variables:
           LAMBDA_VERSION: !Ref LambdaVersion

@@ -42,9 +42,7 @@ def respond(err, status=None, res=None):
         'statusCode': statusCode,
         'body': json.dumps(err) if err else json.dumps(res),
         'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': f"https://chat.{os.environ['COOKIE_DOMAIN']}",
-            'Access-Control-Allow-Methods': "GET, POST"
+            'Content-Type': 'application/json'
         },
     }
 

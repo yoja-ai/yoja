@@ -121,10 +121,6 @@ def oauth2cb_google(qs):
             'headers': {
                 'Content-Type': 'text/html',
                 'Set-Cookie': cookie,
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*',
-                'Access-Control-Allow-Credentials': '*',
                 'Location': redir_location
             }
         }
@@ -211,10 +207,6 @@ def oauth2cb_dropbox(qs):
             'headers': {
                 'Content-Type': 'text/html',
                 'Set-Cookie': cookie,
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': '*',
-                'Access-Control-Allow-Methods': '*',
-                'Access-Control-Allow-Credentials': '*',
                 'Location': "/index.html"
             }
         }
