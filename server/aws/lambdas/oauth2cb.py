@@ -21,13 +21,20 @@ def oauth2cb(event, context):
     if (operation != 'GET'):
         print(f"Error: unsupported method: operation={operation}")
         return respond({"error_msg": str(ValueError('Unsupported method ' + str(operation)))}, status=400)
-    qs=event['queryStringParameters']
-    if 'state' in qs and qs['state'] == 'dropbox':
-        return oauth2cb_dropbox(qs)
+    if 'queryStringParameters' in event:
+        qs=event['queryStringParameters']
+        if 'state' in qs and qs['state'] == 'dropbox':
+            return oauth2cb_dropbox(qs)
+        else:
+            return oauth2cb_google(qs)
     else:
-        return oauth2cb_google(qs)
+        print(f"oauth2cb_google: qs missing")
+        return respond({"error_msg": "required parameters missing"}, status=403)
 
 def oauth2cb_google(qs):
+    if 'code' not in qs or 'scope' not in qs or 'state' not in qs:
+        print(f"oauth2cb_google: qs incomplete = {qs}")
+        return respond({"error_msg": "one or more required parameters missing"}, status=403)
     print(f"code={qs['code']}, scope={qs['scope']}, state={qs['state']}")
     try:
         postdata={'client_id': os.environ['OAUTH_CLIENT_ID'],

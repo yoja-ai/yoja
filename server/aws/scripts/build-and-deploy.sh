@@ -15,7 +15,6 @@ if [ x"${13}" == "x" ] ; then
   echo "  aws_creds_profile"
   echo "  aws_region"
   echo "  image_name"
-  echo "  [sam_semantic_version]"  
   exit 255
 fi
 
@@ -32,7 +31,6 @@ openai_api_key=${10}
 AWS_CREDS="${11}"
 AWS_REGN="${12}"
 image_name=${13}
-[ -n "${14}" ] && sam_semantic_version=${14}
 
 echo "Using AWS Credentials Profile $AWS_CREDS"
 echo "Using AWS Region $AWS_REGN"

@@ -43,10 +43,8 @@ def respond(err, status=None, res=None):
         'body': json.dumps(err) if err else json.dumps(res),
         'headers': {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': '*',
-            'Access-Control-Allow-Methods': '*',
-            'Access-Control-Allow-Credentials': '*'
+            'Access-Control-Allow-Origin': f"https://chat.{os.environ['COOKIE_DOMAIN']}",
+            'Access-Control-Allow-Methods': "GET, POST"
         },
     }
 
