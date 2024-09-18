@@ -120,6 +120,9 @@ def oauth2cb_google(qs):
             'body': f"<html>{email} logged in to software version {os.environ['LAMBDA_VERSION']}</html>",
             'headers': {
                 'Content-Type': 'text/html',
+                'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+                'Pragma': 'no-cache',
+                'Expires': '0',
                 'Set-Cookie': cookie,
                 'Location': redir_location
             }
@@ -206,6 +209,9 @@ def oauth2cb_dropbox(qs):
             'body': f"<html>{email} logged in to software version {os.environ['LAMBDA_VERSION']}</html>",
             'headers': {
                 'Content-Type': 'text/html',
+                'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+                'Pragma': 'no-cache',
+                'Expires': '0',
                 'Set-Cookie': cookie,
                 'Location': "/index.html"
             }

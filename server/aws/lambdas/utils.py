@@ -42,7 +42,10 @@ def respond(err, status=None, res=None):
         'statusCode': statusCode,
         'body': json.dumps(err) if err else json.dumps(res),
         'headers': {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
         },
     }
 

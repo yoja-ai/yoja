@@ -51,7 +51,10 @@ def table_qa_handler(event:dict, context) -> Dict[str, Any]:
             'statusCode': 200,
             'body': res_str,
             'headers': {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+                'Pragma': 'no-cache',
+                'Expires': '0'
             },
         }
     except Exception as e:
@@ -61,7 +64,10 @@ def table_qa_handler(event:dict, context) -> Dict[str, Any]:
             'statusCode': 403,
             'body': json.dumps({ "exception":str(e), "traceback":traceback.format_exc()}),
             'headers': {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+                'Pragma': 'no-cache',
+                'Expires': '0'
             },
         }
 

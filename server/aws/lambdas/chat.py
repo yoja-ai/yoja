@@ -310,7 +310,10 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
         },
     }
     return respond(None, res=res)
@@ -928,7 +931,10 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
         },
     }
     return respond(None, res=res)
@@ -1000,7 +1006,10 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
         'statusCode': 200,
         'body': f"data:{res_str}",
         'headers': {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
         },
     }
     return respond(None, res=res)
