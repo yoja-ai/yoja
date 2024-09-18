@@ -428,6 +428,42 @@ Resources:
       FunctionConfig:
         Comment: Rejects requests with certain methods. For OWASP Zap testing.
         Runtime: cloudfront-js-2.0
+  YojaAddCacheControlCloudFrontFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: add-cache-control-headers
+      AutoPublish: true 
+      FunctionCode: |
+        function handler(event) {
+            try {
+                const request = event.request;
+                const response = event.response;
+                const headers = response.headers;
+                if (response.statusCode >= 200 && response.statusCode < 400) {
+                    console.log("statuscode=" + response.statusCode + ", setting cache to 1 week for " + request.uri);
+                    headers['cache-control'] = {value: 'public, max-age=604800'};
+                } else {
+                    console.log("statuscode=" + response.statusCode + ", turning off caching for " + request.uri);
+                    headers['cache-control'] = {value: 'no-cache, no-store, must-revalidate, private'};
+                    headers['pragma'] = {value: 'no-cache'};
+                    headers['expires'] = {value: '0'};
+                }
+                return response;
+            } catch (error) {
+                console.log("Caught Exception " + error);
+                var eresp = {
+                        statusCode: 500,
+                        statusDescription: "cache control function failed",
+                        headers: {
+                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
+                        }
+                    };
+                return eresp;
+            }
+        }
+      FunctionConfig:
+        Comment: Adds cache control headers to response. For OWASP Zap testing.
+        Runtime: cloudfront-js-2.0
   YojaStaticFilesLambdaFunction:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -755,6 +791,8 @@ Resources:
           FunctionAssociations:
             - EventType: viewer-request
               FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction.FunctionARN
+            - EventType: viewer-response
+              FunctionARN: !GetAtt YojaAddCacheControlCloudFrontFunction.FunctionARN
         ViewerCertificate:
           AcmCertificateArn: !Ref PreexistingCertificateARN
           MinimumProtocolVersion: TLSv1.2_2018
