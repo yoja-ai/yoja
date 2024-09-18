@@ -198,9 +198,13 @@ Resources:
       Bucket: !Ref YojaHtmlBucket
       PolicyDocument:
         Statement:
-        - Action: "s3:Get*"
+        - Action:
+            - "s3:GetObject"
+            - "s3:ListBucket"
           Effect: Allow
-          Resource: !Sub arn:aws:s3:::${YojaHtmlBucket}/*
+          Resource:
+            - !Sub arn:aws:s3:::${YojaHtmlBucket}/*
+            - !Sub arn:aws:s3:::${YojaHtmlBucket}
           Principal:
             CanonicalUser: !GetAtt YojaHtmlBucketOriginAccessIdentity.S3CanonicalUserId          
   YojaServiceConfTable: 
@@ -432,7 +436,7 @@ Resources:
     Type: AWS::CloudFront::Function
     Properties:
       Name: add-cache-control-headers
-      AutoPublish: true 
+      AutoPublish: true
       FunctionCode: |
         function handler(event) {
             try {
@@ -664,6 +668,11 @@ Resources:
             - .
             - - !Ref yojaChatSubdomain
               - !Ref yojaServiceDnsName
+        CustomErrorResponses:
+        - ErrorCode: '404'
+          ResponsePagePath: "/error.html"
+          ResponseCode: '404'
+          ErrorCachingMinTTL: '10'
         Origins:
           - Id: !Select
               - 2
