@@ -44,12 +44,18 @@ echo "}" >> /tmp/serviceconfig.js
 (cd /tmp; aws --profile ${AWS_CREDS} s3 cp serviceconfig.js s3://$1/html/serviceconfig.js)
 /bin/rm -f /tmp/serviceconfig.js
 
-FILES="avatar.jpg icon.png login.html login.js login.css error.html Dropbox-sdk.min.js"
-
+FILES="avatar.jpg icon.png login.html login.js login.css Dropbox-sdk.min.js"
 for i in $FILES
 do
     echo Copying $i
     aws --profile ${AWS_CREDS} s3 cp $i s3://$1/html/$i
+done
+
+EFILES="404.html 405.html"
+for i in $EFILES
+do
+    echo Copying $i
+    aws --profile ${AWS_CREDS} s3 cp $i s3://$1/html/errors/$i
 done
 
 (cd chat-ui; rm -rf build)
