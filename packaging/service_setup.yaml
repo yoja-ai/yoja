@@ -743,12 +743,6 @@ Resources:
           ResponsePagePath: "/errors/405.html"
           ResponseCode: '405'
           ErrorCachingMinTTL: '10'
-        Logging:
-          Bucket: !Join
-                - '.'
-                - - !Ref YojaScratchBucket
-                  - 's3.amazonaws.com'
-          Prefix: yoja-cloudfront-logs/
         Origins:
           - Id: !Select
               - 2
