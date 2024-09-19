@@ -6,11 +6,11 @@ Description: yoja.ai stack
 Parameters:
   cftVersion:
     Type: String
-    Default: 0.1.6
+    Default: 0.2.0
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.1.7
+    Default: 0.1.9
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.1.2
@@ -317,21 +317,21 @@ Resources:
       FunctionUrlAuthType: NONE
       Action: lambda:InvokeFunctionUrl
       Principal: '*'
-  YojaResponseHeaderPolicy:
+  YojaStaticResponseHeaderPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
       ResponseHeadersPolicyConfig:
-        Name: !Sub ${AWS::Region}-YojaCloudFrontResponseHeaderPolicy
+        Name: !Sub ${AWS::Region}-YojaStaticResponseHeaderPolicy
         SecurityHeadersConfig:
           XSSProtection:
-            Override: false
+            Override: true
             Protection: true
             ModeBlock: true
           FrameOptions:
-            Override: false
+            Override: true
             FrameOption: SAMEORIGIN
           ReferrerPolicy:
-            Override: false
+            Override: true
             ReferrerPolicy: strict-origin-when-cross-origin
           ContentSecurityPolicy:
             Override: false
@@ -343,7 +343,7 @@ Resources:
           ContentTypeOptions:
             Override: true
           StrictTransportSecurity:
-            Override: false
+            Override: true
             IncludeSubdomains: false
             Preload: false
             AccessControlMaxAgeSec: 31536000
@@ -351,10 +351,110 @@ Resources:
           Items:
             - Header: Permissions-Policy
               Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
-              Override: false
+              Override: true
+            - Header: cache-control
+              Value: public, max-age, immutable
+              Override: true
         RemoveHeadersConfig:
           Items:
             - Header: SERVER
+            - Header: X-Powered-By
+  YojaErrorsResponseHeaderPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${AWS::Region}-YojaErrorsResponseHeaderPolicy
+        SecurityHeadersConfig:
+          XSSProtection:
+            Override: true
+            Protection: true
+            ModeBlock: true
+          FrameOptions:
+            Override: true
+            FrameOption: SAMEORIGIN
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          ContentSecurityPolicy:
+            Override: false
+            ContentSecurityPolicy: !Join
+                - ''
+                - - "default-src 'self' accounts.google.com; font-src fonts.gstatic.com; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self'; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-"
+                  - !Ref CspNonce
+                  - "';"
+          ContentTypeOptions:
+            Override: true
+          StrictTransportSecurity:
+            Override: true
+            IncludeSubdomains: false
+            Preload: false
+            AccessControlMaxAgeSec: 31536000
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
+              Override: true
+            - Header: cache-control
+              Value: no-cache, no-store, must-revalidate, private
+              Override: true
+            - Header: pragma
+              Value: no-cache
+              Override: true
+            - Header: expires
+              Value: 0
+              Override: true
+        RemoveHeadersConfig:
+          Items:
+            - Header: SERVER
+            - Header: X-Powered-By
+  YojaRestResponseHeaderPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${AWS::Region}-YojaRestResponseHeaderPolicy
+        SecurityHeadersConfig:
+          XSSProtection:
+            Override: true
+            Protection: true
+            ModeBlock: true
+          FrameOptions:
+            Override: true
+            FrameOption: SAMEORIGIN
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          ContentSecurityPolicy:
+            Override: false
+            ContentSecurityPolicy: !Join
+                - ''
+                - - "default-src 'self' accounts.google.com; font-src fonts.gstatic.com; img-src 'self' *.googleusercontent.com;  frame-ancestors 'self'; form-action 'self'; style-src 'self' fonts.googleapis.com https://accounts.google.com/gsi/style 'nonce-"
+                  - !Ref CspNonce
+                  - "';"
+          ContentTypeOptions:
+            Override: true
+          StrictTransportSecurity:
+            Override: true
+            IncludeSubdomains: false
+            Preload: false
+            AccessControlMaxAgeSec: 31536000
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: accelerometer=(), camera=(), microphone=(), geolocation=(), usb=()
+              Override: true
+            - Header: cache-control
+              Value: no-cache, no-store, must-revalidate, private
+              Override: true
+            - Header: pragma
+              Value: no-cache
+              Override: true
+            - Header: expires
+              Value: 0
+              Override: true
+        RemoveHeadersConfig:
+          Items:
+            - Header: SERVER
+            - Header: X-Powered-By
   YojaUnwatedHeadersCloudFrontFunction:
     Type: AWS::CloudFront::Function
     Properties:
@@ -431,42 +531,6 @@ Resources:
         }
       FunctionConfig:
         Comment: Rejects requests with certain methods. For OWASP Zap testing.
-        Runtime: cloudfront-js-2.0
-  YojaAddCacheControlCloudFrontFunction:
-    Type: AWS::CloudFront::Function
-    Properties:
-      Name: add-cache-control-headers
-      AutoPublish: true
-      FunctionCode: |
-        function handler(event) {
-            try {
-                const request = event.request;
-                const response = event.response;
-                const headers = response.headers;
-                if (response.statusCode >= 200 && response.statusCode < 400) {
-                    console.log("statuscode=" + response.statusCode + ", setting cache to 1 week for " + request.uri);
-                    headers['cache-control'] = {value: 'public, max-age=604800'};
-                } else {
-                    console.log("statuscode=" + response.statusCode + ", turning off caching for " + request.uri);
-                    headers['cache-control'] = {value: 'no-cache, no-store, must-revalidate, private'};
-                    headers['pragma'] = {value: 'no-cache'};
-                    headers['expires'] = {value: '0'};
-                }
-                return response;
-            } catch (error) {
-                console.log("Caught Exception " + error);
-                var eresp = {
-                        statusCode: 500,
-                        statusDescription: "cache control function failed",
-                        headers: {
-                            "cloudfront-functions": { value: "generated-by-CloudFront-Functions" }
-                        }
-                    };
-                return eresp;
-            }
-        }
-      FunctionConfig:
-        Comment: Adds cache control headers to response. For OWASP Zap testing.
         Runtime: cloudfront-js-2.0
   YojaStaticFilesLambdaFunction:
     Type: 'AWS::Lambda::Function'
@@ -657,7 +721,9 @@ Resources:
     Type: AWS::CloudFront::Distribution
     DependsOn:
       - YojaApiService
-      - YojaResponseHeaderPolicy
+      - YojaStaticResponseHeaderPolicy
+      - YojaErrorsResponseHeaderPolicy
+      - YojaRestResponseHeaderPolicy
       - YojaStaticFilesCustomResource
     Properties:
       DistributionConfig:
@@ -670,9 +736,19 @@ Resources:
               - !Ref yojaServiceDnsName
         CustomErrorResponses:
         - ErrorCode: '404'
-          ResponsePagePath: "/error.html"
+          ResponsePagePath: "/errors/404.html"
           ResponseCode: '404'
           ErrorCachingMinTTL: '10'
+        - ErrorCode: '405'
+          ResponsePagePath: "/errors/405.html"
+          ResponseCode: '405'
+          ErrorCachingMinTTL: '10'
+        Logging:
+          Bucket: !Join
+                - '.'
+                - - !Ref YojaScratchBucket
+                  - 's3.amazonaws.com'
+          Prefix: yoja-cloudfront-logs/
         Origins:
           - Id: !Select
               - 2
@@ -740,7 +816,7 @@ Resources:
               - PATCH
             SmoothStreaming: false
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
-            ResponseHeadersPolicyId: !GetAtt YojaResponseHeaderPolicy.Id
+            ResponseHeadersPolicyId: !GetAtt YojaRestResponseHeaderPolicy.Id
             TargetOriginId: !Select
               - 2
               - !Split
@@ -788,6 +864,21 @@ Resources:
                 - /
                 - !GetAtt YojaWebhookService.Outputs.DropboxWebhookFunctionUrlConfig
             ViewerProtocolPolicy: https-only
+          - Compress: false
+            PathPattern: /errors
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            AllowedMethods:
+              - GET
+              - HEAD
+            SmoothStreaming: false
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            ResponseHeadersPolicyId: !GetAtt YojaErrorsResponseHeaderPolicy.Id
+            TargetOriginId: !GetAtt YojaHtmlBucket.RegionalDomainName
+            PathPattern: /errors
+            ViewerProtocolPolicy: https-only
+            FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction.FunctionARN
         DefaultCacheBehavior:
           AllowedMethods:
             - GET
@@ -796,12 +887,10 @@ Resources:
           TargetOriginId: !GetAtt YojaHtmlBucket.RegionalDomainName
           ViewerProtocolPolicy: https-only
           OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
-          ResponseHeadersPolicyId: !GetAtt YojaResponseHeaderPolicy.Id
+          ResponseHeadersPolicyId: !GetAtt YojaStaticResponseHeaderPolicy.Id
           FunctionAssociations:
             - EventType: viewer-request
               FunctionARN: !GetAtt YojaUnwatedHeadersCloudFrontFunction.FunctionARN
-            - EventType: viewer-response
-              FunctionARN: !GetAtt YojaAddCacheControlCloudFrontFunction.FunctionARN
         ViewerCertificate:
           AcmCertificateArn: !Ref PreexistingCertificateARN
           MinimumProtocolVersion: TLSv1.2_2018
