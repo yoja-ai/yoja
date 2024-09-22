@@ -122,5 +122,6 @@ COPY openai_ner.py ${LAMBDA_TASK_ROOT}
 COPY send_email.py ${LAMBDA_TASK_ROOT}
 COPY generate_pdf.py ${LAMBDA_TASK_ROOT}
 COPY ecs.py ${LAMBDA_TASK_ROOT}
+COPY searchsubdir.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

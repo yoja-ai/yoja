@@ -282,6 +282,8 @@ def check_cookie(event, refresh_access_token):
                         dropbox_email = check_user(service_conf, cookie_val.strip(), refresh_access_token, 'dropbox')
                         if dropbox_email:
                             rv['dropbox'] = dropbox_email
+                    elif cn == '__Host-yoja-searchsubdir':
+                        rv['searchsubdir'] = cookie_val.strip()
     return rv
 
 def update_users_table(email, refresh_token, access_token, expires_in, id_token=None, fullname=None, picture=None):

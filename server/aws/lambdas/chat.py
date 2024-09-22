@@ -252,7 +252,8 @@ class DocumentChunkRange:
         return out_chunk_range_list
         
 def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat', sample_source=None):
+                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat', sample_source=None,
+                    searchsubdir=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)]; the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -350,7 +351,9 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
 
 def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
-                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str) -> Tuple[str, str]:
+                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                    assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str,
+                                    searchsubdir=None) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
@@ -471,7 +474,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False)
+                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False, searchsubdir=searchsubdir)
                     print(f"**{_prtime()}: Tool output:** context={context}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                     tool_outputs.append({
@@ -481,7 +484,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 elif tool.function.name == "search_question_in_db_return_more" or tool.function.name == 'search_question_in_db_return_more.controls':
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True)
+                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True, searchsubdir=searchsubdir)
                     print(f"**{_prtime()}: Tool output:** context={context}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
                     tool_outputs.append({
@@ -493,7 +496,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     tool_arg_question = args_dict.get('question')
                     num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
                     tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
+                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
                     print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
                     tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
@@ -553,9 +556,9 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
         
     return None, new_context
 
-    
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
+                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                    chat_config:ChatConfiguration, last_msg:str, searchsubdir:str=None) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -589,12 +592,18 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             distances, indices_in_faiss = faiss_rm_vdb(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
-                # the first query in queries[] is the actual user chat text. we give that twice the weight
-                dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
-                if ind_in_faiss in passage_scores_dict:
-                    passage_scores_dict[ind_in_faiss].append(dist)
+                finfo = documents[index_map[ind_in_faiss][0]]
+                # if searchsubdir is specified, then take just the entries that exist in searchsubdir or its subdirectories
+                if not searchsubdir or finfo['path'].startswith(searchsubdir):
+                    print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}")
+                    # the first query in queries[] is the actual user chat text. we give that twice the weight
+                    dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
+                    if ind_in_faiss in passage_scores_dict:
+                        passage_scores_dict[ind_in_faiss].append(dist)
+                    else:
+                        passage_scores_dict[ind_in_faiss] = [dist]
                 else:
-                    passage_scores_dict[ind_in_faiss] = [dist]
+                    print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']} path={finfo['path']}")
         print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Passage Scores**")
@@ -717,7 +726,7 @@ def _truncate_reranked_indices(reranked_indices, sorted_summed_scores, most_rele
 
 def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
-                                    chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool, least_relevant_only:bool):
+                                    chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool, least_relevant_only:bool, searchsubdir:str=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -725,7 +734,8 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context
     """
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                            filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
 
     # if most_relevant_only and least_relevant_only are both False, return all
     if most_relevant_only:
@@ -857,10 +867,12 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
     return context_srcs, context_srcs_links
 
 def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10):
+                                         index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                         chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10, searchsubdir:str=None):
 
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, last_msg)
+    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                              filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
     
     files_dict:Dict[str,DocumentChunkDetails] = {}
     for i in range(len(reranked_indices)):
@@ -941,7 +953,8 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 
 g_cross_encoder = None
 def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat', sample_source=None):
+                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat', sample_source=None,
+                searchsubdir=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -962,7 +975,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     # string response??
     srp:str = ""; thread_id:str 
     srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    filekey_to_file_chunks_dict, None, chat_config, last_msg)
+                                    filekey_to_file_chunks_dict, None, chat_config, last_msg, searchsubdir)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -1105,8 +1118,10 @@ def chat_completions(event, context):
 
     messages = body['messages']
     if len(messages) == 1:
-        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source)
+        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source,
+                                              searchsubdir=rv['searchsubdir'] if 'searchsubdir' in rv else None)
     else:
-        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source)
+        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source,
+                                              searchsubdir=rv['searchsubdir'] if 'searchsubdir' in rv else None)
         
 if __name__ != '__main1__': traceback_with_variables.global_print_exc()

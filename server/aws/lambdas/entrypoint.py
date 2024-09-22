@@ -11,6 +11,7 @@ from chat import chat_completions
 from table_qa_lambda import table_qa_handler
 from send_email import send_email
 from generate_pdf import generate_pdf
+from searchsubdir import set_searchsubdir
 
 fnxmap = {
         '/rest/entrypoint/getversion': getversion,
@@ -20,7 +21,8 @@ fnxmap = {
         '/rest/v1/chat/completions': chat_completions,
         '/rest/entrypoint/tableqa': table_qa_handler,
         '/rest/v1/send-email': send_email,
-        '/rest/entrypoint/generate-pdf': generate_pdf
+        '/rest/entrypoint/generate-pdf': generate_pdf,
+        '/rest/entrypoint/set-searchsubdir': set_searchsubdir
 }
 
 def entrypoint(event, context):
