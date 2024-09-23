@@ -27,6 +27,7 @@ import enum
 import copy
 import jsons
 import tiktoken
+from searchsubdir import do_set_searchsubdir
 
 MAX_TOKEN_LIMIT=2048
 #ASSISTANTS_MODEL="gpt-4"
@@ -156,7 +157,7 @@ class ChatConfiguration:
     print_trace_context_choice:bool
     file_details:bool
     retreiver_strategy:RetrieverStrategyEnum
-
+    dbg_set_searchsubdir:bool
 
 @dataclasses.dataclass
 class DocumentChunkDetails:
@@ -321,7 +322,8 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey = (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
+                (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -331,7 +333,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         # '^': print_trace with info about choice of context
         # '!': print details of file
         c = query[idx]
-        if c not in ['+','@','#','$', '^', '!', '/']: break
+        if c not in ['+','@','#','$', '^', '!', '/', '~']: break
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = True
@@ -340,10 +342,14 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         if c == '^': print_trace_context_choice = True
         if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
+        if c == '~': dbg_set_searchsubdir = True
     
     # strip the debug flags from the question
-    last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_stratgey)
+    if idx == len(query) - 1:
+        last_msg = ""
+    else:
+        last_msg = query[idx:]
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_stratgey, dbg_set_searchsubdir)
     logmsg = f"**{_prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
     print(logmsg)
 
@@ -949,7 +955,6 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
             'Expires': '0'
         },
     }
-    return respond(None, res=res)
 
 g_cross_encoder = None
 def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
@@ -971,6 +976,8 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
 
     if chat_config.file_details:
         return print_file_details(event, faiss_rms, documents_list, last_msg, chat_config.use_ivfadc)
+    if chat_config.dbg_set_searchsubdir:
+        return do_set_searchsubdir(last_msg.strip())
 
     # string response??
     srp:str = ""; thread_id:str 

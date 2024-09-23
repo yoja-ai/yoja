@@ -1,7 +1,6 @@
 import { Message, SourceFile, UserInfo } from "../../type";
 import React, { useEffect, useRef, useState } from "react";
 import { Menu, Copy, ThumbsDown, ThumbsUp, CopyCheck } from 'lucide-react';
-import { chatApi } from "../../services/ChatService";
 import { Notyf } from 'notyf';
 import 'notyf/notyf.min.css';
 import ChatBottom from "../chat/ChatBottom";
