@@ -685,3 +685,68 @@
   height: 20px !important;
   bottom: 5px;
 }
+
+.searchsubdir-bar {
+  margin-top: 10px;
+  display: flex;
+  width: 100%;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.searchsubdir-box-icons {
+  position: absolute;
+  right: 22px;
+  bottom: 10px;
+  gap: 5px;
+  display: flex;
+}
+.searchsubdir-box-send-icon {
+  border-radius: 999%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  padding: 3px;
+  border: 2px solid var(--border, #FF6442);
+  background: var(--bgAlt, #FF6442);
+  cursor: pointer;
+  color: #FFFFFF;
+}
+
+.searchsubdir-title-text-area {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  padding-left: 22px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  border: 1px solid var(--border, #E6E6E6);
+  border-radius: 2%;
+  overflow: hidden;
+  align-items: center;
+  resize: none;
+  width: 35%;
+  height: 1.25rem;
+  display: flex;
+  padding: 12px 18px 12px 24px;
+  background: var(--bgAlt, #bbbbbb);
+}
+
+.searchsubdir-text-area {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  padding-left: 22px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  border: 1px solid var(--border, #E6E6E6);
+  border-radius: 2%;
+  overflow: hidden;
+  align-items: center;
+  resize: none;
+  width: 65%;
+  height: 1.25rem;
+  display: flex;
+  padding: 12px 18px 12px 24px;
+  background: var(--bgAlt, #bbbbbb);
+}

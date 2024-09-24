@@ -15,4 +15,30 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 )
 Textarea.displayName = "Textarea"
 
-export { Textarea }
+const SearchsubdirTitleTextarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
+  ({ className, ...props }, ref) => {
+    return (
+      <textarea
+        className="searchsubdir-title-text-area"
+        ref={ref}
+        {...props}
+      />
+    )
+  }
+)
+SearchsubdirTitleTextarea.displayName = "SearchsubdirTitleTextarea"
+
+const SearchsubdirTextarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
+  ({ className, ...props }, ref) => {
+    return (
+      <textarea
+        className="searchsubdir-text-area"
+        ref={ref}
+        {...props}
+      />
+    )
+  }
+)
+SearchsubdirTextarea.displayName = "SearchsubdirTextarea"
+
+export { Textarea, SearchsubdirTitleTextarea, SearchsubdirTextarea}

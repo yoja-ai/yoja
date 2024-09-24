@@ -3,9 +3,7 @@ import Sidebar from "../sidebar/Sidebar";
 import { ChatLayout } from "./ChatLayout";
 import { userData } from "../chat/data";
 import { ChatHistory, Message, SourceFile } from "../../type";
-import { chatApi } from "../../services/ChatService";
-import { Notyf } from 'notyf';
-import 'notyf/notyf.min.css';
+import { chatApi, searchSubdirApi } from "../../services/ChatService";
 
 interface LayoutProps {
   defaultLayout?: number[];
@@ -18,7 +16,15 @@ const Layout: React.FC<LayoutProps> = () => {
   const [currentChat, setCurrentChat] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+  const [searchSubdir, setSearchSubdir] = useState("");
 
+  useEffect(() => {
+    var cookieValue = document.cookie.split('; ').filter(row => row.startsWith('__Host-yoja-searchsubdir=')).map(c=>c.split('=')[1])[0];
+    if (cookieValue != undefined) {
+      setSearchSubdir(cookieValue);
+    }
+  }, []);
+  
   useEffect(() => {
     const items = JSON.parse(localStorage.getItem('current_chat') || '[]');
     if (items.length > 0) {
@@ -51,20 +57,6 @@ const Layout: React.FC<LayoutProps> = () => {
     }
   }, []);
   
-
-  const notyf = new Notyf({
-    duration: 1000,
-    position: {
-      x: 'right',
-      y: 'top',
-    },
-    types: [
-      {
-        type: 'warning',
-        duration: 3000,
-      }
-    ]
-  });
 
   useEffect(() => {
     const checkScreenWidth = () => {
@@ -130,6 +122,19 @@ const getFileFullPath = (extension: string, id: string) => {
     }
 }
 
+const sendSearchSubdir = (newSearchSubdir: string) => {
+  setIsLoading(true);
+  searchSubdirApi(newSearchSubdir).then(async (res: any) => {
+    const text = await res.text();
+    const result = JSON.parse(text.slice(5));
+  }).catch((error: any) => {
+      setIsLoading(false);
+      alert(`Error: ${error.message}`);
+  }).finally(() => {
+      setIsLoading(false);
+  });
+};
+
 const sendMessage = (newMessage: Message) => {
   setIsLoading(true);
   const updatedCurrentChat = [...currentChat, newMessage];
@@ -138,7 +143,6 @@ const sendMessage = (newMessage: Message) => {
 
   chatApi(updatedCurrentChat).then(async (res: any) => {
       const text = await res.text();
-      console.log("chatApi: res text=" + text);
       const result = JSON.parse(text.slice(5));
       if (result) {
           const resMessage = {
@@ -146,10 +150,7 @@ const sendMessage = (newMessage: Message) => {
               source: convertFileNameAndID(result.choices[0].delta.content)
           };
           if (result.choices[0].hasOwnProperty("sample_source")) {
-            console.log("chatApi: sample_source=" + result.choices[0].sample_source);
             resMessage.sample_source = result.choices[0].sample_source;
-          } else {
-            console.log("chatApi: sample_source is not present.");
           }
           const fullUpdatedChat = [...updatedCurrentChat, resMessage];
 
@@ -191,10 +192,7 @@ const sendMessage = (newMessage: Message) => {
       }
   }).catch((error: any) => {
       setIsLoading(false);
-      notyf.open({
-          type: 'warning',
-          message: `Error: ${error.message}`
-      });
+      alert(`Error: ${error.message}`);
   }).finally(() => {
       setIsLoading(false);
   });
@@ -221,6 +219,8 @@ const sendMessage = (newMessage: Message) => {
         isMobile={isMobile}
         isLoading={isLoading}
         sendMessage={sendMessage}
+        searchSubdir={searchSubdir}
+        sendSearchSubdir={sendSearchSubdir}
       />
     </div>
   );

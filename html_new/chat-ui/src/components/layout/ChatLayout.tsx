@@ -1,9 +1,8 @@
 import { Message, SourceFile, UserInfo } from "../../type";
 import React, { useEffect, useRef, useState } from "react";
 import { Menu, Copy, ThumbsDown, ThumbsUp, CopyCheck } from 'lucide-react';
-import { Notyf } from 'notyf';
-import 'notyf/notyf.min.css';
 import ChatBottom from "../chat/ChatBottom";
+import ChatTop from "../chat/ChatTop";
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar, AvatarImage } from "../ui/avatar";
 import { ThreeDots } from "react-loader-spinner";
@@ -18,23 +17,11 @@ interface ChatProps {
   isCollapsed: boolean;
   setIsCollapsed: any;
   sendMessage: any;
+  searchSubdir: any;
+  sendSearchSubdir: any;
 }
 
-export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, isCollapsed, setCurrentChat, sendMessage, isLoading }: ChatProps) {
-  const notyf = new Notyf({
-    duration: 1000,
-    position: {
-      x: 'right',
-      y: 'top',
-    },
-    types: [
-      {
-        className:'notyficss',
-        type: 'warning',
-        duration: 3000,
-      }
-    ]
-  });
+export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, isCollapsed, setCurrentChat, sendMessage, isLoading, searchSubdir, sendSearchSubdir }: ChatProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -348,6 +335,7 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
               }
             </AnimatePresence> : <div>  {/* </New chat view> */}  </div>}
           </div>
+          <ChatTop searchSubdir={searchSubdir} sendSearchSubdir={sendSearchSubdir}/>
           <ChatBottom sendMessage={sendMessage} messages={currentChat} isMobile={isMobile} isLoading={isLoading}/>
         </div>
       </div>

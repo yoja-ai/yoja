@@ -56,20 +56,11 @@ async function tryLogin() {
   } else {
       picture = myJson.picture;
   }
-  console.log("tryLogin: gdriveLoginSuccess=" + gdriveLoginSuccess
-      + ", dropboxLoginSuccess=" + dropboxLoginSuccess);
   loginRestFinished = true;
 }
 
 function handleCredentialResponse(response) {
-  console.log("Encoded JWT ID token: " + response.credential);
   cred = parseJwt(response.credential);
-  console.log("Parsed Encoded JWT ID token: " + JSON.stringify(cred));
-  console.log("Email: " + cred['email']);
-  console.log("family_name: " + cred['family_name']);
-  console.log("given_name: " + cred['given_name']);
-  console.log("picture: " + cred['picture']);
-  console.log("name: " + cred['name']);
   codeClient = google.accounts.oauth2.initCodeClient({
     client_id: ServiceConfig.GOOGLE_CLIENT_ID,
     scope: SCOPES,
@@ -95,7 +86,6 @@ async function loginToYoja() {
   document.getElementById('waitingFlyout').style.display = 'none';
 
   if (gdriveLoginSuccess) {
-    console.log("login of gdrive success!!!!!!!!!!!!. gdriveEmail=" + gdriveEmail);
     const params = "google=" + encodeURIComponent(gdriveEmail)
                       + "&fullname=" + encodeURIComponent(fullname) + "&picture=" + encodeURIComponent(picture);
     window.location.href = "index.html?" + params;

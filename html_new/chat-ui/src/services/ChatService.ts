@@ -67,8 +67,18 @@ export const chatApi = async (messages: Message[]) => {
       alert("Login expired");
       window.location.href = "/login.html";
     } else {
-      console.log("chatApi: returning " + JSON.stringify(res));
       return res;
     }
   }
+};
+
+export const searchSubdirApi = async (newSearchSubdir: string) => {
+  let res = await fetch(servicesConfig.envAPIEndpoint + '/entrypoint/set-searchsubdir',
+    {
+      method: 'POST',
+      body: JSON.stringify({searchsubdir: newSearchSubdir }),
+      headers: {'Content-Type': 'application/json'}
+    }
+  );
+  return res;
 };

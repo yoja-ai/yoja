@@ -6,7 +6,3 @@ window.picture = urlParams.get('picture');
 if (window.picture == null) {
     window.picture = "./user.png";
 }
-console.log("index.html: google=" + window.google
-                    + ", dropbox=" + window.dropbox
-                    + ", fullname=" + window.fullname
-                    + ", picture=" + window.picture)
