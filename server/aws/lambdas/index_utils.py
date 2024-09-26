@@ -298,6 +298,18 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
     
     return True
 
+def _write_progress_file(s3client, bucket, prefix, attr_prefix, num_unmodified, unmodified_size, num_needs_embedding, needs_embedding_size):
+    try:
+        with open('/tmp/indexing_progress.json', 'w+') as fl:
+            fl.write(json.dumps({f"{attr_prefix}_num_unmodified": num_unmodified,
+                                 f"{attr_prefix}_unmodified_size": unmodified_size,
+                                 f"{attr_prefix}_num_needs_embedding": num_needs_embedding,
+                                 f"{attr_prefix}_needs_embedding_size": needs_embedding_size}))
+        s3client.upload_file('/tmp/indexing_progress.json', bucket, f"{prefix}/indexing_progress.json")
+    except Exception as ex:
+        print(f"Caught {ex} while writing progress file")
+        return False
+
 def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
     """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
@@ -529,6 +541,8 @@ def process_pptx(file_item, filename, fileid, bio):
 class StorageReader:
     def read(self, fileid, filename, mimetype):
         pass
+    def descriptor(self):
+        pass
 
 class GoogleDriveReader(StorageReader):
     def __init__(self, service):
@@ -546,6 +560,8 @@ class GoogleDriveReader(StorageReader):
         else:
             print(f"GoogleDriveReader.read: fileid={fileid} calling download")
             return download_gdrive_file(self._service, fileid, filename)
+    def descriptor(self):
+        return 'gdrive'
 
 class DropboxReader(StorageReader):
     def __init__(self, token):
@@ -561,19 +577,49 @@ class DropboxReader(StorageReader):
                 file.write(chunk)
         file.seek(0, os.SEEK_SET)
         return file
+    def descriptor(self):
+        return 'dropbox'
 
-def process_files(email, storage_reader:StorageReader, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
+def update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix):
+    now = int(time.time())
+    print(f"update_progress_file: Entered. now={now}")
+    if unmodified and (not prev_update or (now - prev_update) >= 60):
+        print(f"update_progress_file: storage_reader={storage_reader.descriptor()}, len unmodified={len(unmodified)}, prev_update={prev_update}")
+        # calculate progress
+        unmodified_size = 0
+        for ue_key, ue_value in unmodified.items():
+            if 'size' in ue_value:
+                unmodified_size = unmodified_size + int(ue_value['size'])
+        needs_embedding_size = 0
+        for ne_key, ne_value in needs_embedding.items():
+            if 'size' in ne_value:
+                needs_embedding_size = needs_embedding_size + int(ne_value['size'])
+        done_embedding_size = 0
+        for de_key, de_value in done_embedding.items():
+            if 'size' in de_value:
+                done_embedding_size = done_embedding_size + int(de_value['size'])
+        print(f"update_progress_file: {storage_reader.descriptor()} unmodified_size={unmodified_size}, needs_embedding_size={needs_embedding_size}, done_embedding_size={done_embedding_size}")
+        _write_progress_file(s3client, bucket, prefix, storage_reader.descriptor(),
+                    len(unmodified) + len(done_embedding), unmodified_size + done_embedding_size,
+                    len(needs_embedding) - len(done_embedding), needs_embedding_size - done_embedding_size)
+        return now
+    else:
+        print(f"update_progress_file: unmodified not present/prev_update {prev_update} too close. Not updating progress file")
+
+def process_files(email, storage_reader:StorageReader, unmodified, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
     """ processs the files in google drive. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
     """
+    print(f"process_files: Entered")
     time_limit_exceeded = False
+    prev_update = 0
     done_embedding = {}
+    prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
     for fileid, file_item in needs_embedding.items():
         filename = file_item['filename']
         path = file_item['path'] if 'path' in file_item else ''
         mimetype = file_item['mimetype'] if 'mimetype' in file_item else ''
-        
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
             if 'size' in file_item and int(file_item['size']) == 0: 
@@ -584,10 +630,12 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_pptx(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
+                prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_docx(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
+                prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
             elif filename.lower().endswith('.doc'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 tfd, tfn = tempfile.mkstemp(suffix=".doc", dir="/tmp")
@@ -604,6 +652,7 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                     with open(f"{tfn}x", 'rb') as fp:
                         process_docx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
+                        prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
                     os.remove(f'{tfn}x')
                 else:
                     print(f"Failed to convert {filename} to docx. Return value {rv.returncode}. Not generating embeddings")
@@ -623,6 +672,7 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                     with open(f"{tfn}x", 'rb') as fp:
                         process_pptx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
+                        prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
                     os.remove(f'{tfn}x')
                 else:
                     print(f"Failed to convert {filename} to pptx. Return value {rv.returncode}. Not generating embeddings")
@@ -641,6 +691,7 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                 if 'partial' in pdf_dict:
                     file_item['partial'] = 'true'
                 done_embedding[fileid] = file_item                    
+                prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
             elif mimetype == 'application/vnd.google-apps.presentation':
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if not bio:
@@ -653,6 +704,7 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                     with open(f"{tfn}", 'rb') as fp:
                         process_pptx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
+                        prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
                     os.remove(f'{tfn}')
             elif mimetype == 'application/vnd.google-apps.document':
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
@@ -666,6 +718,7 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
                     with open(f"{tfn}", 'rb') as fp:
                         process_docx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
+                        prev_update = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix)
                     os.remove(f'{tfn}')
             else:
                 print(f"process_files: skipping unknown file type {filename}")
@@ -676,7 +729,8 @@ def process_files(email, storage_reader:StorageReader, needs_embedding, s3client
             print(f"process_files: lambda_timelimit_exceeded. Breaking..")
             time_limit_exceeded = True
             break
-                
+    if len(done_embedding) > 0:
+        update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, 0, s3client, bucket, prefix)
     return done_embedding, time_limit_exceeded
 
 def _create_index_metadata_json_local(in_index_metadata:IndexMetadata):
@@ -907,7 +961,7 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
     for td in to_del:
         del unmodified[td]
 
-    done_embedding, time_limit_exceeded = process_files(email, DropboxReader(access_token), needs_embedding, s3client, bucket, user_prefix)
+    done_embedding, time_limit_exceeded = process_files(email, DropboxReader(access_token), unmodified, needs_embedding, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or num_deleted_files > 0:
         update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
     else:
@@ -1146,7 +1200,7 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         for td in to_del:
             del unmodified[td]
 
-        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), unmodified, needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
             update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
         else:
@@ -1233,7 +1287,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/index_metadata.json")
 
         fnx_start = datetime.datetime.now()
-        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), None, needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0:
             update_files_index_jsonl(done_embedding, {}, bucket, user_prefix, s3client)
         else:

@@ -11,6 +11,7 @@ from chat import chat_completions
 from table_qa_lambda import table_qa_handler
 from send_email import send_email
 from generate_pdf import generate_pdf
+from indexing_progress import get_indexing_progress
 from searchsubdir import set_searchsubdir
 
 fnxmap = {
@@ -22,6 +23,7 @@ fnxmap = {
         '/rest/entrypoint/tableqa': table_qa_handler,
         '/rest/v1/send-email': send_email,
         '/rest/entrypoint/generate-pdf': generate_pdf,
+        '/rest/entrypoint/get-indexing-progress': get_indexing_progress,
         '/rest/entrypoint/set-searchsubdir': set_searchsubdir
 }
 
