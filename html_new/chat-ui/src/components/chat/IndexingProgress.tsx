@@ -66,7 +66,7 @@ const ProgressBar = () => {
       <div className="progress-container">
         <div className="progress-bar" style={{ width: `${progress}%` }}></div>
       </div>
-      {isHovered && <p className="progress-text">{progress}% Complete</p>}
+      {isHovered && <p className="progress-text">Indexing: {progress}% Complete</p>}
     </div>
   );
 };
