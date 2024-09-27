@@ -27,6 +27,7 @@ import enum
 import copy
 import jsons
 import tiktoken
+from scripts.fetch_tool_prompts import fetch_tool_prompts
 
 MAX_TOKEN_LIMIT=2048
 #ASSISTANTS_MODEL="gpt-4"
@@ -262,43 +263,108 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     }
     return respond(None, res=res)
 
-def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
-    """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey = (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+def replace_tools_in_assistant(new_tools):
+    global assistant
+    assistant = client.beta.assistants.create(
+        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
+        model=ASSISTANTS_MODEL,
+        tools=new_tools
+    )
+
+
+def update_tool_prompts(tool_data: List[Dict[str, str]]):
+    tools = []
+    for row in tool_data:
+        tool_name = row['Tool Name']
+        description = row['Description']
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question for which passages need to be searched"
+                        }
+                    },
+                    "required": ["question"]
+                }
+            }
+        })
+    # Replace the hardcoded tools with the dynamic tools
+    replace_tools_in_assistant(tools)
+
+
+def _debug_flags(query: str, tracebuf: List[str]) -> Tuple[ChatConfiguration, str]:
+    """
+    This function processes debug flags and checks if a Google Sheet command is issued.
+    If a command of the format %sheetname/tabname is detected, it fetches tool prompts
+    using the fetch_tool_prompts function.
+    Returns a tuple (ChatConfiguration, str) containing the configuration and remaining message.
+    """
+    # Default configuration values
+    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_strategy = (
+        False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+    
+    # Loop through the query to check for any debug flags
     idx = 0
     for idx in range(len(query)):
-        # '+': print_trace
-        # '@': use ivfadc index
-        # '#': print only 10 results from cross encoder.
-        # '$': enable NER
-        # '^': print_trace with info about choice of context
-        # '!': print details of file
         c = query[idx]
-        if c not in ['+','@','#','$', '^', '!', '/']: break
-        
+        if c not in ['+', '@', '#', '$', '^', '!', '/']:
+            break
+
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = True
         if c == '#': cross_encoder_10 = True
         if c == '$': use_ner = True
         if c == '^': print_trace_context_choice = True
         if c == '!': file_details = True
-        if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
-    
-    # strip the debug flags from the question
+        if c == '/': retriever_strategy = RetrieverStrategyEnum.FullDocStrategy
+
+    # Remaining message after processing debug flags
     last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_stratgey)
+    chat_config = ChatConfiguration(
+        print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_strategy)
+    
     logmsg = f"**{_prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
     print(logmsg)
 
+    # Check if the remaining message starts with '%' indicating a Google Sheet command
+    if last_msg.startswith('%'):
+        try:
+            # Fetch tool prompts based on user input
+            tool_data = fetch_tool_prompts(last_msg)  # This function handles all the API calls and data retrieval
+            
+            if tool_data:
+                update_tool_prompts(tool_data)  # Update the tools configuration with the fetched data
+                last_msg = ""  # Clear the message since it was a command
+            
+        except Exception as e:
+            print(f"Error fetching tools from Google Sheets: {e}")
+            last_msg = query  # Keep the original query in case of error
+
     return (chat_config, last_msg)
 
-def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
-                                    index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
-                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]], assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str) -> Tuple[str, str]:
+
+
+
+
+def retrieve_using_openai_assistant(
+    faiss_rms: List[faiss_rm.FaissRM],
+    documents_list: List[Dict[str, str]],
+    index_map_list: List[Tuple[str, str]],
+    index_type,
+    tracebuf: List[str],
+    filekey_to_file_chunks_dict: Dict[str, List[DocumentChunkDetails]],
+    assistants_thread_id: str,
+    chat_config: ChatConfiguration,
+    last_msg: str
+) -> Tuple[str, str]:
     """
-    documents is a dict like {fileid: finfo}; 
-    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
-    Returns the tuple (output, thread_id).  REturns (None, NOne) on failure.
+    This function uses the dynamically updated assistant configuration to process the user's query.
     """
     import openai
     import openai.types
@@ -309,79 +375,19 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     import openai.pagination
     from openai import OpenAI
     from openai import AssistantEventHandler
-    client = OpenAI()
- 
-    assistant = client.beta.assistants.create(
-        # Added 'or provide details of the mentioned subject." since openai was not
-        # calling our function for a bare chat line such as 'android crypto policy' instead
-        # of a full instruction such as 'give me details of android crypto policy'
-        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
-        # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
-        model=ASSISTANTS_MODEL,
-        tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_question_in_db",
-                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which passages need to be searched"
-                            },
-                        },
-                    "required": ["question"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_question_in_db_return_more",
-                    "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject. Use this tool only if you want additional results than those returned by the tool search_question_in_db",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which passages need to be searched"
-                            },
-                        },
-                    "required": ["question"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_of_files_for_given_question",
-                    "description": "Search confidential and private information and return file names that can answer the given question. Use this tool only if the search_question_in_db tool does not work",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "The question for which file names need to be listed"
-                            },
-                            "number_of_files": {
-                                "type":"integer",
-                                "description":"The number of file names to return.  Default is to return 10 file names"
-                            }
-                        },
-                    "required": ["question"] #, "number_of_files"]
-                    }
-                }
-            }
-        ]
-    )
 
+    client = OpenAI()
+    
+    # The global `assistant` object should have been updated with new tools from Google Sheets.
+    global assistant
+
+    # Create a new thread if no thread ID exists
     if not assistants_thread_id:
-        thread:openai.types.beta.Thread = client.beta.threads.create()
+        thread: openai.types.beta.Thread = client.beta.threads.create()
         assistants_thread_id = thread.id
-        
-    message:openai.types.beta.threads.Message = client.beta.threads.messages.create(
+
+    # Add the last message to the thread
+    message: openai.types.beta.threads.Message = client.beta.threads.messages.create(
         thread_id=assistants_thread_id,
         role="user",
         content=last_msg,
@@ -394,19 +400,16 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             logmsgs.append(f"**message_content=** {c1.text.value}")
     tracebuf.extend(logmsgs)
 
-    # runs.create_and_poll sometimes fails with run.status==failed
-    # and run.last_error=LastError(code='server_error', message='Sorry, something went wrong.')
     retries = 0
     while True:
-        run:openai.types.beta.threads.Run = client.beta.threads.runs.create_and_poll(
+        # Run the assistant thread with the dynamically updated assistant configuration
+        run: openai.types.beta.threads.Run = client.beta.threads.runs.create_and_poll(
             thread_id=assistants_thread_id,
             assistant_id=assistant.id,
         )
- 
+
         if run.status == 'completed':
-            messages = client.beta.threads.messages.list(
-                thread_id=assistants_thread_id
-            )
+            messages = client.beta.threads.messages.list(thread_id=assistants_thread_id)
             print(f"**{_prtime()}: run completed:**run={run}")
             logmsgs = [f"**{_prtime()}: run completed:**"]
             for msg in messages:
@@ -415,14 +418,14 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
-            seconds = 2**retries
+            seconds = 2 ** retries
             logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
-            print(logmsg); tracebuf.append(logmsg)
+            print(logmsg)
+            tracebuf.append(logmsg)
             time.sleep(seconds)
             retries += 1
             if retries >= 5:
                 return None, None, None
-        # run.status='requires_action'
         else:
             print(f"**{_prtime()}: run incomplete:** run result after running thread with above messages: run={run}")
             logmsgs = [f"**{_prtime()}: run incomplete:** run result after running thread with above messages"]
@@ -433,15 +436,12 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             tracebuf.extend(logmsgs)
             break
 
-    loopcnt:int = 0
+    loopcnt: int = 0
     while loopcnt < 5:
         loopcnt += 1
 
         if run.status == 'completed':
-            # messages=SyncCursorPage[Message](data=[
-                # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
-                # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
-            messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
+            messages = client.beta.threads.messages.list(thread_id=assistants_thread_id)
             print(f"**{_prtime()}: run completed:**run={run}")
             if run.usage:
                 logmsgs = [f"**{_prtime()}: run completed:** completion_tokens={run.usage.completion_tokens}, prompt_tokens={run.usage.prompt_tokens}, total_tokens={run.usage.total_tokens}"]
@@ -453,54 +453,46 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             message = next(iter(messages))
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
-            seconds = 2**loopcnt
+            seconds = 2 ** loopcnt
             logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
-            print(logmsg); tracebuf.append(logmsg)
+            print(logmsg)
+            tracebuf.append(logmsg)
             continue
-        else: # run is incomplete
+        else:
             print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
             tracebuf.append(f"**{_prtime()}: run incomplete:**")
     
             # Define the list to store tool outputs
-            tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
-            # Loop through each tool in the required action section        
+            tool_outputs = []
             for tool in run.required_action.submit_tool_outputs.tool_calls:
-                # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
-                args_dict:dict = json.loads(tool.function.arguments)
+                args_dict: dict = json.loads(tool.function.arguments)
                 print(f"**{_prtime()}: Running tool {tool}")
-                if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
+                if tool.function.name == "search_question_in_db":
                     tool_arg_question = args_dict.get('question')
-                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False)
+                    context: str = _get_context_using_retr_and_rerank(
+                        faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False)
                     print(f"**{_prtime()}: Tool output:** context={context}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
-                    tool_outputs.append({
-                        "tool_call_id": tool.id,
-                        "output": context
-                    })
-                elif tool.function.name == "search_question_in_db_return_more" or tool.function.name == 'search_question_in_db_return_more.controls':
+                    tool_outputs.append({"tool_call_id": tool.id, "output": context})
+                elif tool.function.name == "search_question_in_db_return_more":
                     tool_arg_question = args_dict.get('question')
-                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True)
+                    context: str = _get_context_using_retr_and_rerank(
+                        faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True)
                     print(f"**{_prtime()}: Tool output:** context={context}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
-                    tool_outputs.append({
-                        "tool_call_id": tool.id,
-                        "output": context
-                    })
-                elif tool.function.name == "list_of_files_for_given_question" or tool.function.name == 'list_of_files_for_given_question.controls':
-                    args_dict:dict = json.loads(tool.function.arguments)
+                    tool_outputs.append({"tool_call_id": tool.id, "output": context})
+                elif tool.function.name == "list_of_files_for_given_question":
+                    args_dict: dict = json.loads(tool.function.arguments)
                     tool_arg_question = args_dict.get('question')
                     num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
-                    tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                                                filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
+                    tool_output = _get_filelist_using_retr_and_rerank(
+                        faiss_rms, documents_list, index_map_list, index_type, tracebuf, filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files)
                     print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
                     tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
-                    tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
+                    tool_outputs.append({"tool_call_id": tool.id, "output": tool_output})
                 else:
                     raise Exception(f"**Unknown function call:** {tool.function.name}")
-  
-            # Submit all tool outputs at once after collecting them in a list
+
             if tool_outputs:
                 try:
                     print(f"**{_prtime()}: calling submit_tool_outputs_and_poll:** run={run}.")
@@ -517,10 +509,14 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     print("Failed to submit tool outputs: ", e)
             else:
                 logmsg = "**{_prtime()}: No tool outputs to submit.**"
-                print(logmsg); tracebuf.append(logmsg)
+                print(logmsg)
+                tracebuf.append(logmsg)
+
     logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing exited loop without reaching complete. returning None"
-    print(logmsg); tracebuf.append(logmsg)
+    print(logmsg)
+    tracebuf.append(logmsg)
     return None, None, None
+
 
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
     """returns the tupe (error_dict, context)"""
