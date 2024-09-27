@@ -28,7 +28,7 @@ import copy
 import jsons
 import tiktoken
 from searchsubdir import do_set_searchsubdir
-from scripts.fetch_tool_prompts import fetch_tool_prompts
+from fetch_tool_prompts import fetch_tool_prompts
 
 MAX_TOKEN_LIMIT=2048
 #ASSISTANTS_MODEL="gpt-4"

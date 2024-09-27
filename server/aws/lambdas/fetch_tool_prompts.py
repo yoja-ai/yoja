@@ -1,7 +1,7 @@
 # fetch_tool_prompts.py
 
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import google.oauth2.credentials 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -34,12 +34,15 @@ def get_sheet_id_by_name(sheet_name, creds):
         print(f"An error occurred: {error}")
         return None
 
-def fetch_tool_prompts(user_input):
+def fetch_tool_prompts(email, user_input):
     """
     Fetch tool prompts from Google Sheets based on user input in the format: %sheet_name/tab_name.
     Returns a list of dictionaries with 'Tool Name' and 'Description'.
     """
     try:
+        item = get_user_table_entry(email)
+        creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
+
         # Extract the sheet name and tab name from user input: %sheet_name/tab_name
         if not user_input.startswith('%'):
             raise ValueError("User input must start with '%' to indicate a command.")
@@ -47,15 +50,6 @@ def fetch_tool_prompts(user_input):
         sheet_and_tab = user_input[1:].split('/')
         sheet_name = sheet_and_tab[0]  # Get the sheet name
         tab_name = sheet_and_tab[1] if len(sheet_and_tab) > 1 else 'Sheet1'  # Default to 'Sheet1' if not provided
-
-        # Define the scope for Google Sheets and Google Drive
-        scope = [
-            'https://www.googleapis.com/auth/spreadsheets.readonly',
-            'https://www.googleapis.com/auth/drive.metadata.readonly'
-        ]
-
-        # Authenticate using service account credentials
-        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
 
         # Dynamically find the sheet ID based on the sheet name
         sheet_id = get_sheet_id_by_name(sheet_name, creds)
