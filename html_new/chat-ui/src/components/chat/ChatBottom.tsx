@@ -108,13 +108,13 @@ import {
               disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">
-                <DirectoryBrowser />
                 <SendHorizontal size={16} className="chat-box-send-icon" opacity={ isLoading ? 0.5 : 1} onClick={handleSend}/>
                 {message.trim() ? (
                     <X size={16} color="#71717a" className="chat-box-icon" onClick={() => setMessage("")}/>
                 ) : (
                     null
                 )}
+                <DirectoryBrowser />
             </div>
           </motion.div>
         </AnimatePresence>

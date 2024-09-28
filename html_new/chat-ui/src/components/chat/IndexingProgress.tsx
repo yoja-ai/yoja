@@ -31,7 +31,7 @@ const ProgressBar = () => {
         }
         var pct;
         if (finished > 0 || not_finished > 0) {
-          pct = (finished/(finished+not_finished))*100;
+          pct = Math.round((finished/(finished+not_finished))*100);
         } else {
           pct = 0;
         }
@@ -47,7 +47,7 @@ const ProgressBar = () => {
     fetchProgress();
 
     // Set an interval to fetch progress every 60 seconds (60000 ms)
-    const interval = setInterval(fetchProgress, 6000000);
+    const interval = setInterval(fetchProgress, 60000);
 
     // Cleanup the interval on component unmount
     return () => clearInterval(interval);

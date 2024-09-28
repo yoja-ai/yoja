@@ -599,17 +599,29 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
-                # if searchsubdir is specified, then take just the entries that exist in searchsubdir or its subdirectories
-                if not searchsubdir or finfo['path'].startswith(searchsubdir):
-                    print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}")
+                if searchsubdir:
+                    if 'path' in finfo:
+                        if finfo['path'].startswith(searchsubdir):
+                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}")
+                            # the first query in queries[] is the actual user chat text. we give that twice the weight
+                            dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
+                            if ind_in_faiss in passage_scores_dict:
+                                passage_scores_dict[ind_in_faiss].append(dist)
+                            else:
+                                passage_scores_dict[ind_in_faiss] = [dist]
+                        else:
+                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting for path mismatch {finfo['filename']} path={finfo['path']}")
+                    else:
+                        print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']} since no path")
+                else:
+                    print(f"retrieve_and_rerank_using_faiss: No searchsubdir. Accepting {finfo['filename']} path={finfo['path'] if 'path' in finfo else 'unavailable'}")
                     # the first query in queries[] is the actual user chat text. we give that twice the weight
                     dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
                     if ind_in_faiss in passage_scores_dict:
                         passage_scores_dict[ind_in_faiss].append(dist)
                     else:
                         passage_scores_dict[ind_in_faiss] = [dist]
-                else:
-                    print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']} path={finfo['path']}")
+
         print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Passage Scores**")
@@ -1075,19 +1087,33 @@ def chat_completions(event, context):
     body = json.loads(event['body'])
     print(f"body={body}")
 
+    searchsubdir = None
     sample_source=None
-    faiss_rm_vdbs:List[faiss_rm.FaissRM] = []
-    for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive], ['dropbox', faiss_rm.DocStorageType.DropBox] ):
-        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, doc_storage_type, build_faiss_indexes=False, sub_prefix=index)
-        if faiss_rm_vdb: faiss_rm_vdbs.append(faiss_rm_vdb)
-    if not len(faiss_rm_vdbs) or not faiss_rm_vdbs[0]:
+    faiss_rms:List[faiss_rm.FaissRM] = []
+    if 'searchsubdir' in rv:
+        ss1 = rv['searchsubdir']
+        if ss1.startswith('[gdrive]'):
+            searchsubdir = ss1[8:].lstrip('/').rstrip('/')
+            faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, faiss_rm.DocStorageType.GoogleDrive, build_faiss_indexes=False, sub_prefix=None)
+            if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
+        elif ss1.startswith('[dropbox]'):
+            searchsubdir = ss1[9:].lstrip('/').rstrip('/')
+            faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, faiss_rm.DocStorageType.DropBox, build_faiss_indexes=False, sub_prefix='dropbox')
+            if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
+        else:
+            print(f"Error. searchsubdir does not start with [gdrive] or [dropbox]. Ignoring")
+    else:
+        for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive], ['dropbox', faiss_rm.DocStorageType.DropBox] ):
+            faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix, doc_storage_type, build_faiss_indexes=False, sub_prefix=index)
+            if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
+    if not len(faiss_rms) or not faiss_rms[0]:
         print(f"chat_completions: No full indexes found. Looking for sample index")
         faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix,
                                     faiss_rm.DocStorageType.Sample, build_faiss_indexes=False,
                                     sub_prefix="sample")
         if faiss_rm_vdb:
             print(f"chat_completions: Found and loaded sample index for {email}")
-            faiss_rm_vdbs.append(faiss_rm_vdb)
+            faiss_rms.append(faiss_rm_vdb)
         else:
             print(f"chat_completions: No sample index found for {email}. Creating sample index")
             ddbclient = boto3.client('dynamodb')
@@ -1100,7 +1126,7 @@ def chat_completions(event, context):
                                                                 build_faiss_indexes=False,
                                                                 sub_prefix="sample")
                         if faiss_rm_vdb:
-                            faiss_rm_vdbs.append(faiss_rm_vdb)
+                            faiss_rms.append(faiss_rm_vdb)
                         else:
                             print(f"chat_completions: Error in create sample index for {email}")
                             return respond({"error_msg": f"Error in create sample index for {email}"}, status=403)
@@ -1115,20 +1141,18 @@ def chat_completions(event, context):
             else:
                 print(f"chat_completions: sample index for user {email} is being created by another lambda instance.")
                 return respond({"error_msg": f"No document index found and sample index being created by another lambda. Please wait and try later.."}, status=503)
-        sample_source = get_filenames(faiss_rm_vdbs[0])
+        sample_source = get_filenames(faiss_rms[0])
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []
-    for faiss_rm_vdb in faiss_rm_vdbs:
+    for faiss_rm_vdb in faiss_rms:
         documents_list.append(faiss_rm_vdb.get_documents())
         index_map_list.append(faiss_rm_vdb.get_index_map())
 
     messages = body['messages']
     if len(messages) == 1:
-        return new_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source,
-                                              searchsubdir=rv['searchsubdir'] if 'searchsubdir' in rv else None)
+        return new_chat(event, body, faiss_rms, documents_list, index_map_list, sample_source=sample_source, searchsubdir=searchsubdir)
     else:
-        return ongoing_chat(event, body, faiss_rm_vdbs, documents_list, index_map_list, sample_source=sample_source,
-                                              searchsubdir=rv['searchsubdir'] if 'searchsubdir' in rv else None)
+        return ongoing_chat(event, body, faiss_rms, documents_list, index_map_list, sample_source=sample_source, searchsubdir=searchsubdir)
         
 if __name__ != '__main1__': traceback_with_variables.global_print_exc()
