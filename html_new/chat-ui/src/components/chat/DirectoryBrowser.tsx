@@ -12,6 +12,7 @@ const DirectoryBrowser: React.FC = () => {
   const [message, setMessage] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false); // Loading state
   const [error, setError] = useState<string | null>(null); // Error state
+  const [isHovered, setIsHovered] = useState(false); // state to track hover
 
   // Function to open the modal and fetch root directories
   const openModal = () => {
@@ -133,11 +134,13 @@ const DirectoryBrowser: React.FC = () => {
   };
 
   return (
-    <div>
+    <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <FolderSearch size={16} className="folder-search-icon" opacity={ loading ? 0.5 : 1} onClick={openModal}/>
 
       {message && <p className="success-message">{message}</p>}
-
       {isModalOpen && (
         <div className="modal-overlay">
           <div className="modal">
@@ -179,6 +182,7 @@ const DirectoryBrowser: React.FC = () => {
           </div>
         </div>
       )}
+      {isHovered && <p className="subdir-button-hover-text">Change Search Subdirectory</p>}
     </div>
   );
 };

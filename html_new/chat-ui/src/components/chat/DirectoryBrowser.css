@@ -91,3 +91,13 @@
   cursor: pointer;
   color: #FFFFFF;
 }
+
+.subdir-button-hover-text {
+  position: absolute;
+  top: -25px; /* Position the text above the progress bar */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #333;
+  white-space: nowrap;
+}
