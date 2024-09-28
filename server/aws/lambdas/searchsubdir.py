@@ -19,16 +19,9 @@ def do_set_searchsubdir(searchsubdir):
         cookie = f"__Host-yoja-searchsubdir={searchsubdir}; Path=/; Secure; SameSite=Strict; Max-Age=604800"
     else:
         cookie = f"__Host-yoja-searchsubdir=delete_marker; Path=/; Secure; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-    res = {}
-    res['choices'] = [
-        {
-            "index": 0
-        }
-    ]
-    res_str = json.dumps(res)
     return {
         'statusCode': 200,
-        'body': f"data:{res_str}",
+        'body': json.dumps({"message": f"context will now be limited to {searchsubdir} and subdirectories"}),
         'headers': {
             'Content-Type': 'application/json',
             'Set-Cookie': cookie,

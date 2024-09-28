@@ -13,6 +13,7 @@ from send_email import send_email
 from generate_pdf import generate_pdf
 from indexing_progress import get_indexing_progress
 from searchsubdir import set_searchsubdir
+from directory_browser import directory_browser
 
 fnxmap = {
         '/rest/entrypoint/getversion': getversion,
@@ -24,13 +25,13 @@ fnxmap = {
         '/rest/v1/send-email': send_email,
         '/rest/entrypoint/generate-pdf': generate_pdf,
         '/rest/entrypoint/get-indexing-progress': get_indexing_progress,
-        '/rest/entrypoint/set-searchsubdir': set_searchsubdir
+        '/rest/entrypoint/set-searchsubdir': set_searchsubdir,
+        '/rest/entrypoint/directory-browser': directory_browser
 }
 
 def entrypoint(event, context):
     print('## ENVIRONMENT VARIABLES')
     print(os.environ)
-
     print('## EVENT')
     print(event)
     operation = event['requestContext']['http']['method']

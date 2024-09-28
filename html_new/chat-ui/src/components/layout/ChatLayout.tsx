@@ -2,7 +2,6 @@ import { Message, SourceFile, UserInfo } from "../../type";
 import React, { useEffect, useRef, useState } from "react";
 import { Menu, Copy, ThumbsDown, ThumbsUp, CopyCheck } from 'lucide-react';
 import ChatBottom from "../chat/ChatBottom";
-import ChatTop from "../chat/ChatTop";
 import ProgressBar from "../chat/IndexingProgress";
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar, AvatarImage } from "../ui/avatar";
@@ -337,7 +336,6 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
             </AnimatePresence> : <div>  {/* </New chat view> */}  </div>}
           </div>
           <ProgressBar/>
-          <ChatTop searchSubdir={searchSubdir} sendSearchSubdir={sendSearchSubdir}/>
           <ChatBottom sendMessage={sendMessage} messages={currentChat} isMobile={isMobile} isLoading={isLoading}/>
         </div>
       </div>

@@ -47,7 +47,7 @@ const ProgressBar = () => {
     fetchProgress();
 
     // Set an interval to fetch progress every 60 seconds (60000 ms)
-    const interval = setInterval(fetchProgress, 60000);
+    const interval = setInterval(fetchProgress, 6000000);
 
     // Cleanup the interval on component unmount
     return () => clearInterval(interval);

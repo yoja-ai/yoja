@@ -420,7 +420,6 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
         print(f"get_s3_index: Failed to download files_index.jsonl from s3://{bucket}/{prefix}")
     return rv
 
-
 def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)

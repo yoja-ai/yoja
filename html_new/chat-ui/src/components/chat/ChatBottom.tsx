@@ -7,12 +7,14 @@ import {
     SendHorizontal,
     Smile,
     ThumbsUp,
-    SmileIcon
+    SmileIcon,
+    FolderSearch
   } from "lucide-react";
-  import React, { useRef, useState } from "react";
+  import React, { useEffect, useRef, useState } from "react";
   import { AnimatePresence, motion } from "framer-motion";
   import { Message, loggedInUserData } from "../../type";
   import { Textarea } from "../ui/textarea";
+  import DirectoryBrowser from "./DirectoryBrowser";
   interface ChatBottomProps {
     sendMessage: (newMessage: Message) => void;
     isMobile: boolean;
@@ -25,9 +27,17 @@ import {
   export default function ChatBottom({
     sendMessage, isMobile, messages, isLoading
   }: ChatBottomProps) {
+    const [searchSubdir, setSearchSubdir] = useState("");
     const [message, setMessage] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
-  
+
+    useEffect(() => {
+      var cookieValue = document.cookie.split('; ').filter(row => row.startsWith('__Host-yoja-searchsubdir=')).map(c=>c.split('=')[1])[0];
+      if (cookieValue != undefined) {
+        setSearchSubdir(cookieValue);
+      }
+    }, []);
+    
     const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       setMessage(event.target.value);
     };
@@ -56,7 +66,7 @@ import {
         }
       }
     };
-  
+
     const handleKeyPress = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -94,10 +104,11 @@ import {
               onKeyDown={handleKeyPress}
               onChange={handleInputChange}
               name="message"
-              placeholder="Type your message here"
+              placeholder={"Searching " + searchSubdir + ". Type your message here"}
               disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">
+                <DirectoryBrowser />
                 <SendHorizontal size={16} className="chat-box-send-icon" opacity={ isLoading ? 0.5 : 1} onClick={handleSend}/>
                 {message.trim() ? (
                     <X size={16} color="#71717a" className="chat-box-icon" onClick={() => setMessage("")}/>
