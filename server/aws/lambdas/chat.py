@@ -624,7 +624,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
         if len(passage_scores_dict.items()) == 0:
             print(f"retrieve_and_rerank_using_faiss: No entries in passage_scores!!")
-            return None, None
+            return False, None, None
 
         print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
@@ -716,7 +716,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         # if we asked to only print the 10 cross encoded outputs
         if cross_encoder_10 and i >= 10: break
     
-    return reranked_indices, sorted_summed_scores
+    return True, reranked_indices, sorted_summed_scores
 
 def _calc_cross_score_diffs(reranked_indices, sorted_summed_scores):
     rv = []
@@ -756,10 +756,10 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context
     """
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    status, reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
-    if not reranked_indices:
-        print(f"_get_context_using_retr_and_rerank: None from retrieve_and_rerank_using_faiss")
+    if not status:
+        print(f"_get_context_using_retr_and_rerank: no context from retrieve_and_rerank_using_faiss")
         return "No context found"
 
     # if most_relevant_only and least_relevant_only are both False, return all
