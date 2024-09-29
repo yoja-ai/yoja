@@ -45,4 +45,6 @@ def set_searchsubdir(event, context):
     body = json.loads(event['body'])
     print(f"set_searchsubdir: body={body}")
     searchsubdir = body['searchsubdir']
+    if searchsubdir == '/':
+        searchsubdir = None
     return do_set_searchsubdir(searchsubdir)

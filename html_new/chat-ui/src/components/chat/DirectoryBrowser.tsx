@@ -4,7 +4,11 @@ import { FolderSearch } from "lucide-react";
 
 const servicesConfig = (window as any).ServiceConfig;
 
-const DirectoryBrowser: React.FC = () => {
+interface DirectoryBrowserProps {
+  onRefresh: () => void;
+}
+
+const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [currentPath, setCurrentPath] = useState<string>(''); // Root directory
   const [directories, setDirectories] = useState<string[]>([]);
@@ -27,6 +31,7 @@ const DirectoryBrowser: React.FC = () => {
     setIsModalOpen(false);
     setMessage('');
     setError(null);
+    onRefresh();
   };
 
   // Fetch directories whenever currentPath changes
@@ -87,9 +92,11 @@ const DirectoryBrowser: React.FC = () => {
 
   // Handle directory selection (final selection)
   const handleSelect = async () => {
+    var sp;
     if (!currentPath) {
-      setError('Please select a directory before proceeding.');
-      return;
+      sp = '/';
+    } else {
+      sp = currentPath;
     }
 
     setLoading(true);
@@ -100,7 +107,7 @@ const DirectoryBrowser: React.FC = () => {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ searchsubdir: currentPath }),
+        body: JSON.stringify({ searchsubdir: sp }),
       });
       /*
       const response = await fetch('/api/select-directory', {
@@ -114,7 +121,7 @@ const DirectoryBrowser: React.FC = () => {
 
       if (response.ok) {
         const data = await response.json();
-        setMessage(data.message || 'Directory selected successfully!');
+        setMessage(data.message || 'Folder selected successfully!');
         closeModal();
       } else {
         // Attempt to parse error message from response
@@ -175,14 +182,14 @@ const DirectoryBrowser: React.FC = () => {
               <button onClick={closeModal} disabled={loading}>
                 Cancel
               </button>
-              <button onClick={handleSelect} disabled={!currentPath || loading}>
-                {loading ? 'Selecting...' : 'Select This Directory'}
+              <button onClick={handleSelect} disabled={loading}>
+                {loading ? 'Selecting...' : 'Select This Folder'}
               </button>
             </div>
           </div>
         </div>
       )}
-      {isHovered && <p className="subdir-button-hover-text">Change Search Subdirectory</p>}
+      {isHovered && <p className="subdir-button-hover-text">Change Search Folder</p>}
     </div>
   );
 };

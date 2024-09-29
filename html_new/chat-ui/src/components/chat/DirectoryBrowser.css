@@ -94,7 +94,7 @@
 
 .subdir-button-hover-text {
   position: absolute;
-  top: -25px; /* Position the text above the progress bar */
+  top: -30px; /* Position the text above the progress bar */
   left: 50%;
   transform: translateX(-50%);
   font-size: 12px;

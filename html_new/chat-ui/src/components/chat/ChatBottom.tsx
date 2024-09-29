@@ -30,13 +30,14 @@ import {
     const [searchSubdir, setSearchSubdir] = useState("");
     const [message, setMessage] = useState("");
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const [refresh, setRefresh] = useState(false);
 
     useEffect(() => {
       var cookieValue = document.cookie.split('; ').filter(row => row.startsWith('__Host-yoja-searchsubdir=')).map(c=>c.split('=')[1])[0];
       if (cookieValue != undefined) {
         setSearchSubdir(cookieValue);
       }
-    }, []);
+    }, [refresh]);
     
     const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       setMessage(event.target.value);
@@ -104,7 +105,7 @@ import {
               onKeyDown={handleKeyPress}
               onChange={handleInputChange}
               name="message"
-              placeholder={"Subdir " + searchSubdir + ". Type here"}
+              placeholder={searchSubdir ?  "Searching folder: " + searchSubdir + ". Type here" : "Searching all drives. Type here"}
               disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">
@@ -114,7 +115,7 @@ import {
                 ) : (
                     null
                 )}
-                <DirectoryBrowser />
+                <DirectoryBrowser onRefresh={() => setRefresh(!refresh)} />
             </div>
           </motion.div>
         </AnimatePresence>
