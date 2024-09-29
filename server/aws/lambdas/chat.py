@@ -622,6 +622,10 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                     else:
                         passage_scores_dict[ind_in_faiss] = [dist]
 
+        if len(passage_scores_dict.items()) == 0:
+            print(f"retrieve_and_rerank_using_faiss: No entries in passage_scores!!")
+            return None, None
+
         print(f"retrieve_and_rerank_using_faiss: passage_scores=")
         if print_trace_context_choice:
             tracebuf.append(f"**{_prtime()}: Passage Scores**")
@@ -754,6 +758,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
     reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
+    if not reranked_indices:
+        print(f"_get_context_using_retr_and_rerank: None from retrieve_and_rerank_using_faiss")
+        return "No context found"
 
     # if most_relevant_only and least_relevant_only are both False, return all
     if most_relevant_only:
