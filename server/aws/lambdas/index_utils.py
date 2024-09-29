@@ -582,28 +582,34 @@ class DropboxReader(StorageReader):
 def update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix):
     now = int(time.time())
     print(f"update_progress_file: Entered. now={now}")
-    if unmodified and (not prev_update or (now - prev_update) >= 60):
-        print(f"update_progress_file: storage_reader={storage_reader.descriptor()}, len unmodified={len(unmodified)}, prev_update={prev_update}")
-        # calculate progress
-        unmodified_size = 0
+    if prev_update and (now - prev_update) < 60:
+        print(f"update_progress_file: prev_update {prev_update} too close. Not updating progress file")
+        return
+    len_unmodified = 0
+    unmodified_size = 0
+    if unmodified:
+        len_unmodified = len(unmodified)
         for ue_key, ue_value in unmodified.items():
             if 'size' in ue_value:
                 unmodified_size = unmodified_size + int(ue_value['size'])
-        needs_embedding_size = 0
+    len_needs_embedding = 0
+    needs_embedding_size = 0
+    if needs_embedding:
+        len_needs_embedding = len(needs_embedding)
         for ne_key, ne_value in needs_embedding.items():
             if 'size' in ne_value:
                 needs_embedding_size = needs_embedding_size + int(ne_value['size'])
-        done_embedding_size = 0
+    len_done_embedding = 0
+    done_embedding_size = 0
+    if done_embedding:
+        len_done_embedding = len(done_embedding)
         for de_key, de_value in done_embedding.items():
             if 'size' in de_value:
                 done_embedding_size = done_embedding_size + int(de_value['size'])
-        print(f"update_progress_file: {storage_reader.descriptor()} unmodified_size={unmodified_size}, needs_embedding_size={needs_embedding_size}, done_embedding_size={done_embedding_size}")
-        _write_progress_file(s3client, bucket, prefix, storage_reader.descriptor(),
-                    len(unmodified) + len(done_embedding), unmodified_size + done_embedding_size,
-                    len(needs_embedding) - len(done_embedding), needs_embedding_size - done_embedding_size)
-        return now
-    else:
-        print(f"update_progress_file: unmodified not present/prev_update {prev_update} too close. Not updating progress file")
+    print(f"update_progress_file: {storage_reader.descriptor()} unmodified_size={unmodified_size}, needs_embedding_size={needs_embedding_size}, done_embedding_size={done_embedding_size}")
+    _write_progress_file(s3client, bucket, prefix, storage_reader.descriptor(),
+                len_unmodified + len_done_embedding, unmodified_size + done_embedding_size,
+                len_needs_embedding - len_done_embedding, needs_embedding_size - done_embedding_size)
 
 def process_files(email, storage_reader:StorageReader, unmodified, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
     """ processs the files in google drive. returns a dict:  { fileid: {filename, fileid, mtime} }
