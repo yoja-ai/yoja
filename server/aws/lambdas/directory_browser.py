@@ -63,10 +63,8 @@ def directory_browser(event, context):
         if 'path' in vl and vl['path']:
             pth = ''
             vlpa = vl['path'].lstrip('/').rstrip('/').split('/')
-            print(f"aaaaaaa vlpa={vlpa}")
             for ind in range(len(vlpa)):
                 pth = pth + vlpa[ind] + '/'
-                print(f"bbbbbbbbb adding {pth}")
                 dirs[pth] = 0
     rdirs = {}
     if parentdir:

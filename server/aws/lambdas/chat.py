@@ -307,6 +307,10 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
             "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
+    if sample_source:
+        res['choices'][0]['sample_source'] = sample_source
+    if searchsubdir:
+        res['choices'][0]['searchsubdir'] = searchsubdir
     res_str = json.dumps(res)
     return {
         'statusCode': 200,
