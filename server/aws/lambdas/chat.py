@@ -763,10 +763,11 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         return "No context found"
 
     # if most_relevant_only and least_relevant_only are both False, return all
-    if most_relevant_only:
-        reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, True)
-    elif least_relevant_only:
-        reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, False)
+    if reranked_indices.size > 1:
+        if most_relevant_only:
+            reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, True)
+        elif least_relevant_only:
+            reranked_indices = _truncate_reranked_indices(reranked_indices, sorted_summed_scores, False)
 
     context:str = ''
     all_docs_token_count = 0
@@ -1038,6 +1039,8 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     ]
     if sample_source:
         res['choices'][0]['sample_source'] = sample_source
+    if searchsubdir:
+        res['choices'][0]['searchsubdir'] = searchsubdir
 
     res_str = json.dumps(res)
     print(f"new_chat: Returning {res_str}")

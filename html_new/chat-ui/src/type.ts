@@ -11,6 +11,7 @@ export interface Message {
         completion: number;
     };
     sample_source?:string[];
+    searchsubdir?:string;
 }
 
 export interface ChatHistory {

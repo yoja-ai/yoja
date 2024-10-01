@@ -69,7 +69,7 @@ def lock_user(email, client, takeover_lock_end_time=0):
         l_e_t = None
         l_e_t_s = None
     else:
-        l_e_t=int(item['lock_end_time']['N'])
+        l_e_t=int(float(item['lock_end_time']['N']))
         l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
         print(f"lock_user: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
         if takeover_lock_end_time != 0:
@@ -845,7 +845,7 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
     index_metadata:IndexMetadata = _read_index_metadata_json_local()
     # if faiss index needs to be updated and we have at least 5 minutes
     if index_metadata.is_vdb_index_stale():
-        time_left:float = lambda_time_left_seconds()
+        time_left:int = lambda_time_left_seconds()
         extend_ddb_time(email, time_left)
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")

@@ -272,6 +272,16 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                       <div style={{width: '100%', padding: '12px'}}>
                         <span className="gpt-msg-text"> { displayMessage(msg) } </span>
                       </div>
+                      {  (typeof msg.searchsubdir !== 'undefined') && 
+                        <div>
+                          <span className="gpt-msg-source-title">
+                            Search Folder
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
+                            <div>{msg.searchsubdir}</div>
+                          </div>
+                        </div>
+                      }
                       {  (msg.source &&  msg.source.length > 0) && 
                         <div>
                           <span className="gpt-msg-source-title">

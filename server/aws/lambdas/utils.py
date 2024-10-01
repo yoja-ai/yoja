@@ -445,6 +445,6 @@ def lambda_timelimit_exceeded() -> bool:
         g_start_time = now
     return True if (now - g_start_time) > datetime.timedelta(seconds=g_time_limit) else False
 
-def lambda_time_left_seconds() -> float:
+def lambda_time_left_seconds() -> int:
     global g_start_time, g_time_limit
-    return g_time_limit - (datetime.datetime.now() - g_start_time).total_seconds()  
+    return int(g_time_limit - (datetime.datetime.now() - g_start_time).total_seconds())

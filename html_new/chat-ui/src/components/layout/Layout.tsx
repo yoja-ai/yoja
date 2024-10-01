@@ -152,6 +152,9 @@ const sendMessage = (newMessage: Message) => {
           if (result.choices[0].hasOwnProperty("sample_source")) {
             resMessage.sample_source = result.choices[0].sample_source;
           }
+          if (result.choices[0].hasOwnProperty("searchsubdir")) {
+            resMessage.searchsubdir = result.choices[0].searchsubdir;
+          }
           const fullUpdatedChat = [...updatedCurrentChat, resMessage];
 
           // Update the current chat in state and localStorage
