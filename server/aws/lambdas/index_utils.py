@@ -647,7 +647,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 with os.fdopen(tfd, "wb") as wfp:
                     wfp.write(bio.getvalue())
                 bio.close()
-                rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'docx', tfn, '--outdir', '/tmp'],
+                rv = subprocess.run(['/opt/libreoffice7.6/program/soffice', '--headless', '--convert-to', 'docx:MS Word 2007 XML', tfn, '--outdir', '/tmp'],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 for line in rv.stdout.splitlines():
                     print(line.decode('utf-8'))
