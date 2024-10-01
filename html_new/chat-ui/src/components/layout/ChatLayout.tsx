@@ -345,8 +345,8 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
               }
             </AnimatePresence> : <div>  {/* </New chat view> */}  </div>}
           </div>
-          <ProgressBar/>
           <ChatBottom sendMessage={sendMessage} messages={currentChat} isMobile={isMobile} isLoading={isLoading}/>
+          <ProgressBar/>
         </div>
       </div>
     </div>
