@@ -105,7 +105,7 @@ import {
               onKeyDown={handleKeyPress}
               onChange={handleInputChange}
               name="message"
-              placeholder={searchSubdir ?  "Searching folder: " + searchSubdir + ". Type here" : "Searching all drives. Type here"}
+              placeholder="Type here"
               disabled={isLoading}
             ></Textarea>
             <div className="chat-box-icons">
@@ -115,7 +115,6 @@ import {
                 ) : (
                     null
                 )}
-                <DirectoryBrowser onRefresh={() => setRefresh(!refresh)} />
             </div>
           </motion.div>
         </AnimatePresence>
