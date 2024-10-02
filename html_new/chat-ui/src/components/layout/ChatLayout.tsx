@@ -89,16 +89,6 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
         const promptPercentage = match[2];
         const completionTokens = match[3];
 
-        tokenInfo = (
-            <div className="token-info">
-                <span className="gpt-msg-text" style={{ fontWeight: 'bold' }}>Tokens</span>
-                <div>
-                    <div>Prompt: {promptTokens} ({promptPercentage}% of 2048)</div>
-                    <div>Completion: {completionTokens}</div>
-                </div>
-            </div>
-        );
-
         // Remove the token info from the content, but preserve context sources
         content = content.replace(tokenRegex, '').trim();
     }
