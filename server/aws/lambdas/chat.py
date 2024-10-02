@@ -280,15 +280,9 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         pct=(float(run_usage.prompt_tokens)/float(MAX_TOKEN_LIMIT))*100.0
         srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {MAX_TOKEN_LIMIT}), completion={run_usage.completion_tokens}"
     
-    context_srcs:List[str]; context_srcs_links:List[ContextSource]
-    context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
-    if chat_config.print_trace:
-        tstr = ""
-        for tt in tracebuf:
-            tstr += f"  \n{tt}"
-        srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
-    else:
-        srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
+    context_srcs_links:List[ContextSource]
+    context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
+    srp = srp +f"  \n<!-- ; thread_id={thread_id} -->"
     print(f"ongoing_chat: srp={srp}")
         
     res = {}
@@ -877,24 +871,18 @@ class ContextSource:
     file_path:str
     file_name:str
     file_url:str
+    file_id:str
+    para_id:str
     
 def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]]) -> Tuple[List[str],List[ContextSource]] :
-
-    context_srcs:List[str] = []; context_srcs_links:List[str] = []
+    context_srcs_links:List[str] = []
     for file_key, chunks in filekey_to_file_chunks_dict.items():
-        para_indexes_str = ""
         for chunk_det in chunks:
-            #chunk_det = chunks[0]
-            para_indexes_str += f"ID={chunk_det.file_id}/{chunk_det.para_id}; "
-        # "<content...>.  \n**Context Source: My Drive/Castle/Castle/Learning/Body/Tight Hamstrings Solutions – Low Back Pain Program.pdf**\t<!-- ID=1p3VhQOv_opCCWxaaYknduz-WepUDifH3/5; ID=1p3VhQOv_opCCWxaaYknduz-WepUDifH3/3;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Learning/Body/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=1KEJF5ttZCCsJqM7pSia7BAGbf-sxgAWB/41;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=1-ACwOCTIT13K2DeceIotn7St2q8raC7S/41;   index_id=0 -->;  **Context Source: My Drive/Castle/Castle/Low_Back_Pain_Program_2018.pdf**\t<!-- ID=10FAzdHpUBIjtodPL-f1EtnIiAXKsSwM7/41;   index_id=0 --><!-- ; thread_id=thread_RVWHBSftNlpsXdyI0H44Gtmu -->"
-        if chunk_det.file_path:
-            context_srcs.append(f"**Context Source: {chunk_det.file_path}{chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
-            # generate context src hrefs
-            context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name, chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id)))
-        else:
-            context_srcs.append(f"**Context Source: {chunk_det.file_name}**\t<!-- {para_indexes_str}  index_id={chunk_det.faiss_rm_vdb_id} -->")
-    
-    return context_srcs, context_srcs_links
+            if chunk_det.file_path:
+                context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
+                                                        chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                                        chunk_det.file_id, str(chunk_det.para_id)))
+    return context_srcs_links
 
 def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                          index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
@@ -1013,16 +1001,10 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
         pct=int((float(run_usage.prompt_tokens)/float(MAX_TOKEN_LIMIT))*100.0)
         srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {MAX_TOKEN_LIMIT}), completion={run_usage.completion_tokens}"
 
-    context_srcs:List[str]; context_srcs_links:List[ContextSource]
-    context_srcs, context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
+    context_srcs_links:List[ContextSource]
+    context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
     
-    if chat_config.print_trace:
-        tstr = ""
-        for tt in tracebuf:
-            tstr += f"  \n{tt}"
-        srp = srp +tstr + f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
-    else:
-        srp = srp +f"  \n{';  '.join(context_srcs)}" + "<!-- ; thread_id=" + thread_id + " -->"
+    srp = srp +f"  \n<!-- ; thread_id={thread_id} -->"
 
     print(f"new_chat: srp={srp}")
     res = {}

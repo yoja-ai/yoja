@@ -48,28 +48,6 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
     }
   }
 
-  const convertFileNameAndID = (sourceString: string) => {
-    const fileLists = sourceString.split("**Context Source: ");
-    const sourceFiles = []; 
-    for (let index = 1; index < fileLists.length; index++) {
-      const element = fileLists[index];
-      const files = element.split("**\t<!-- ID=");
-      const name = files[0];
-      const extension = files[0].split('.').pop() || 'doc';
-      const id = files[1].substring(0, files[1].indexOf('/'));
-      const fullPath = getFileFullPath(extension, id);
-
-      const fileInfo: SourceFile = {
-        name: name,
-        id: id,
-        extension: extension,
-        fullPath: fullPath
-      };
-      sourceFiles.push(fileInfo);
-    }
-    return sourceFiles;
-  }
-
   const clearChat = () => {
     setCurrentChat([]);
     localStorage.setItem("current_chat", JSON.stringify([]));
@@ -93,8 +71,8 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
         content = content.replace(tokenRegex, '').trim();
     }
 
-    // Now process the message content to remove the context source indicators
-    let length = content.indexOf('**Context Source');
+    // Now process the message content to remove the thread_id
+    let length = content.indexOf('<!-- ; thread_id=');
     if (length >= 0) {
         content = content.substring(0, length);
     }
@@ -124,6 +102,7 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
         msg = message.content.substring(0, length);
       }
     }
+
     navigator.clipboard.writeText(msg);
     const updatedChat = currentChat.map((chat=> {
       if(chat.id === message.id) {
@@ -280,9 +259,9 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                             {
                               msg.source?.map((source) =>  
-                                <a className="gpt-msg-source" href={source.fullPath} target="_blank">
+                                <a className="gpt-msg-source" href={source.fileUrl} target="_blank">
                                   <img style={{width:'16px', height: '16px'}} src={source.extension === "doc" || source.extension === "docx" ? "docs.png" : "slide.png"}/>
-                                  <span className="gpt-source-name"> {source.name} </span>
+                                  <span className="gpt-source-name"> {source.name} | Paragraph {source.paraId}</span>
                                 </a>
                               )
                             }

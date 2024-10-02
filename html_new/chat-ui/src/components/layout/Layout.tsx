@@ -77,50 +77,23 @@ const Layout: React.FC<LayoutProps> = () => {
     setCurrentChat(selectedChat.content);
   };
 
-  const convertFileNameAndID = (sourceString: string) => {
-    // Split the source string into parts based on a unique marker that separates file entries
-    const fileLists = sourceString.split("**Context Source: ");
+  const newConvertFileNameAndID = (context_sources: any) => {
     const sourceFiles = [];
-    
-    // Iterate over each file entry extracted from the source string
-    for (let index = 1; index < fileLists.length; index++) {
-        const element = fileLists[index];
-        // Split the entry to separate the file name from the ID, assuming ID is commented at the end
-        const files = element.split("**\t<!-- ID=");
-        const name = files[0].trim();
-        const extension = files[0].split('.').pop() || 'doc';  // Extract extension or default to 'doc'
-        const id = files[1].substring(0, files[1].indexOf('-->'));  // Extract ID up to closing comment
-
-        // Construct the full URL for accessing the document based on its type
-        const fullPath = getFileFullPath(extension, id);
-
-        // Create an object representing the file and add it to the result list
-        const fileInfo = {
-            name: name,
-            id: id,
-            extension: extension,
-            fullPath: fullPath
-        };
-        sourceFiles.push(fileInfo);
+    for (let index = 0; index < context_sources.length; index++) {
+      let src = context_sources[index];
+      let extn = src.file_name.split('.').pop() || 'doc';  // Extract extension or default to 'doc'
+      const fileInfo = {
+          name: src.file_name,
+          id: src.file_id,
+          extension: extn,
+          fullPath: src.file_path,
+          paraId: src.para_id,
+          fileUrl: src.file_url
+      };
+      sourceFiles.push(fileInfo);
     }
-
     return sourceFiles;
-}
-
-const getFileFullPath = (extension: string, id: string) => {
-    switch(extension) {
-        case 'doc':
-        case 'docx':
-            return `https://docs.google.com/document/d/${id}`;
-        case 'pdf':
-            return `https://drive.google.com/file/d/${id}`;
-        case 'ppt':
-        case 'pptx':
-            return `https://docs.google.com/presentation/d/${id}`;
-        default:
-            return `https://docs.google.com/presentation/d/${id}`; // Default case if no extension matches
-    }
-}
+  }
 
 const sendSearchSubdir = (newSearchSubdir: string) => {
   setIsLoading(true);
@@ -147,7 +120,7 @@ const sendMessage = (newMessage: Message) => {
       if (result) {
           const resMessage = {
               ...result.choices[0].delta,
-              source: convertFileNameAndID(result.choices[0].delta.content)
+              source: newConvertFileNameAndID(result.choices[0].context_sources)
           };
           if (result.choices[0].hasOwnProperty("sample_source")) {
             resMessage.sample_source = result.choices[0].sample_source;

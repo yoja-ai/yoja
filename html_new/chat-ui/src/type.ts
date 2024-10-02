@@ -35,6 +35,8 @@ export interface SourceFile {
     name: string;
     extension: string;
     fullPath: string;
+    fileUrl: string;
+    paraId: string;
 }
 
 export interface User {
