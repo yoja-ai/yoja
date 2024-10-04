@@ -536,7 +536,7 @@ def process_pptx(file_item, filename, fileid, bio):
     ppt = read_pptx(filename, fileid, bio, file_item['mtime'], prev_slides)
     file_item['slides'] = ppt['slides']
     file_item['filetype'] = 'pptx'
-    if 'partial' in doc_dict:
+    if 'partial' in ppt:
         file_item['partial'] = 'true'
 
 class StorageReader:
