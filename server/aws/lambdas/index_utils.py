@@ -225,20 +225,20 @@ def download_gdrive_file(service, file_id, filename) -> io.BytesIO:
   file.seek(0, os.SEEK_SET)
   return file
 
-def export_gdrive_file(service, file_id, mimetype) -> io.BytesIO:
-  try:
-    # pylint: disable=maybe-no-member
-    request = service.files().export_media(fileId=file_id, mimeType=mimetype)
-    file = io.BytesIO()
-    downloader = MediaIoBaseDownload(file, request)
-    done = False
-    while done is False:
-      status, done = downloader.next_chunk()
-      print(f"fileid={file_id}, download {int(status.progress() * 100)} %")
-  except HttpError as error:
-    print(f"An error occurred: {error}")
-    file = None
-  return file
+def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
+    try:
+        headers={"Authorization": f"Bearer {access_token}"}
+        url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
+        resp = requests.get(url, stream=True, headers=headers)
+        file = io.BytesIO()
+        for chunk in resp.iter_content(chunk_size=1024): 
+            if chunk:
+                file.write(chunk)
+        file.seek(0, os.SEEK_SET)
+        return file
+    except Exception as ex:
+        print(f"export_gdrive_file: Caught {ex} exporting {file_id} of format {fmt}")
+        return None
 
 @dataclass
 class IndexMetadata:
@@ -546,18 +546,17 @@ class StorageReader:
         pass
 
 class GoogleDriveReader(StorageReader):
-    def __init__(self, service):
+    def __init__(self, service, access_token):
         self._service = service
+        self._access_token = access_token
     def read(self, fileid, filename, mimetype):
         print(f"GoogleDriveReader.read: Entered. fileid={fileid}, filename={filename}, mimetype={mimetype}")
         if mimetype == 'application/vnd.google-apps.presentation':
             print(f"GoogleDriveReader.read: fileid={fileid} calling export1")
-            return export_gdrive_file(self._service, fileid,
-                        'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+            return export_gdrive_file(self._access_token, fileid, 'pptx')
         elif mimetype == 'application/vnd.google-apps.document':
             print(f"GoogleDriveReader.read: fileid={fileid} calling export2")
-            return export_gdrive_file(self._service, fileid,
-                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+            return export_gdrive_file(self._access_token, fileid, 'docx')
         else:
             print(f"GoogleDriveReader.read: fileid={fileid} calling download")
             return download_gdrive_file(self._service, fileid, filename)
@@ -1109,7 +1108,7 @@ def _get_gdrive_listing_incremental(service, s3_index, item, gdrive_next_page_to
             for chg in respj['changes']:
                 if chg['removed']:
                     if chg['changeType'] == 'file':
-                        print(f"_get_gdrive_listing_incremental: removed. file. fileid={chg['fileid']}")
+                        print(f"_get_gdrive_listing_incremental: removed. file. fileid={chg['fileId']}")
                         fileid = chg['fileId']
                         mtime = from_rfc3339(chg['time'])
                         deleted_files[fileid] = {"fileid": fileid, "mtime": mtime}
@@ -1250,7 +1249,8 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         for td in to_del:
             del unmodified[td]
 
-        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), unmodified, needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service, item['access_token']['S']),
+                                                            unmodified, needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
             update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
         else:
@@ -1296,34 +1296,34 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
                 **kwargs)
             .execute()
         )
-        items = results.get("files", [])
-        print(f"create_sample_index: Fetched {items} items from google drive")
+        res_files = results.get("files", [])
+        print(f"create_sample_index: Fetched {res_files} items from google drive")
         needs_embedding = {}
-        for item in items:
+        for itm in res_files:
             # pick word/ppt files smaller than 100K and pdfs smaller than 200K
-            fn = item['name'].lower()
-            if not 'size' in item:
-                print(f"create_sample_index: skipping file {item} since it does not have size")
+            fn = itm['name'].lower()
+            if not 'size' in itm:
+                print(f"create_sample_index: skipping file {itm} since it does not have size")
                 continue
-            size = int(item['size'])
-            if fn.endswith('.pdf') or item['mimeType'] == 'application/pdf':
+            size = int(itm['size'])
+            if fn.endswith('.pdf') or itm['mimeType'] == 'application/pdf':
                 if size > (200*1024):
                     print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 200k")
                     continue
                 else:
-                    needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
-                                'mtime': from_rfc3339(item['modifiedTime']), 'mimetype': item['mimeType'],
+                    needs_embedding[itm['id']] = {'filename': itm['name'], 'fileid': itm['id'],
+                                'mtime': from_rfc3339(itm['modifiedTime']), 'mimetype': itm['mimeType'],
                                 'size': size}
             if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx'):
                 if size > (100*1024):
                     print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
                     continue
                 else:
-                    needs_embedding[item['id']] = {'filename': item['name'], 'fileid': item['id'],
-                                'mtime': from_rfc3339(item['modifiedTime']), 'mimetype': item['mimeType'],
+                    needs_embedding[itm['id']] = {'filename': itm['name'], 'fileid': itm['id'],
+                                'mtime': from_rfc3339(itm['modifiedTime']), 'mimetype': itm['mimeType'],
                                 'size': size}
             else:
-                print(f"create_sample_index: skipping unsupported file {item['name']} of mimetype {item['mimeType']}")
+                print(f"create_sample_index: skipping unsupported file {itm['name']} of mimetype {itm['mimeType']}")
                 continue
             if len(needs_embedding) == 5:
                 print(f"create_sample_index: Chosen files={needs_embedding}")
@@ -1337,7 +1337,8 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         s3client.delete_object(Bucket=bucket, Key=f"{user_prefix}/index_metadata.json")
 
         fnx_start = datetime.datetime.now()
-        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service), None, needs_embedding, s3client, bucket, user_prefix)
+        done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service, item['access_token']['S']),
+                                                            None, needs_embedding, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0:
             update_files_index_jsonl(done_embedding, {}, bucket, user_prefix, s3client)
         else:
