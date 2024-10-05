@@ -1177,16 +1177,27 @@ def _get_gdrive_listing_full(service, item):
     total_items = 0
     while True:
         # Metadata for files: https://developers.google.com/drive/api/reference/rest/v3/files
-        results = (
-            service.files()
-            .list(pageSize=100, orderBy="folder,modifiedTime desc, name",
-                                    fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
-            .execute()
-        )
+        results = None
+        for retry_num in range(1, 4):
+            try:
+                results = (
+                    service.files()
+                        .list(pageSize=100, orderBy="folder,modifiedTime desc, name",
+                                fields="nextPageToken, files(id, name, size, modifiedTime, mimeType, parents)", **kwargs)
+                    .execute()
+                )
+                break
+            except Exception as ex:
+                print(f"Caught {ex} while getting listing. retry_num={retry_num}")
+                time.sleep(retry_num * 5)
+                results=None
+                continue
+        if not results:
+            print(f"_get_gdrive_listing_full: retried three times unsuccessfully. Returning without finishing..")
+            break
         items = results.get("files", [])
         total_items += len(items)
         print(f"Fetched {total_items} items from google drive rooted at id={driveid}..")
-        # print(f"files = {[ item['name'] for item in items]}")
 
         _process_gdrive_items(gdrive_listing, folder_details, items)
 
