@@ -1,7 +1,6 @@
 import io
 import json
 import os
-import traceback
 import tempfile
 import uuid
 import time
@@ -18,7 +17,6 @@ import base64
 from botocore.exceptions import ClientError
 from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_ddb_time, set_user_table_cache_entry
 from typing import Dict, List, Tuple, Any, Optional, Union
-import traceback_with_variables
 from dataclasses import dataclass
 import datetime
 from datetime import timezone
@@ -228,7 +226,13 @@ def download_gdrive_file(service, file_id, filename) -> io.BytesIO:
 def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
     try:
         headers={"Authorization": f"Bearer {access_token}"}
-        url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
+        if fmt == 'pptx':
+            url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
+        elif fmt == 'docx':
+            url = f"https://docs.google.com/document/d/{file_id}/export?format=doc"
+        else:
+            print(f"export_gdrive_file: Unknown format {fmt} for fileid {file_id}. Do not know how to download..")
+            return None
         resp = requests.get(url, stream=True, headers=headers)
         file = io.BytesIO()
         for chunk in resp.iter_content(chunk_size=1024): 
@@ -445,7 +449,6 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
                     para_dct['embedding'] = eem
                 except Exception as ex:
                     print(f"Exception {ex} while creating para embedding")
-                    traceback.print_exc()
                 doc_dct['paragraphs'].append(para_dct)
                 chunk_len = prelude_token_len
                 chunk_paras = []
@@ -467,7 +470,6 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
                 para_dct['embedding'] = eem
             except Exception as ex:
                 print(f"Exception {ex} while creating residual para embedding")
-                traceback.print_exc()
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
@@ -502,7 +504,6 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -
                 slide_dct['embedding'] = eem
             except Exception as ex:
                 print(f"Exception {ex} while creating slide embedding")
-                traceback.print_exc()
             ppt['slides'].append(slide_dct)
             if lambda_timelimit_exceeded():
                 ppt['partial'] = "true"
@@ -582,10 +583,8 @@ class DropboxReader(StorageReader):
 
 def update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, force):
     now = int(time.time())
-    print(f"update_progress_file: Entered. now={now}")
     if not force:
         if prev_update and (now - prev_update) < 60:
-            print(f"update_progress_file: prev_update {prev_update} too close. Not updating progress file")
             return False, 0
     len_unmodified = 0
     unmodified_size = 0
@@ -765,7 +764,6 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     prev_update = updtime
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
-            traceback_with_variables.print_exc()
             to_del_from_needs_embedding.append(fileid)
             status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
             if status:
@@ -921,7 +919,6 @@ def _get_dropbox_listing(dbx, dropbox_next_page_token):
         return all_entries, cursor
     except Exception as e: 
         print(str(e)) 
-        traceback.print_exc()
         return None
 
 # returns unmodified, needs_embedding
@@ -981,11 +978,9 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
         access_token = refresh_user_dropbox(item)
     except HttpError as error:
         print(f"HttpError occurred: {error}")
-        traceback.print_exc()
         return
     except Exception as ex:
         print(f"Exception occurred: {ex}")
-        traceback.print_exc()
         return
     if not access_token:
         print(f"Error. Failed to create access token. Not updating dropbox index")
@@ -997,7 +992,6 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
         unmodified, needs_embedding, num_deleted_files = _calc_filelists_dropbox(entries, s3_index)
     except Exception as ex:
         print(f"Exception occurred: {ex}")
-        traceback.print_exc()
 
     # Move items in 'partial' state from umodified to needs_embedding
     to_del=[]
@@ -1220,7 +1214,6 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         try:
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
-            traceback.print_exc()
             print(f"update_index_for_user_gdrive: credentials not valid. not processing user {item['email']['S']}. Exception={ex}")
             return
         
@@ -1278,10 +1271,8 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
             
     except HttpError as error:
         print(f"HttpError occurred: {error}")
-        traceback.print_exc()
     except Exception as ex:
         print(f"Exception occurred: {ex}")
-        traceback.print_exc()
     return gdrive_next_page_token
 
 def update_index_for_user(email, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
@@ -1362,7 +1353,6 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
         print(f"create_sample_index: time taken for build/save faiss: {fnx_end2 - fnx_end}")
         return True
     except Exception as ex:
-        traceback.print_exc()
         print(f"create_sample_index: credentials not valid. not processing user {item['email']['S']}. Exception={ex}")
         return False
 
