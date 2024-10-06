@@ -633,12 +633,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
             if 'size' in file_item and int(file_item['size']) == 0: 
-                print(f"skipping google drive with file size == 0: {file_item}")
-                to_del_from_needs_embedding.append(fileid)
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
-                if status:
-                    prev_update = updtime
-                continue
+                if mimetype != 'application/vnd.google-apps.presentation' and mimetype != 'application/vnd.google-apps.document':
+                    print(f"skipping google drive with file size == 0, and not of type google slides or google docs: {file_item}")
+                    to_del_from_needs_embedding.append(fileid)
+                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    if status:
+                        prev_update = updtime
+                    continue
             
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
