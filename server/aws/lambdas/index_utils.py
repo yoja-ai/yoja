@@ -758,7 +758,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                             prev_update = updtime
                     os.remove(f'{tfn}')
             else:
-                print(f"process_files: skipping unknown file type {filename}")
+                print(f"process_files: skipping unknown file type {filename} mimetype={mimetype}")
                 to_del_from_needs_embedding.append(fileid)
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
