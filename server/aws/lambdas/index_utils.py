@@ -479,12 +479,9 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
     return doc_dct
 
 def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> Dict[str, Union[str, Dict[str,str]]]:
-    print(f"aaaaaaaaaaaaaaaa {filename}, len_prev_rows={len(prev_rows)}")
     workbook = {'filename': filename, 'rows': prev_rows}
     wb = openpyxl.load_workbook(file_io)
-    print(f"bbbbbbbbbbbbbbbb {filename}, wb.sheetnames={wb.sheetnames}")
     for sn in wb.sheetnames:
-        print(f"cccccccccccccccc {filename}, sheet={sn}")
         sheet=wb[sn]
         row_in_files_index_jsonl = 0
         for row in range(1, sheet.max_row+1):
@@ -495,11 +492,9 @@ def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> 
                     rowstrings = rowstrings + cell.value.strip().rstrip('.') + '.'
             if rowstrings:
                 if rowstrings[0] != '=':
-                    print(f"eeeeeeeeeeeeeeee {filename}, sheet={sn}, row={row}, strings={rowstrings}")
                     row_in_files_index_jsonl += 1
                     if row_in_files_index_jsonl >= len(prev_rows):
                         row_dct = {'text': rowstrings, 'row_number': row}
-                        print(f"ffffffffffffffff {filename}, sheet={sn}, row={row}, row_dct={row_dct}")
                         chu = f"The file is named '{filename}', the sheet in the file is named '{sn}' and the row contains '{rowstrings}'"
                         try:
                             row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer([chu]))).decode('ascii')
