@@ -141,6 +141,8 @@ class FaissRM():
             key = 'slides'
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
+        elif 'rows' in finfo:
+            key = 'rows'
         else:
             return None
         return finfo[key][para_index]
@@ -153,6 +155,8 @@ class FaissRM():
             key = 'slides'
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
+        elif 'rows' in finfo:
+            key = 'rows'
         else:
             return None, None, None
         rv = []

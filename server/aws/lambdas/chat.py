@@ -117,10 +117,11 @@ class DocumentType(enum.Enum):
     PPTX = 2
     PDF = 3
     TXT = 4
+    XLSX = 5
 
     @classmethod
     def fromString(clz, doc_type_str:str):
-        str_to_type_dict:Dict[str, Self] = { 'pptx':clz.PPTX, 'docx':clz.DOCX, 'pdf':clz.PDF, 'txt':clz.TXT }
+        str_to_type_dict:Dict[str, Self] = { 'pptx':clz.PPTX, 'docx':clz.DOCX, 'pdf':clz.PDF, 'txt':clz.TXT, 'xlsx': clz.XLSX }
         
         if not str_to_type_dict.get(doc_type_str):
             raise Exception(f"Unknown document type:  {doc_type_str}")
@@ -132,12 +133,24 @@ class DocumentType(enum.Enum):
             # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
             # if a pdf file (ends with pdf), use the link https://drive.google.com/file/d/<file_id>
             # if pptx file (ends with ppt or pptx) https://docs.google.com/presentation/d/<file_id>
-            doc_type_to_link:Dict[Self, str] = { self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}', self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}', self.__class__.PDF:'https://drive.google.com/file/d/{file_id}', self.__class__.TXT:'https://drive.google.com/file/d/{file_id}' }
+            doc_type_to_link:Dict[Self, str] = {
+                self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}',
+                self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}',
+                self.__class__.XLSX:'https://docs.google.com/spreadsheets/d/{file_id}',
+                self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
+                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}'
+            }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
             return doc_type_to_link[self].format(file_id=file_id)
         elif doc_storage_type == faiss_rm.DocStorageType.DropBox:
-            doc_type_to_link:Dict[Self, str] = { self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}', self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}', self.__class__.PDF:'https://drive.google.com/file/d/{file_id}', self.__class__.TXT:'https://drive.google.com/file/d/{file_id}' }
+            doc_type_to_link:Dict[Self, str] = { # XXX wrong links for dropbox
+                self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}',
+                self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}',
+                self.__class__.XLSX:'https://docs.google.com/spreadsheets/d/{file_id}',
+                self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
+                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}'
+            }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
             return doc_type_to_link[self].format(file_id=file_id)
@@ -884,6 +897,10 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
         for chunk_det in chunks:
             if chunk_det.file_path:
                 context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
+                                                        chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                                        chunk_det.file_id, str(chunk_det.para_id)))
+            else:
+                context_srcs_links.append(ContextSource("", chunk_det.file_name,
                                                         chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
                                                         chunk_det.file_id, str(chunk_det.para_id)))
     return context_srcs_links

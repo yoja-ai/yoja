@@ -344,6 +344,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
             key = 'slides'
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
+        elif 'rows' in finfo:
+            key = 'rows'
         else:
             continue
         for para_index in range(len(finfo[key])):
@@ -486,24 +488,24 @@ def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> 
         sheet=wb[sn]
         row_in_files_index_jsonl = 0
         for row in range(1, sheet.max_row+1):
-            print(f"dddddddddddddddd {filename}, sheet={sn}, row={row}")
             rowstrings = ""
             for cl in range(1, sheet.max_column+1):
                 cell = sheet.cell(row, cl)
                 if cell.value and isinstance(cell.value, str):
                     rowstrings = rowstrings + cell.value.strip().rstrip('.') + '.'
             if rowstrings:
-                print(f"eeeeeeeeeeeeeeee {filename}, sheet={sn}, row={row}, strings={rowstrings}")
-                row_in_files_index_jsonl += 1
-                if row_in_files_index_jsonl >= len(prev_rows):
-                    row_dct = {'text': rowstrings, 'row_number': row}
-                    print(f"ffffffffffffffff {filename}, sheet={sn}, row={row}, row_dct={row_dct}")
-                    chu = f"The file is named '{filename}', the sheet in the file is named '{sn}' and the row contains '{rowstrings}'"
-                    try:
-                        row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer([chu]))).decode('ascii')
-                    except Exception as ex:
-                        print(f"Exception {ex} while creating embedding for row")
-                    workbook['rows'].append(row_dct)
+                if rowstrings[0] != '=':
+                    print(f"eeeeeeeeeeeeeeee {filename}, sheet={sn}, row={row}, strings={rowstrings}")
+                    row_in_files_index_jsonl += 1
+                    if row_in_files_index_jsonl >= len(prev_rows):
+                        row_dct = {'text': rowstrings, 'row_number': row}
+                        print(f"ffffffffffffffff {filename}, sheet={sn}, row={row}, row_dct={row_dct}")
+                        chu = f"The file is named '{filename}', the sheet in the file is named '{sn}' and the row contains '{rowstrings}'"
+                        try:
+                            row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer([chu]))).decode('ascii')
+                        except Exception as ex:
+                            print(f"Exception {ex} while creating embedding for row")
+                        workbook['rows'].append(row_dct)
             if lambda_timelimit_exceeded():
                 workbook['partial'] = "true"
                 print(f"read_xlsx: Lambda timelimit exceeded reading xlsx file. Breaking..")
@@ -578,7 +580,7 @@ def process_pptx(file_item, filename, fileid, bio):
         file_item['partial'] = 'true'
 
 def process_xlsx(file_item, filename, fileid, bio):
-    if 'partial' in file_item and 'slides' in file_item:
+    if 'partial' in file_item and 'rows' in file_item:
         del file_item['partial']
         prev_rows = file_item['rows']
         print(f"process_xlsx: fn={filename}. found partial. len(prev_workbook)={len(prev_workbook)}")
@@ -687,8 +689,10 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
             if 'size' in file_item and int(file_item['size']) == 0: 
-                if mimetype != 'application/vnd.google-apps.presentation' and mimetype != 'application/vnd.google-apps.document':
-                    print(f"skipping google drive with file size == 0, and not of type google slides or google docs: {file_item}")
+                if mimetype != 'application/vnd.google-apps.presentation' \
+                        and mimetype != 'application/vnd.google-apps.document' \
+                        and mimetype != 'application/vnd.google-apps.spreadsheet':
+                    print(f"skipping google drive with file size == 0, and not of type google sheet, slides or docs: {file_item}")
                     to_del_from_needs_embedding.append(fileid)
                     status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                     if status:
@@ -705,6 +709,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_docx(file_item, filename, fileid, bio)
+                done_embedding[fileid] = file_item
+                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                if status:
+                    prev_update = updtime
+            elif filename.lower().endswith('.xlsx'):
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
+                process_xlsx(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
