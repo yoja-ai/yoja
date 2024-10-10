@@ -104,6 +104,7 @@ RUN pip3 install tenacity
 RUN pip3 install dropbox
 RUN pip3 install tiktoken
 RUN pip3 install BeautifulSoup4
+RUN pip3 install openpyxl
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}

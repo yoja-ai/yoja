@@ -25,6 +25,7 @@ import dropbox
 import jsons
 import gzip
 from pdf import read_pdf
+import openpyxl
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -230,6 +231,8 @@ def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
             url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
         elif fmt == 'docx':
             url = f"https://docs.google.com/document/d/{file_id}/export?format=doc"
+        elif fmt == 'xlsx':
+            url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
         else:
             print(f"export_gdrive_file: Unknown format {fmt} for fileid {file_id}. Do not know how to download..")
             return None
@@ -473,6 +476,40 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
+def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> Dict[str, Union[str, Dict[str,str]]]:
+    print(f"aaaaaaaaaaaaaaaa {filename}, len_prev_rows={len(prev_rows)}")
+    workbook = {'filename': filename, 'rows': prev_rows}
+    wb = openpyxl.load_workbook(file_io)
+    print(f"bbbbbbbbbbbbbbbb {filename}, wb.sheetnames={wb.sheetnames}")
+    for sn in wb.sheetnames:
+        print(f"cccccccccccccccc {filename}, sheet={sn}")
+        sheet=wb[sn]
+        row_in_files_index_jsonl = 0
+        for row in range(1, sheet.max_row+1):
+            print(f"dddddddddddddddd {filename}, sheet={sn}, row={row}")
+            rowstrings = ""
+            for cl in range(1, sheet.max_column+1):
+                cell = sheet.cell(row, cl)
+                if cell.value and isinstance(cell.value, str):
+                    rowstrings = rowstrings + cell.value.strip().rstrip('.') + '.'
+            if rowstrings:
+                print(f"eeeeeeeeeeeeeeee {filename}, sheet={sn}, row={row}, strings={rowstrings}")
+                row_in_files_index_jsonl += 1
+                if row_in_files_index_jsonl >= len(prev_rows):
+                    row_dct = {'text': rowstrings, 'row_number': row}
+                    print(f"ffffffffffffffff {filename}, sheet={sn}, row={row}, row_dct={row_dct}")
+                    chu = f"The file is named '{filename}', the sheet in the file is named '{sn}' and the row contains '{rowstrings}'"
+                    try:
+                        row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer([chu]))).decode('ascii')
+                    except Exception as ex:
+                        print(f"Exception {ex} while creating embedding for row")
+                    workbook['rows'].append(row_dct)
+            if lambda_timelimit_exceeded():
+                workbook['partial'] = "true"
+                print(f"read_xlsx: Lambda timelimit exceeded reading xlsx file. Breaking..")
+                break
+    return workbook
+
 def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
     prs = Presentation(file_io)
     ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}
@@ -540,6 +577,20 @@ def process_pptx(file_item, filename, fileid, bio):
     if 'partial' in ppt:
         file_item['partial'] = 'true'
 
+def process_xlsx(file_item, filename, fileid, bio):
+    if 'partial' in file_item and 'slides' in file_item:
+        del file_item['partial']
+        prev_rows = file_item['rows']
+        print(f"process_xlsx: fn={filename}. found partial. len(prev_workbook)={len(prev_workbook)}")
+    else:
+        prev_rows = []
+        print(f"process_xlsx: fn={filename}. did not find partial")
+    xlsx = read_xlsx(filename, fileid, bio, file_item['mtime'], prev_rows)
+    file_item['rows'] = xlsx['rows']
+    file_item['filetype'] = 'xlsx'
+    if 'partial' in xlsx:
+        file_item['partial'] = 'true'
+
 class StorageReader:
     def read(self, fileid, filename, mimetype):
         pass
@@ -558,6 +609,9 @@ class GoogleDriveReader(StorageReader):
         elif mimetype == 'application/vnd.google-apps.document':
             print(f"GoogleDriveReader.read: fileid={fileid} calling export2")
             return export_gdrive_file(self._access_token, fileid, 'docx')
+        elif mimetype == 'application/vnd.google-apps.spreadsheet':
+            print(f"GoogleDriveReader.read: fileid={fileid} calling export3")
+            return export_gdrive_file(self._access_token, fileid, 'xlsx')
         else:
             print(f"GoogleDriveReader.read: fileid={fileid} calling download")
             return download_gdrive_file(self._service, fileid, filename)
@@ -752,6 +806,26 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
                         process_docx(file_item, filename, fileid, fp)
+                        done_embedding[fileid] = file_item
+                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                        if status:
+                            prev_update = updtime
+                    os.remove(f'{tfn}')
+            elif mimetype == 'application/vnd.google-apps.spreadsheet':
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
+                if not bio:
+                    print(f"process_files: Unable to export {filename} to xlsx format")
+                    to_del_from_needs_embedding.append(fileid)
+                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    if status:
+                        prev_update = updtime
+                else:
+                    tfd, tfn = tempfile.mkstemp(suffix=".xlsx", dir="/tmp")
+                    with os.fdopen(tfd, "wb") as wfp:
+                        wfp.write(bio.getvalue())
+                    bio.close()
+                    with open(f"{tfn}", 'rb') as fp:
+                        process_xlsx(file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -1317,7 +1391,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
                     needs_embedding[itm['id']] = {'filename': itm['name'], 'fileid': itm['id'],
                                 'mtime': from_rfc3339(itm['modifiedTime']), 'mimetype': itm['mimeType'],
                                 'size': size}
-            if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx'):
+            if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx') or fn.endswith('.xlsx'):
                 if size > (100*1024):
                     print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
                     continue

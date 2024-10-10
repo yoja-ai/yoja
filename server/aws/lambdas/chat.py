@@ -547,6 +547,8 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
             key = 'slides'
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
+        elif 'rows' in finfo:
+            key = 'rows'
         else:
             emsg = f"ERROR! Could not get key in document for {finfo}"
             print(emsg)
@@ -784,6 +786,8 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             key = 'slides'
         elif 'paragraphs' in finfo:
             key = 'paragraphs'
+        elif 'rows' in finfo:
+            key = 'rows'
         else:
             emsg = f"ERROR! Could not get key in document for {finfo}"
             print(emsg)
