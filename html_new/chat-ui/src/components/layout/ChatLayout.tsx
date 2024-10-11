@@ -286,7 +286,7 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                       }
                       <div className="gpt-msg-options">
                         { !msg.copied && <Copy size={16} color="#616161" className="gpt-msg-icon" onClick={()=> {copyMessage(msg)}}/>}
-                        { msg.copied &&  <Tooltip placement="topLeft" title='copyed' open>
+                        { msg.copied &&  <Tooltip placement="topLeft" title='copied' open>
                           <CopyCheck size={16} color="#616161"  className="gpt-msg-icon"/>
                         </Tooltip> }
                         {/* <Files size={15} color="#616161" className="gpt-msg-icon" onClick={()=> {copyMessage(msg)}}/> */}
