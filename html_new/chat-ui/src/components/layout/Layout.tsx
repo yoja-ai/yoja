@@ -81,7 +81,7 @@ const Layout: React.FC<LayoutProps> = () => {
     const sourceFiles = [];
     for (let index = 0; index < context_sources.length; index++) {
       let src = context_sources[index];
-      let extn = src.file_name.split('.').pop() || 'doc';  // Extract extension or default to 'doc'
+      let extn = src.file_extn;
       const fileInfo = {
           name: src.file_name,
           id: src.file_id,

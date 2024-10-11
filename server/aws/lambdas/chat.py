@@ -128,6 +128,18 @@ class DocumentType(enum.Enum):
             
         return str_to_type_dict.get(doc_type_str)
 
+    def file_ext(self) -> str:
+        doc_type_to_ext:Dict[Self, str] = {
+            self.__class__.DOCX:'docx',
+            self.__class__.PPTX:'pptx',
+            self.__class__.XLSX:'xlsx',
+            self.__class__.PDF:'pdf',
+            self.__class__.TXT:'txt'
+        }
+        if not doc_type_to_ext.get(self):
+            raise Exception(f"file_ext(): Unknown document type:  self={self}")
+        return doc_type_to_ext[self]
+
     def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_id:str) -> str:
         if doc_storage_type == faiss_rm.DocStorageType.GoogleDrive:
             # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
@@ -890,19 +902,23 @@ class ContextSource:
     file_url:str
     file_id:str
     para_id:str
+    file_extn:str
     
 def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]]) -> Tuple[List[str],List[ContextSource]] :
     context_srcs_links:List[str] = []
+    csdict = {}
     for file_key, chunks in filekey_to_file_chunks_dict.items():
         for chunk_det in chunks:
-            if chunk_det.file_path:
-                context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
-                                                        chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
-                                                        chunk_det.file_id, str(chunk_det.para_id)))
-            else:
-                context_srcs_links.append(ContextSource("", chunk_det.file_name,
-                                                        chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
-                                                        chunk_det.file_id, str(chunk_det.para_id)))
+            if chunk_det.file_id not in csdict:
+                csdict[chunk_det.file_id] = chunk_det # Only one context source for each file
+                if chunk_det.file_path:
+                    context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
+                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
+                else:
+                    context_srcs_links.append(ContextSource("", chunk_det.file_name,
+                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
     return context_srcs_links
 
 def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
