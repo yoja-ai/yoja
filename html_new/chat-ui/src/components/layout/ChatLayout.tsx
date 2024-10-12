@@ -2,7 +2,6 @@ import { Message, SourceFile, UserInfo } from "../../type";
 import React, { useEffect, useRef, useState } from "react";
 import { Menu, Copy, ThumbsDown, ThumbsUp, CopyCheck } from 'lucide-react';
 import ChatBottom from "../chat/ChatBottom";
-import ProgressBar from "../chat/IndexingProgress";
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar, AvatarImage } from "../ui/avatar";
 import { ThreeDots } from "react-loader-spinner";
@@ -316,7 +315,6 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
           </div>
           <ChatBottom sendMessage={sendMessage} messages={currentChat} isMobile={isMobile} isLoading={isLoading}/>
           <div style={{ marginBottom: '10px' }}></div> {/* Empty space between */}
-          <ProgressBar/>
         </div>
       </div>
     </div>

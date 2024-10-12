@@ -5,6 +5,7 @@ import UserMenu from './UserMenu';
 import { Dropdown, Menu } from 'antd';
 import { ChatHistory, Message } from '../../type';
 import ExportOptionsModal from './ExportOptionsModal';
+import ProgressBar from "../chat/IndexingProgress";
 
 interface SidebarProps {
   isCollapsed: boolean;
@@ -187,6 +188,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             ))}
           </div>
           <UserMenu isCollapsed={isCollapsed} />
+          <ProgressBar/>
         </div>
         {selectedChatForExport && (
           <ExportOptionsModal
