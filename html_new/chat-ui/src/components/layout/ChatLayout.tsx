@@ -258,7 +258,7 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap'}}>
                             {
                               msg.source?.map((source) =>  
-                                <a className="gpt-msg-source" href={source.fileUrl} target="_blank">
+                                <a className="gpt-msg-source" href={source.fileUrl} target="_blank" title={source.fullPath}>
                                   <img style={{width:'16px', height: '16px'}} src={source.extension === "doc" || source.extension === "docx" ? "docs.png" : (source.extension == "pptx" ? "slide.png" : (source.extension == "pdf" ? "pdf.png" : (source.extension == "xlsx" ? "xlsx.png" : "docs.png")))}/>
                                   <span className="gpt-source-name">{source.name}</span>
                                 </a>
