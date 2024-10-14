@@ -330,12 +330,12 @@ def refresh_user_google(item) -> Credentials:
     created = int(item['created']['N'])
     expires_in = int(item['expires_in']['N'])
     print(f"refresh_user_google: user_type=google, email={email}, access token created={datetime.datetime.fromtimestamp(created)}")
-    token={"access_token": access_token,
+    token={"access_token": None,
             "refresh_token": refresh_token,
             "token_type": "Bearer",
             "scope": " ".join(SCOPES),
             "created": created,
-            "expires_in": expires_in,
+            "expires_in": None,
             "client_id": os.environ['OAUTH_CLIENT_ID'],
             "client_secret": os.environ['OAUTH_CLIENT_SECRET']}
     with open("/tmp/token.json", "w") as fp:

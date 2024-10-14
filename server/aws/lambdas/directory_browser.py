@@ -10,7 +10,7 @@ def directory_browser(event, context):
     if (operation != 'POST'):
         print(f"Error: unsupported method: operation={operation}")
         return respond({"error_msg": str(ValueError('Unsupported method ' + str(operation)))}, status=400)
-    rv = check_cookie(event, True)
+    rv = check_cookie(event, False)
     email = rv['google']
     if not email:
         print(f"directory_browser: check_cookie did not return email. Sending 403")
