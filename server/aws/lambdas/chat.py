@@ -345,7 +345,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
     print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
-                (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
+                (False, True, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -649,14 +649,6 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         if len(passage_scores_dict.items()) == 0:
             print(f"retrieve_and_rerank_using_faiss: No entries in passage_scores!!")
             return False, None, None
-
-        print(f"retrieve_and_rerank_using_faiss: passage_scores=")
-        if print_trace_context_choice:
-            tracebuf.append(f"**{_prtime()}: Passage Scores**")
-        for ind_in_faiss, ps in passage_scores_dict.items():
-            print(f"    index_in_faiss={ind_in_faiss}, file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, passage_score={ps}")
-            if print_trace_context_choice:
-                tracebuf.append(f"file={documents[index_map[ind_in_faiss][0]]['filename']}, paragraph_num={index_map[ind_in_faiss][1]}, ps={ps}")
 
         # faiss returns METRIC_INNER_PRODUCT - larger number means better match
         # sum the passage scores
