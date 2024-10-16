@@ -546,6 +546,55 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -
         ind += 1
     return ppt
 
+def read_txt(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
+    prev_len = len(prev_paras)
+    fulltxt = file_io.getvalue().decode('utf-8')
+    sentences = fulltxt.split('.')
+    prelude = f"The filename is {filename} and the paragraphs are:"
+    prelude_token_len = vectorizer.get_token_count(prelude)
+    chunk_len = prelude_token_len
+    chunk_paras = []
+    for para in sentences:
+        if para:
+            para_len = vectorizer.get_token_count(para)
+            if para_len + chunk_len >= 512:
+                if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
+                    chunk_len = prelude_token_len
+                    chunk_paras = []
+                    continue
+                chunk = '.'.join(chunk_paras)
+                para_dct = {'paragraph_text': chunk}
+                try:
+                    embedding = vectorizer([f"{prelude}{chunk}"])
+                    eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                    para_dct['embedding'] = eem
+                except Exception as ex:
+                    print(f"Exception {ex} while creating para embedding")
+                doc_dct['paragraphs'].append(para_dct)
+                chunk_len = prelude_token_len
+                chunk_paras = []
+                if lambda_timelimit_exceeded():
+                    doc_dct['partial'] = "true"
+                    print(f"read_txt: Lambda timelimit exceeded when reading docx file. Breaking..")
+                    break
+            else:
+                chunk_paras.append(para)
+                chunk_len += para_len
+    if chunk_len > prelude_token_len and len(chunk_paras) > 0:
+        if prev_len <= len(doc_dct['paragraphs']): # skip previously processed chunks
+            chunk = '.'.join(chunk_paras)
+            para_dct = {}
+            para_dct['paragraph_text'] = chunk
+            try:
+                embedding = vectorizer([f"{prelude}{chunk}"])
+                eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                para_dct['embedding'] = eem
+            except Exception as ex:
+                print(f"Exception {ex} while creating residual para embedding")
+            doc_dct['paragraphs'].append(para_dct)
+    return doc_dct
+
 def process_docx(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
@@ -557,6 +606,20 @@ def process_docx(file_item, filename, fileid, bio):
     doc_dict = read_docx(filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'docx'
+    if 'partial' in doc_dict:
+        file_item['partial'] = 'true'
+
+def process_txt(file_item, filename, fileid, bio):
+    if 'partial' in file_item and 'paragraphs' in file_item:
+        del file_item['partial']
+        prev_paras = file_item['paragraphs']
+        print(f"process_docx: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+    else:
+        prev_paras = []
+        print(f"process_docx: fn={filename}. did not find partial")
+    doc_dict = read_txt(filename, fileid, bio, file_item['mtime'], prev_paras)
+    file_item['paragraphs'] = doc_dict['paragraphs']
+    file_item['filetype'] = 'txt'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
@@ -837,6 +900,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         if status:
                             prev_update = updtime
                     os.remove(f'{tfn}')
+            elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
+                process_txt(file_item, filename, fileid, bio)
+                done_embedding[fileid] = file_item
+                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                if status:
+                    prev_update = updtime
             else:
                 print(f"process_files: skipping unknown file type {filename} mimetype={mimetype}")
                 to_del_from_needs_embedding.append(fileid)
@@ -1397,7 +1467,8 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
                     needs_embedding[itm['id']] = {'filename': itm['name'], 'fileid': itm['id'],
                                 'mtime': from_rfc3339(itm['modifiedTime']), 'mimetype': itm['mimeType'],
                                 'size': size}
-            if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') or fn.endswith('.pptx') or fn.endswith('.xlsx'):
+            if fn.endswith('.docx') or fn.endswith('.doc') or fn.endswith('.ppt') \
+                          or fn.endswith('.pptx') or fn.endswith('.xlsx') or fn.endswith('.txt'):
                 if size > (100*1024):
                     print(f"create_sample_index: Skipping file {fn} because size {size} is larger than 100k")
                     continue
