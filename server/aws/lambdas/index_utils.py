@@ -26,6 +26,8 @@ import jsons
 import gzip
 from pdf import read_pdf
 import openpyxl
+from bs4 import BeautifulSoup
+import re
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -595,6 +597,62 @@ def read_txt(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.dateti
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
+def read_html(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+    doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
+    prev_len = len(prev_paras)
+    html_content = file_io.getvalue().decode('utf-8')
+    soup = BeautifulSoup(html_content, 'html.parser')
+    pgs = soup.find_all('p')
+    text_paragraphs = []
+    for para in pgs:
+        text = para.get_text()
+        nonl_text = text.replace('\n', ' ').replace('\r', '')
+        nonl_ss = re.sub(' +', ' ', nonl_text)
+        text_paragraphs.append(nonl_ss)
+    prelude = f"The filename is {filename} and the paragraphs are:"
+    prelude_token_len = vectorizer.get_token_count(prelude)
+    chunk_len = prelude_token_len
+    chunk_paras = []
+    for para in text_paragraphs:
+        if para:
+            para_len = vectorizer.get_token_count(para)
+            if para_len + chunk_len >= 512:
+                if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
+                    chunk_len = prelude_token_len
+                    chunk_paras = []
+                    continue
+                chunk = '.'.join(chunk_paras)
+                para_dct = {'paragraph_text': chunk}
+                try:
+                    embedding = vectorizer([f"{prelude}{chunk}"])
+                    eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                    para_dct['embedding'] = eem
+                except Exception as ex:
+                    print(f"Exception {ex} while creating para embedding")
+                doc_dct['paragraphs'].append(para_dct)
+                chunk_len = prelude_token_len
+                chunk_paras = []
+                if lambda_timelimit_exceeded():
+                    doc_dct['partial'] = "true"
+                    print(f"read_html: Lambda timelimit exceeded when reading docx file. Breaking..")
+                    break
+            else:
+                chunk_paras.append(para)
+                chunk_len += para_len
+    if chunk_len > prelude_token_len and len(chunk_paras) > 0:
+        if prev_len <= len(doc_dct['paragraphs']): # skip previously processed chunks
+            chunk = '.'.join(chunk_paras)
+            para_dct = {}
+            para_dct['paragraph_text'] = chunk
+            try:
+                embedding = vectorizer([f"{prelude}{chunk}"])
+                eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                para_dct['embedding'] = eem
+            except Exception as ex:
+                print(f"Exception {ex} while creating residual para embedding")
+            doc_dct['paragraphs'].append(para_dct)
+    return doc_dct
+
 def process_docx(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
@@ -613,13 +671,27 @@ def process_txt(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
         prev_paras = file_item['paragraphs']
-        print(f"process_docx: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+        print(f"process_txt: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
     else:
         prev_paras = []
-        print(f"process_docx: fn={filename}. did not find partial")
+        print(f"process_txt: fn={filename}. did not find partial")
     doc_dict = read_txt(filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'txt'
+    if 'partial' in doc_dict:
+        file_item['partial'] = 'true'
+
+def process_html(file_item, filename, fileid, bio):
+    if 'partial' in file_item and 'paragraphs' in file_item:
+        del file_item['partial']
+        prev_paras = file_item['paragraphs']
+        print(f"process_html: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+    else:
+        prev_paras = []
+        print(f"process_html: fn={filename}. did not find partial")
+    doc_dict = read_html(filename, fileid, bio, file_item['mtime'], prev_paras)
+    file_item['paragraphs'] = doc_dict['paragraphs']
+    file_item['filetype'] = 'html'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
@@ -903,6 +975,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
             elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_txt(file_item, filename, fileid, bio)
+                done_embedding[fileid] = file_item
+                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                if status:
+                    prev_update = updtime
+            elif (filename.lower().endswith('.html') or mimetype == 'text/html'):
+                bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
+                process_html(file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:

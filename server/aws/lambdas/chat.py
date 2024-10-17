@@ -118,10 +118,11 @@ class DocumentType(enum.Enum):
     PDF = 3
     TXT = 4
     XLSX = 5
+    HTML = 6
 
     @classmethod
     def fromString(clz, doc_type_str:str):
-        str_to_type_dict:Dict[str, Self] = { 'pptx':clz.PPTX, 'docx':clz.DOCX, 'pdf':clz.PDF, 'txt':clz.TXT, 'xlsx': clz.XLSX }
+        str_to_type_dict:Dict[str, Self] = { 'pptx':clz.PPTX, 'docx':clz.DOCX, 'pdf':clz.PDF, 'txt':clz.TXT, 'xlsx': clz.XLSX, 'html': clz.HTML }
         
         if not str_to_type_dict.get(doc_type_str):
             raise Exception(f"Unknown document type:  {doc_type_str}")
@@ -134,7 +135,8 @@ class DocumentType(enum.Enum):
             self.__class__.PPTX:'pptx',
             self.__class__.XLSX:'xlsx',
             self.__class__.PDF:'pdf',
-            self.__class__.TXT:'txt'
+            self.__class__.TXT:'txt',
+            self.__class__.HTML:'html'
         }
         if not doc_type_to_ext.get(self):
             raise Exception(f"file_ext(): Unknown document type:  self={self}")
@@ -150,7 +152,8 @@ class DocumentType(enum.Enum):
                 self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}',
                 self.__class__.XLSX:'https://docs.google.com/spreadsheets/d/{file_id}',
                 self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}'
+                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}',
+                self.__class__.HTML:'https://drive.google.com/file/d/{file_id}'
             }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
@@ -161,7 +164,8 @@ class DocumentType(enum.Enum):
                 self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}',
                 self.__class__.XLSX:'https://docs.google.com/spreadsheets/d/{file_id}',
                 self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}'
+                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}',
+                self.__class__.HTML:'https://drive.google.com/file/d/{file_id}'
             }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
