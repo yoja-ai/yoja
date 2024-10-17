@@ -349,7 +349,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
     print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
-                (False, True, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
+                (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -362,7 +362,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         if c not in ['+','@','#','$', '^', '!', '/', '~']: break
         
         if c == '+': print_trace = True
-        if c == '@': use_ivfadc = True
+        if c == '@': use_ivfadc = not use_ivfadc
         if c == '#': cross_encoder_10 = True
         if c == '$': use_ner = True
         if c == '^': print_trace_context_choice = True
