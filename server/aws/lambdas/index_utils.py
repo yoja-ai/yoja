@@ -28,6 +28,7 @@ from pdf import read_pdf
 import openpyxl
 from bs4 import BeautifulSoup
 import re
+import zipfile
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -695,6 +696,77 @@ def process_html(file_item, filename, fileid, bio):
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
+def process_gh_issues_zip(file_item, filename, fileid, mimetype, zip_path):
+    # Each issue is one paragraph
+    if 'partial' in file_item and 'paragraphs' in file_item:
+        del file_item['partial']
+        prev_paras = file_item['paragraphs']
+        print(f"process_gh_issues_zip: fn={filename}. found partial. len(prev_paras)={len(prev_paras)}")
+    else:
+        prev_paras = []
+        print(f"process_gh_issues_zip: fn={filename}. did not find partial")
+    timelimit_exceeded = False
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        print('Created temporary directory:', tmpdirname)
+        # Unzip the downloaded file
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(tmpdirname)
+            print(f"Files extracted to {tmpdirname}")
+
+        extracted_files = os.listdir(tmpdirname)
+        for jsonfile in extracted_files:
+            try:
+                if not jsonfile.endswith(".json"):
+                    continue
+                htmlfile = f"{jsonfile[:-5]}.html"
+                print(f"Processing {jsonfile} | {htmlfile}")
+                with open(os.path.join(tmpdirname, jsonfile), 'r') as jfp:
+                    js = json.load(jfp)
+                with open(os.path.join(tmpdirname, htmlfile), 'r') as hfp:
+                    html_content = hfp.read()
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    pgs = soup.find_all('p')
+                    text_paragraphs = []
+                    for para in pgs:
+                        text = para.get_text()
+                        nonl_text = text.replace('\n', ' ').replace('\r', '')
+                        nonl_ss = re.sub(' +', ' ', nonl_text)
+                        text_paragraphs.append(nonl_ss)
+                txt = f"bug id {js['number']} is {js['title']} and it is in state {js['state']}. Details of the issue are as follows: {'.'.join(text_paragraphs)}"
+                print(f"process_gh_issues_zip: txt={txt}")
+                para_dct = {}
+                para_dct['paragraph_text'] = txt
+                embedding = vectorizer([txt])
+                eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
+                para_dct['embedding'] = eem
+                para_num = js['number'] -1 # github issues are 1 based while paragraphs are 0 based
+                print(f"process_gh_issues_zip: issue#{js['number']}, para_num={para_num}, len(prev_paras)={len(prev_paras)}")
+                if para_num < len(prev_paras):
+                    # updating existing issue
+                    print(f"process_gh_issues_zip: Updating existing")
+                    prev_paras[para_num] = para_dct
+                elif len(prev_paras) == para_num:
+                    # next issue
+                    print(f"process_gh_issues_zip: appending next")
+                    prev_paras.append(para_dct)
+                else:
+                    # sparse. Fill in with Nones
+                    print(f"process_gh_issues_zip: sparse filling. extending {para_num - len(prev_paras)} with None")
+                    for i in range(para_num - len(prev_paras)):
+                        prev_paras.append(None)
+                    prev_paras.append(para_dct)
+                if lambda_timelimit_exceeded():
+                    timelimit_exceeded = True
+                    print(f"process_gh_issues_zip: Lambda timelimit exceeded when reading gh issues zip file. Breaking..")
+                    break
+            except Exception as ex:
+                print(f"process_gh_issues_zip: Caught {ex} while processing {jsonfile}. Ignoring this issue and carrying on..")
+    file_item['paragraphs'] = prev_paras
+    file_item['filetype'] = 'gh-issues.zip'
+    if timelimit_exceeded:
+        file_item['partial'] = "true"
+
 def process_pptx(file_item, filename, fileid, bio):
     if 'partial' in file_item and 'slides' in file_item:
         del file_item['partial']
@@ -747,6 +819,20 @@ class GoogleDriveReader(StorageReader):
         else:
             print(f"GoogleDriveReader.read: fileid={fileid} calling download")
             return download_gdrive_file(self._service, fileid, filename)
+    def download_to_local(self, fileid, filename, mimetype, localfn):
+        print(f"GogleDriveReader.download_to_local: Entered. fileid={fileid}, filename={filename}, localfn={localfn}")
+        request = self._service.files().get_media(fileId=fileid)
+        fh = io.FileIO(localfn, 'w+b')
+        # Download the file
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+            print(f"Download {int(status.progress() * 100)}%.")
+        # Close the file handler after the download
+        fh.close()
+        return
+
     def descriptor(self):
         return 'gdrive'
 
@@ -764,6 +850,18 @@ class DropboxReader(StorageReader):
                 file.write(chunk)
         file.seek(0, os.SEEK_SET)
         return file
+    def download_to_local(self, fileid, filename, mimetype, localfn):
+        print(f"DropboxReader.download_to_local: Entered. fileid={fileid}, filename={filename}, localfn={localfn}")
+        with open(localfn, 'w+b') as wfp:
+            url = 'https://content.dropboxapi.com/2/files/download'
+            headers = {'Authorization': f"Bearer {self._token}", 'Dropbox-API-Arg': json.dumps({'path': fileid})}
+            r = requests.get(url, stream=True, headers=headers)
+            file = io.BytesIO()
+            for chunk in r.iter_content(chunk_size=1024): 
+                if chunk:
+                    wfp.write(chunk)
+            fh.close()
+            return
     def descriptor(self):
         return 'dropbox'
 
@@ -828,7 +926,6 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     if status:
                         prev_update = updtime
                     continue
-            
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_pptx(file_item, filename, fileid, bio)
@@ -982,6 +1079,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
             elif (filename.lower().endswith('.html') or mimetype == 'text/html'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_html(file_item, filename, fileid, bio)
+                done_embedding[fileid] = file_item
+                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                if status:
+                    prev_update = updtime
+            elif filename.lower().endswith('.gh-issues.zip'):
+                storage_reader.download_to_local(fileid, filename, mimetype, '/tmp/downloaded_file.zip')
+                process_gh_issues_zip(file_item, filename, fileid, mimetype, '/tmp/downloaded_file.zip')
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
@@ -1451,7 +1555,8 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         service:googleapiclient.discovery.Resource = build("drive", "v3", credentials=creds)
         if not s3_index or not gdrive_next_page_token or gdrive_next_page_token == "1" or 'YOJA_FORCE_FULL_INDEX' in os.environ:
             if 'YOJA_FORCE_FULL_INDEX' in os.environ:
-                print("update_index_for_user_gdrive: Forcing full index because of env var YOJA_FORCE_FULL_INDEX")
+                print("update_index_for_user_gdrive: Forcing full index because of env var YOJA_FORCE_FULL_INDEX. Also setting gdrive_next_page_token to 1")
+                gdrive_next_page_token = "1"
             gdrive_listing, folder_details, gdrive_next_page_token = _get_gdrive_listing_full(service, item)
             unmodified, needs_embedding, deleted_files = calc_file_lists(service, s3_index, gdrive_listing, folder_details)
             print(f"gdrive full_listing. Number of unmodified={len(unmodified)}; modified or added={len(needs_embedding)}; deleted={len(deleted_files)}; gdrive_next_page_token={gdrive_next_page_token}")
