@@ -337,7 +337,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None
-    print(f"init_vdb: finished reading files_index.jsonl.gz. Entries in fls dict={len(fls.items())}")
+    print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
 
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
@@ -353,8 +353,9 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
             continue
         for para_index in range(len(finfo[key])):
             para = finfo[key][para_index]
-            embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
-            index_map.append((fileid, para_index))
+            if para:
+                embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
+                index_map.append((fileid, para_index))
     print(f"init_vdb: finished loading embeddings/index_map. Entries in embeddings={len(embeddings)}")
 
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
