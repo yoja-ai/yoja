@@ -696,7 +696,7 @@ def process_html(file_item, filename, fileid, bio):
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
-def process_gh_issues_zip(file_item, filename, fileid, mimetype, zip_path):
+def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path):
     # Each issue is one paragraph
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
@@ -715,12 +715,14 @@ def process_gh_issues_zip(file_item, filename, fileid, mimetype, zip_path):
             print(f"Files extracted to {tmpdirname}")
 
         extracted_files = os.listdir(tmpdirname)
+        issues_processed = 0
         for jsonfile in extracted_files:
             try:
                 if not jsonfile.endswith(".json"):
                     continue
+                issues_processed += 1
                 htmlfile = f"{jsonfile[:-5]}.html"
-                print(f"Processing {jsonfile} | {htmlfile}")
+                print(f"process_gh_issues_zip: Processed {issues_processed} issues. Now processing {jsonfile}")
                 with open(os.path.join(tmpdirname, jsonfile), 'r') as jfp:
                     js = json.load(jfp)
                 with open(os.path.join(tmpdirname, htmlfile), 'r') as hfp:
@@ -757,9 +759,12 @@ def process_gh_issues_zip(file_item, filename, fileid, mimetype, zip_path):
                         prev_paras.append(None)
                     prev_paras.append(para_dct)
                 if lambda_timelimit_exceeded():
-                    timelimit_exceeded = True
-                    print(f"process_gh_issues_zip: Lambda timelimit exceeded when reading gh issues zip file. Breaking..")
-                    break
+                    print(f"process_gh_issues_zip: Processed {issues_processed} issues. Exceeded lambda timelimit. Trying to extend..")
+                    extend_ddb_time(email, lambda_time_left_seconds())
+                    if lambda_timelimit_exceeded():
+                        print(f"process_gh_issues_zip: Processed {issues_processed} issues. Extending timelimit appears to not have worked. Breaking..")
+                        timelimit_exceeded = True
+                        break
             except Exception as ex:
                 print(f"process_gh_issues_zip: Caught {ex} while processing {jsonfile}. Ignoring this issue and carrying on..")
     file_item['paragraphs'] = prev_paras
@@ -1085,7 +1090,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     prev_update = updtime
             elif filename.lower().endswith('.gh-issues.zip'):
                 storage_reader.download_to_local(fileid, filename, mimetype, '/tmp/downloaded_file.zip')
-                process_gh_issues_zip(file_item, filename, fileid, mimetype, '/tmp/downloaded_file.zip')
+                process_gh_issues_zip(email, file_item, filename, fileid, mimetype, '/tmp/downloaded_file.zip')
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
