@@ -740,6 +740,7 @@ def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path
                 print(f"process_gh_issues_zip: txt={txt}")
                 para_dct = {}
                 para_dct['paragraph_text'] = txt
+                para_dct['html_url'] = js['html_url']
                 embedding = vectorizer([txt])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem

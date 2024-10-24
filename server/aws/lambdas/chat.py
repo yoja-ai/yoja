@@ -146,7 +146,7 @@ class DocumentType(enum.Enum):
             raise Exception(f"file_ext(): Unknown document type:  self={self}")
         return doc_type_to_ext[self]
 
-    def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_id:str) -> str:
+    def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_id:str, para_dict=None) -> str:
         if doc_storage_type == faiss_rm.DocStorageType.GoogleDrive:
             # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
             # if a pdf file (ends with pdf), use the link https://drive.google.com/file/d/<file_id>
@@ -158,7 +158,7 @@ class DocumentType(enum.Enum):
                 self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
                 self.__class__.TXT:'https://drive.google.com/file/d/{file_id}',
                 self.__class__.HTML:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.GH_ISSUES_ZIP:'https://drive.google.com/file/d/{file_id}'
+                self.__class__.GH_ISSUES_ZIP:para_dict['html_url'] if para_dict and 'html_url' in para_dict else 'https://drive.google.com/file/d/{file_id}'
             }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
@@ -174,7 +174,7 @@ class DocumentType(enum.Enum):
                 self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
                 self.__class__.TXT:'https://drive.google.com/file/d/{file_id}',
                 self.__class__.HTML:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.GH_ISSUES_ZIP:'https://drive.google.com/file/d/{file_id}'
+                self.__class__.GH_ISSUES_ZIP:para_dict['html_url'] if para_dict and 'html_url' in para_dict else 'https://drive.google.com/file/d/{file_id}'
             }
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
@@ -579,11 +579,21 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     print(logmsg); tracebuf.append(logmsg)
     return None, None, None
 
+def _get_key(finfo):
+    if 'slides' in finfo:
+        return 'slides'
+    elif 'paragraphs' in finfo:
+        return 'paragraphs'
+    elif 'rows' in finfo:
+        return 'rows'
+    else:
+        return None
+
 def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overlaps:bool = True) -> Tuple[dict, str]:
     """returns the tupe (error_dict, context)"""
     
     print(f"_gen_context(): context_chunk_range_list={context_chunk_range_list}")
-    if handle_overlaps: 
+    if handle_overlaps and len(context_chunk_range_list) > 1:
         context_chunk_range_list = DocumentChunkRange.process_overlaps(context_chunk_range_list)
         print(f"_gen_context(): context_chunk_range_list after overlapping merge={context_chunk_range_list}")
     
@@ -593,13 +603,8 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
         chunk_det = chunk_range.doc_chunk
         fparagraphs = []
         finfo = chunk_range.doc_chunk.file_info
-        if 'slides' in finfo:
-            key = 'slides'
-        elif 'paragraphs' in finfo:
-            key = 'paragraphs'
-        elif 'rows' in finfo:
-            key = 'rows'
-        else:
+        key = _get_key(finfo)
+        if not key:
             emsg = f"ERROR! Could not get key in document for {finfo}"
             print(emsg)
             return respond({"error_msg": emsg}, status=500), None
@@ -681,13 +686,26 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
         summed_scores:List[DocumentChunkDetails] = [] # array of (summed_score, index_in_faiss)
         for index_in_faiss, scores in passage_scores_dict.items():
-            summed_scores.append(DocumentChunkDetails(index_in_faiss, faiss_rm_vdb, i, faiss_rm_vdb.get_doc_storage_type(), sum(scores), 
-                                                      DocumentType.fromString(documents[index_map[index_in_faiss][0]]['filetype']),
-                                                      documents[index_map[index_in_faiss][0]].get('path') if documents[index_map[index_in_faiss][0]].get('path') else None,
-                                                      documents[index_map[index_in_faiss][0]]['filename'],
-                                                      documents[index_map[index_in_faiss][0]]['fileid'],
-                                                      documents[index_map[index_in_faiss][0]],
-                                                      index_map[index_in_faiss][1]))
+            fileid = index_map[index_in_faiss][0]
+            para_index = index_map[index_in_faiss][1]
+            finfo = documents[fileid]
+            key = _get_key(finfo)
+            if not key:
+                print(f"Error. Skipping since we could not determine key for {finfo}")
+                continue
+            summed_scores.append(DocumentChunkDetails(index_in_faiss,
+                                                    faiss_rm_vdb,
+                                                    i,
+                                                    faiss_rm_vdb.get_doc_storage_type(),
+                                                    sum(scores), 
+                                                    DocumentType.fromString(finfo['filetype']),
+                                                    finfo.get('path') if finfo.get('path') else None,
+                                                    finfo['filename'],
+                                                    fileid,
+                                                    finfo,
+                                                    para_index,
+                                                    finfo[key][para_index],
+                                                      ))
         if use_ner:
             print(f"retrieve_and_rerank_using_faiss: summed_scores:")
             if print_trace_context_choice:
@@ -803,18 +821,19 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
-        if 'slides' in finfo:
-            key = 'slides'
-        elif 'paragraphs' in finfo:
-            key = 'paragraphs'
-        elif 'rows' in finfo:
-            key = 'rows'
-        else:
+        key = _get_key(finfo)
+        if not key:
             emsg = f"ERROR! Could not get key in document for {finfo}"
             print(emsg)
             return respond({"error_msg": emsg}, status=500)
         
         context_chunk_range_list.append(chunk_range)
+
+        if chunk_det.file_type == DocumentType.GH_ISSUES_ZIP:
+            chunk_range.start_para_id = chunk_det.para_id
+            chunk_range.end_para_id = chunk_det.para_id
+            print(f"_get_context_using_retr_and_rerank: gh issues zip file. Not adding previous or next paragraphs for context")
+            break
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
             fparagraphs = []
@@ -843,6 +862,8 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             fparagraphs = []
             token_count:int = 0            
             for idx in range(chunk_det.para_id, -1, -1):
+                if not finfo[key][idx]: # Paragraphs/Slides/rows can be sparse
+                    break
                 formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
                 fparagraphs.insert(0,formatted_para)
                 chunk_range.start_para_id = idx
@@ -857,6 +878,8 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             # if there are chunks after the current para_id
             if not (chunk_det.para_id + 1) == len(finfo[key]):
                 for idx in range(chunk_det.para_id + 1, len(finfo[key])):
+                    if not finfo[key][idx]: # Paragraphs/Slides/rows can be sparse
+                        break
                     formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
                     fparagraphs.append(formatted_para)
                     chunk_range.end_para_id = idx
@@ -907,13 +930,14 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
         for chunk_det in chunks:
             if chunk_det.file_id not in csdict:
                 csdict[chunk_det.file_id] = chunk_det # Only one context source for each file
+                para_dict = chunk_det.para_dict
                 if chunk_det.file_path:
                     context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
-                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id, para_dict),
                                             chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
                 else:
                     context_srcs_links.append(ContextSource("", chunk_det.file_name,
-                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id),
+                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id, para_dict),
                                             chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
     return context_srcs_links
 
