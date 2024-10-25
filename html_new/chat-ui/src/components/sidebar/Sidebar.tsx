@@ -153,7 +153,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="sidebar-head">
           <div className="sidebar-header">
             <div className="flex">
-              <img style={{ width: '100%', height: '24px' }} src="Yoja.svg" />
+              <img style={{ width: '100%', height: '32px' }} src="Yoja.svg" />
             </div>
             <div className='flex' style={{ gap: '8px' }}>
               <div className="sidebar-header-icon" onClick={newChat}>
