@@ -443,12 +443,12 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         role="user",
         content=last_msg,
     )
-    print(f"**{_prtime()}: Adding message to openai thread and running the thread:** message={message}")
-    logmsgs = [f"**{_prtime()}: Adding message to openai thread and running the thread:**"]
-    logmsgs.append(f"**role=** {message.role}")
+    print(f"{_prtime()}: Adding message to openai thread and running the thread: message={message}")
+    logmsgs = [f"{_prtime()}: Adding message to openai thread and running the thread:"]
+    logmsgs.append(f"role= {message.role}")
     if message.content:
         for c1 in message.content:
-            logmsgs.append(f"**message_content=** {c1.text.value}")
+            logmsgs.append(f"message_content= {c1.text.value}")
     tracebuf.extend(logmsgs)
 
     # runs.create_and_poll sometimes fails with run.status==failed
@@ -464,8 +464,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             messages = client.beta.threads.messages.list(
                 thread_id=assistants_thread_id
             )
-            print(f"**{_prtime()}: run completed:**run={run}")
-            logmsgs = [f"**{_prtime()}: run completed:**"]
+            print(f"{_prtime()}: run completed: run={run}")
+            logmsgs = [f"{_prtime()}: run completed:"]
             for msg in messages:
                 logmsgs.append(f"{msg.content[0].text.value[:64]}...")
             tracebuf.extend(logmsgs)
@@ -473,7 +473,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             seconds = 2**retries
-            logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
+            logmsg = f"{_prtime()}: retrieve_using_openai_assistant: run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
             print(logmsg); tracebuf.append(logmsg)
             time.sleep(seconds)
             retries += 1
@@ -481,8 +481,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 return None, None, None
         # run.status='requires_action'
         else:
-            print(f"**{_prtime()}: run incomplete:** run result after running thread with above messages: run={run}")
-            logmsgs = [f"**{_prtime()}: run incomplete:** run result after running thread with above messages"]
+            print(f"{_prtime()}: run incomplete: run result after running thread with above messages: run={run}")
+            logmsgs = [f"{_prtime()}: run incomplete: run result after running thread with above messages"]
             logmsgs.append(f"**instructions=** {run.instructions}")
             if run.required_action and run.required_action.submit_tool_outputs and run.required_action.submit_tool_outputs.tool_calls:
                 for tool_call in run.required_action.submit_tool_outputs.tool_calls:
@@ -499,11 +499,11 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 # Message(id='msg_uwg..', assistant_id='asst_M5wN...', attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Here are two bean-based recipes ...!'), type='text')], created_at=1715949656, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='assistant', run_id='run_w32ljc..', status=None, thread_id='thread_z2KDBGP...'), 
                 # Message(id='msg_V8Gf0S...', assistant_id=None, attachments=[], completed_at=None, content=[TextContentBlock(text=Text(annotations=[], value='Can you give me some recipes that involve beans?'), type='text')], created_at=1715949625, incomplete_at=None, incomplete_details=None, metadata={}, object='thread.message', role='user', run_id=None, status=None, thread_id='thread_z2KDBGPNy....')], object='list', first_id='msg_uwgAz...', last_id='msg_V8Gf0...', has_more=False)
             messages:openai.pagination.SyncCursorPage[openai.types.beta.threads.Message] = client.beta.threads.messages.list(thread_id=assistants_thread_id)
-            print(f"**{_prtime()}: run completed:**run={run}")
+            print(f"{_prtime()}: run completed: run={run}")
             if run.usage:
-                logmsgs = [f"**{_prtime()}: run completed:** completion_tokens={run.usage.completion_tokens}, prompt_tokens={run.usage.prompt_tokens}, total_tokens={run.usage.total_tokens}"]
+                logmsgs = [f"{_prtime()}: run completed: completion_tokens={run.usage.completion_tokens}, prompt_tokens={run.usage.prompt_tokens}, total_tokens={run.usage.total_tokens}"]
             else:
-                logmsgs = [f"**{_prtime()}: run completed:**"]
+                logmsgs = [f"{_prtime()}: run completed:"]
             for msg in messages:
                 logmsgs.append(f"{msg.content[0].text.value[:64]}...")
             tracebuf.extend(logmsgs)
@@ -511,12 +511,12 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             seconds = 2**loopcnt
-            logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
+            logmsg = f"{_prtime()}: retrieve_using_openai_assistant: tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
             print(logmsg); tracebuf.append(logmsg)
             continue
         else: # run is incomplete
-            print(f"**{_prtime()}: run incomplete:** result after running thread with above messages={run}")
-            tracebuf.append(f"**{_prtime()}: run incomplete:**")
+            print(f"{_prtime()}: run incomplete: result after running thread with above messages={run}")
+            tracebuf.append(f"{_prtime()}: run incomplete:")
     
             # Define the list to store tool outputs
             tool_outputs = []; tool:openai.types.beta.threads.RequiredActionFunctionToolCall
@@ -524,13 +524,13 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             for tool in run.required_action.submit_tool_outputs.tool_calls:
                 # function=Function(arguments='{\n  "question": "bean recipes"\n}', name='search_question_in_db'), type='function')
                 args_dict:dict = json.loads(tool.function.arguments)
-                print(f"**{_prtime()}: Running tool {tool}")
+                print(f"{_prtime()}: Running tool {tool}")
                 if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False, searchsubdir=searchsubdir)
-                    print(f"**{_prtime()}: Tool output:** context={context}")
-                    tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
+                    print(f"{_prtime()}: Tool output: context={context}")
+                    tracebuf.append(f"{_prtime()}: Tool output: context={context[:64]}...")
                     tool_outputs.append({
                         "tool_call_id": tool.id,
                         "output": context
@@ -539,8 +539,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     tool_arg_question = args_dict.get('question')
                     context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True, searchsubdir=searchsubdir)
-                    print(f"**{_prtime()}: Tool output:** context={context}")
-                    tracebuf.append(f"**{_prtime()}: Tool output:** context={context[:64]}...")
+                    print(f"{_prtime()}: Tool output: context={context}")
+                    tracebuf.append(f"{_prtime()}: Tool output: context={context[:64]}...")
                     tool_outputs.append({
                         "tool_call_id": tool.id,
                         "output": context
@@ -551,8 +551,8 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
                     tool_output = _get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
-                    print(f"**{_prtime()}: Tool output:** tool_output={tool_output}")
-                    tracebuf.append(f"**{_prtime()}: Tool output:** tool_output={tool_output[:64]}...")
+                    print(f"{_prtime()}: Tool output: tool_output={tool_output}")
+                    tracebuf.append(f"{_prtime()}: Tool output: tool_output={tool_output[:64]}...")
                     tool_outputs.append({"tool_call_id": tool.id, "output": tool_output })
                 else:
                     raise Exception(f"**Unknown function call:** {tool.function.name}")
@@ -560,22 +560,22 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             # Submit all tool outputs at once after collecting them in a list
             if tool_outputs:
                 try:
-                    print(f"**{_prtime()}: calling submit_tool_outputs_and_poll:** run={run}.")
-                    tracebuf.append(f"**{_prtime()}: calling submit_tool_outputs_and_poll:**")
+                    print(f"{_prtime()}: calling submit_tool_outputs_and_poll: run={run}.")
+                    tracebuf.append(f"{_prtime()}: calling submit_tool_outputs_and_poll:")
                     run = client.beta.threads.runs.submit_tool_outputs_and_poll(
                         thread_id=assistants_thread_id,
                         run_id=run.id,
                         poll_interval_ms=500,
                         tool_outputs=tool_outputs
                     )
-                    print(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:** run={run}.")
-                    tracebuf.append(f"**{_prtime()}: Return from submit_tool_outputs_and_poll:**")
+                    print(f"{_prtime()}: Return from submit_tool_outputs_and_poll: run={run}.")
+                    tracebuf.append(f"{_prtime()}: Return from submit_tool_outputs_and_poll:")
                 except Exception as e:
                     print("Failed to submit tool outputs: ", e)
             else:
-                logmsg = "**{_prtime()}: No tool outputs to submit.**"
+                logmsg = "{_prtime()}: No tool outputs to submit."
                 print(logmsg); tracebuf.append(logmsg)
-    logmsg = f"**{_prtime()}: retrieve_using_openai_assistant:** tool processing exited loop without reaching complete. returning None"
+    logmsg = f"{_prtime()}: retrieve_using_openai_assistant: tool processing exited loop without reaching complete. returning None"
     print(logmsg); tracebuf.append(logmsg)
     return None, None, None
 
@@ -637,7 +637,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     else:
         queries = [last_msg]
     print(f"queries after ner={queries}")
-    tracebuf.append(f"**{_prtime()} Tool call:search_question_in_db: Entered. Queries:**")
+    tracebuf.append(f"{_prtime()} Tool call:search_question_in_db: Entered. Queries:")
     tracebuf.extend(queries)
 
     sorted_summed_scores:List[DocumentChunkDetails] = []
@@ -709,7 +709,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         if use_ner:
             print(f"retrieve_and_rerank_using_faiss: summed_scores:")
             if print_trace_context_choice:
-                tracebuf.append(f"**{_prtime()}: Summed Scores**")
+                tracebuf.append(f"{_prtime()}: Summed Scores")
             for chunk_det in summed_scores:
                 print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
                 if print_trace_context_choice:
@@ -720,7 +720,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     if use_ner:
         print(f"retrieve_and_rerank_using_faiss: sorted_summed_scores:")
         if print_trace_context_choice:
-            tracebuf.append(f"**{_prtime()}: Sorted Summed Scores**")
+            tracebuf.append(f"{_prtime()}: Sorted Summed Scores")
         for chunk_det in sorted_summed_scores:
             print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
             if print_trace_context_choice:
@@ -1039,7 +1039,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     last_msg = messages[len(messages) - 1]['content']
     print(f"new_chat: Last Message = {last_msg}")
     
-    tracebuf = ['**Begin Trace**']; filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
+    tracebuf = [f"{_prtime()} Begin Trace"]; filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
     chat_config:ChatConfiguration; last_msg:str
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
 
@@ -1084,6 +1084,8 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
         res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
+    if chat_config.print_trace or chat_config.print_trace_context_choice:
+        res['choices'][0]['tracebuf'] = tracebuf
 
     res_str = json.dumps(res)
     print(f"new_chat: Returning {res_str}")

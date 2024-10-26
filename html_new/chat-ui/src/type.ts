@@ -12,6 +12,7 @@ export interface Message {
     };
     sample_source?:string[];
     searchsubdir?:string;
+    tracebuf?:string[];
 }
 
 export interface ChatHistory {

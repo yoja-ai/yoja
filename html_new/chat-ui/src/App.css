@@ -211,6 +211,25 @@
   line-height: 19px;
   text-align: left;
 }
+.tracebuf-title{
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 19.1px;
+  text-align: left;
+}
+.tracebuf{
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 19.1px;
+  text-align: left;
+}
+.tracebuf-name{
+  color: var(--textAlt, #616161);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 19px;
+  text-align: left;
+}
 .gpt-msg-options {
   padding-top: 8px;
   display: flex;

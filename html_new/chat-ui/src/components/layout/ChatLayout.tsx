@@ -82,9 +82,7 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
             {tokenInfo}
         </div>
     );
-}
-
-
+  }
 
   const copyMessage = (message: any) => {
     let msg: string = "";
@@ -280,6 +278,24 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
                                 </span>
                               )
                             }
+                          </div>
+                        </div>
+                      }
+                      {  (msg.tracebuf &&  msg.tracebuf.length > 0) && 
+                        <div>
+                          <span className="tracebuf-title">
+                            Debug Trace
+                          </span>
+                          <div style={{width: '100%', padding: '12px'}}>
+                            <span className="tracebuf">
+                              {
+                                msg.tracebuf?.map((tracebuf) => (
+                                  <div key={tracebuf}>
+                                    {tracebuf} <br />
+                                  </div>
+                                ))
+                              }
+                            </span>
                           </div>
                         </div>
                       }
