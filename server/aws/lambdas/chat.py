@@ -367,7 +367,6 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
             'Expires': '0'
         },
     }
-    return respond(None, res=res)
 
 def replace_tools_in_assistant(new_tools):
     global assistant
@@ -1134,7 +1133,6 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
             'Expires': '0'
         },
     }
-    return respond(None, res=res)
 
 def get_filenames(faiss_rm_vdb):
     rv = []
