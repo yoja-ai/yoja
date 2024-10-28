@@ -28,6 +28,7 @@ import copy
 import jsons
 import tiktoken
 from searchsubdir import do_set_searchsubdir
+from fetch_tool_prompts import fetch_tool_prompts
 
 MAX_TOKEN_LIMIT=2048
 #ASSISTANTS_MODEL="gpt-4"
@@ -367,6 +368,40 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         },
     }
     return respond(None, res=res)
+
+def replace_tools_in_assistant(new_tools):
+    global assistant
+    assistant = client.beta.assistants.create(
+        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
+        model=ASSISTANTS_MODEL,
+        tools=new_tools
+    )
+
+
+def update_tool_prompts(tool_data: List[Dict[str, str]]):
+    tools = []
+    for row in tool_data:
+        tool_name = row['Tool Name']
+        description = row['Description']
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question for which passages need to be searched"
+                        }
+                    },
+                    "required": ["question"]
+                }
+            }
+        })
+    # Replace the hardcoded tools with the dynamic tools
+    replace_tools_in_assistant(tools)
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
