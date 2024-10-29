@@ -31,12 +31,16 @@ def directory_browser(event, context):
     body = json.loads(event['body'])
     print(f"directory_browser: body={body}")
     if 'parentdir' not in body or not body['parentdir']:
-        resp = {'directories': []}
+        resp = {'directories': [], 'files': []}
         resp['directories'].append('[gdrive]')
         if 'dropbox' in rv:
             resp['directories'].append('[dropbox]')
         return respond(None, res=resp)
     parentdir = body['parentdir']
+    mimetype=None
+    if 'mimetype' in body:
+        print(f"In addition to directories, files of mimetype {mimetype} requested")
+        mimetype = body['mimetype']
     s3client = boto3.client('s3')
     storage = ''
     if parentdir.startswith('[gdrive]'):
@@ -87,5 +91,33 @@ def directory_browser(event, context):
     ra = []
     for ky in rdirs.keys():
         ra.append(str(ky))
+    # Add files of mimetype in the listing
+    files = []
+    for ky, vl in s3_index.items():
+        if mimetype and vl['mimetype'] != mimetype:
+            print(f"skipping for wrong mimetype: {vl}")
+            continue
+        if 'path' in vl and vl['path']:
+            vlpa = vl['path'].lstrip('/').rstrip('/').split('/')
+            if len(vlpa) == len(spdir):
+                add = True
+                for ind in range(len(vlpa)):
+                    if vlpa[ind] != spdir[ind]:
+                        print(f"not adding 1 {vl['filename']}, {vl['path']}")
+                        add = False
+                        break
+                if add:
+                    print(f"adding 1 {vl['filename']}, {vl['path']}")
+                    files.append(vl['filename'])
+            else:
+                print(f"not adding for wrong path len {vl['filename']}, {vl['path']}")
+        else:
+            if not spdir:
+                print(f"adding 2 {vl['filename']}, {vl['path']}")
+                files.append(vl['filename'])
+            else:
+                print(f"not adding 2 {vl['filename']}, {vl['path']}")
     print(f"directory_browser: parentdir = {body['parentdir']}, returning {ra}")
-    return respond(None, res={'directories': ra})
+    res={'directories': ra}
+    res['files'] = files
+    return respond(None, res=res)

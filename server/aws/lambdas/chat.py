@@ -305,7 +305,7 @@ class DocumentChunkRange:
         
 def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
                     index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat', sample_source=None,
-                    searchsubdir=None):
+                    searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)]; the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -324,7 +324,7 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
     chat_config:ChatConfiguration; last_msg:str
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
     srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
-                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg)
+                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -441,7 +441,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str,
-                                    searchsubdir=None) -> Tuple[str, str]:
+                                    searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
@@ -458,6 +458,12 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     from openai import AssistantEventHandler
     client = OpenAI()
  
+    if toolprompts:
+        tools = toolprompts
+        print(f"retrieve_using_openai_assistant: toolprompts specified as {tools}")
+    else:
+        tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE]
+        print(f"retrieve_using_openai_assistant: toolprompts not specified. Using default of {tools}")
     assistant = client.beta.assistants.create(
         # Added 'or provide details of the mentioned subject." since openai was not
         # calling our function for a bare chat line such as 'android crypto policy' instead
@@ -465,7 +471,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
         # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
         model=ASSISTANTS_MODEL,
-        tools=[TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE]
+        tools=tools
     )
 
     if not assistants_thread_id:
@@ -1062,7 +1068,7 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 g_cross_encoder = None
 def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
                 index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat', sample_source=None,
-                searchsubdir=None):
+                searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -1085,7 +1091,7 @@ def new_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[
     # string response??
     srp:str = ""; thread_id:str 
     srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    filekey_to_file_chunks_dict, None, chat_config, last_msg, searchsubdir)
+                                    filekey_to_file_chunks_dict, None, chat_config, last_msg, searchsubdir, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -1238,9 +1244,19 @@ def chat_completions(event, context):
         index_map_list.append(faiss_rm_vdb.get_index_map())
 
     messages = body['messages']
+    for msg in body['messages']:
+        if msg['content'].strip()[0] == '%':
+            print(f"chat_completions: Applying tool prompts sheet {msg['content'][1:]}")
+            toolprompts = fetch_tool_prompts(email, msg['content'])
+        else:
+            messages.append(msg)
     if len(messages) == 1:
-        return new_chat(event, body, faiss_rms, documents_list, index_map_list, sample_source=sample_source, searchsubdir=searchsubdir)
+        return new_chat(event, body, faiss_rms, documents_list, index_map_list,
+                        sample_source=sample_source, searchsubdir=searchsubdir,
+                        toolprompts=toolprompts)
     else:
-        return ongoing_chat(event, body, faiss_rms, documents_list, index_map_list, sample_source=sample_source, searchsubdir=searchsubdir)
+        return ongoing_chat(event, body, faiss_rms, documents_list, index_map_list,
+                            sample_source=sample_source, searchsubdir=searchsubdir,
+                            toolprompts=toolprompts)
         
 if __name__ != '__main1__': traceback_with_variables.global_print_exc()

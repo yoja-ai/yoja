@@ -30,23 +30,6 @@ export function ChatLayout({ currentChat, userInfo, isMobile, setIsCollapsed, is
     }
   }, [currentChat]);
 
-  const getFileFullPath = (extension: string, id: string) => {
-    switch(extension) {
-      case 'doc':
-        return `https://docs.google.com/document/d/${id}`
-      case 'docx':
-        return `https://docs.google.com/document/d/${id}`
-      case 'pdf':
-        return `https://drive.google.com/file/d/${id}`
-      case 'pptx':
-        return `https://docs.google.com/presentation/d/${id}`
-      case 'ppt':
-        return `https://docs.google.com/presentation/d/${id}`
-      default:
-        return `https://docs.google.com/presentation/d/${id}`
-    }
-  }
-
   const clearChat = () => {
     setCurrentChat([]);
     localStorage.setItem("current_chat", JSON.stringify([]));

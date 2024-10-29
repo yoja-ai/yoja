@@ -1,22 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import './DirectoryBrowser.css'; // Import CSS for styling
-import { FolderSearch } from "lucide-react";
+import './DirectoryBrowser.css';
 
 const servicesConfig = (window as any).ServiceConfig;
 
-interface DirectoryBrowserProps {
-  onRefresh: () => void;
+// Define types for directory and file items
+interface DirectoryData {
+  directories: string[];
+  files: string[];
 }
 
-const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
+interface DirectoryBrowserProps {
+  onFileSelect: (filePath: string) => void; // Callback prop for selected file
+}
+
+const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onFileSelect }) => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [currentPath, setCurrentPath] = useState<string>(''); // Root directory
   const [directories, setDirectories] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>([]);
   const [history, setHistory] = useState<string[]>([]); // To handle navigation history
-  const [message, setMessage] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false); // Loading state
   const [error, setError] = useState<string | null>(null); // Error state
-  const [isHovered, setIsHovered] = useState(false); // state to track hover
+  const [selectedFile, setSelectedFile] = useState<string | null>(null); // Selected file
 
   // Function to open the modal and fetch root directories
   const openModal = () => {
@@ -29,14 +34,13 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
   // Function to close the modal
   const closeModal = () => {
     setIsModalOpen(false);
-    setMessage('');
+    setSelectedFile(null); // Clear selected file when closing
     setError(null);
-    onRefresh();
   };
 
-  // Fetch directories whenever currentPath changes
+  // Fetch directories and files whenever currentPath changes
   useEffect(() => {
-    const fetchDirectories = async () => {
+    const fetchDirectoryData = async () => {
       setLoading(true);
       setError(null);
       try {
@@ -51,29 +55,29 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
           headers,
           body: requestBody,
         });
-        // const response = await fetch(`/api/directories?path=${encodeURIComponent(currentPath)}`);
         if (response.ok) {
-          const data = await response.json();
+          const data: DirectoryData = await response.json();
           setDirectories(data.directories); // Assuming API returns { directories: [...] }
+          setFiles(data.files);             // Assuming API returns { files: [...] }
         } else {
-          // Attempt to parse error message from response
           const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to fetch directories.');
+          throw new Error(errorData.message || 'Failed to fetch directory data.');
         }
-      } catch (err: unknown) { // Explicitly typing err as unknown
-        console.error('Error fetching directories:', err);
-        if (err instanceof Error) { // Type guard to ensure err has a message property
+      } catch (err: unknown) {
+        console.error('Error fetching directory data:', err);
+        if (err instanceof Error) {
           setError(err.message);
         } else {
-          setError('An unknown error occurred while fetching directories.');
+          setError('An unknown error occurred while fetching directory data.');
         }
         setDirectories([]);
+        setFiles([]);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchDirectories();
+    fetchDirectoryData();
   }, [currentPath]);
 
   // Handle directory click
@@ -83,75 +87,39 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
     setCurrentPath(newPath);
   };
 
+  // Handle file click
+  const handleFileClick = (file: string) => {
+    setSelectedFile(`${currentPath}/${file}`);
+  };
+
   // Handle navigating back
   const handleBack = () => {
     const previousPath = history.pop();
     setHistory([...history]);
     setCurrentPath(previousPath || '');
+    setSelectedFile(null); // Clear selected file when navigating back
   };
 
-  // Handle directory selection (final selection)
-  const handleSelect = async () => {
-    var sp;
-    if (!currentPath) {
-      sp = '/';
-    } else {
-      sp = currentPath;
+  // Handle file selection (final selection)
+  const handleSelectFile = () => {
+    if (!selectedFile) {
+      setError('Please select a file before proceeding.');
+      return;
     }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(servicesConfig.envAPIEndpoint + '/entrypoint/set-searchsubdir', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ searchsubdir: sp }),
-      });
-      /*
-      const response = await fetch('/api/select-directory', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ directory: currentPath }),
-      });
-      */
-
-      if (response.ok) {
-        const data = await response.json();
-        setMessage(data.message || 'Folder selected successfully!');
-        closeModal();
-      } else {
-        // Attempt to parse error message from response
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to select the directory.');
-      }
-    } catch (err: unknown) { // Explicitly typing err as unknown
-      console.error('Error selecting directory:', err);
-      if (err instanceof Error) { // Type guard to ensure err has a message property
-        setError(err.message);
-      } else {
-        setError('An unknown error occurred while selecting the directory.');
-      }
-    } finally {
-      setLoading(false);
-    }
+    // Pass the selected file path to the parent component
+    onFileSelect(selectedFile);
+    closeModal();
   };
 
   return (
-    <div
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <FolderSearch size={16} className="folder-search-icon" opacity={ loading ? 0.5 : 1} onClick={openModal}/>
+    <div>
+      <button onClick={openModal}>Browse Directories</button>
 
-      {message && <p className="success-message">{message}</p>}
       {isModalOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <h2>Browse Directories</h2>
+            <h2>Browse Directories and Files</h2>
             <div className="modal-content">
               <div className="navigation">
                 <button onClick={handleBack} disabled={history.length === 0}>
@@ -161,35 +129,52 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onRefresh }) => {
               </div>
 
               {loading ? (
-                <p>Loading directories...</p>
+                <p>Loading directories and files...</p>
               ) : error ? (
                 <p className="error-message">{error}</p>
               ) : (
-                <ul className="directory-list">
-                  {directories.length > 0 ? (
-                    directories.map((dir) => (
-                      <li key={dir} onClick={() => handleDirectoryClick(dir)}>
-                        📁 {dir}
-                      </li>
-                    ))
-                  ) : (
-                    <li>No directories found.</li>
-                  )}
-                </ul>
+                <>
+                  <ul className="directory-list">
+                    {directories.length > 0 ? (
+                      directories.map((dir) => (
+                        <li key={dir} onClick={() => handleDirectoryClick(dir)}>
+                          📁 {dir}
+                        </li>
+                      ))
+                    ) : (
+                      <li>No directories found.</li>
+                    )}
+                  </ul>
+
+                  <ul className="file-list">
+                    {files.length > 0 ? (
+                      files.map((file) => (
+                        <li
+                          key={file}
+                          onClick={() => handleFileClick(file)}
+                          className={selectedFile === `${currentPath}/${file}` ? 'selected' : ''}
+                        >
+                          📄 {file}
+                        </li>
+                      ))
+                    ) : (
+                      <li>No files found in this directory.</li>
+                    )}
+                  </ul>
+                </>
               )}
             </div>
             <div className="modal-actions">
-              <button onClick={closeModal} disabled={loading}>
+              <button onClick={closeModal}>
                 Cancel
               </button>
-              <button onClick={handleSelect} disabled={loading}>
-                {loading ? 'Selecting...' : 'Select This Folder'}
+              <button onClick={handleSelectFile} disabled={!selectedFile}>
+                Select This File
               </button>
             </div>
           </div>
         </div>
       )}
-      {isHovered && <p className="subdir-button-hover-text">Change Search Folder</p>}
     </div>
   );
 };

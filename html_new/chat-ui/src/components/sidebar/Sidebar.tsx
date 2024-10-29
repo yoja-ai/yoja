@@ -6,6 +6,7 @@ import { Dropdown, Menu } from 'antd';
 import { ChatHistory, Message } from '../../type';
 import ExportOptionsModal from './ExportOptionsModal';
 import ProgressBar from "../chat/IndexingProgress";
+import DirectoryBrowser from "../chat/DirectoryBrowser";
 
 interface SidebarProps {
   isCollapsed: boolean;
@@ -30,7 +31,19 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedChatForExport, setSelectedChatForExport] = useState<ChatHistory | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
 
+  const handleFileSelected = (filePath: string) => {
+    console.log("file selected = " + filePath);
+    newChat();
+    setSelectedFilePath(filePath);
+    const icMessage: Message = {
+      role: 'user',
+      content: "%" + filePath
+    };
+    setCurrentChat([icMessage]);
+  };
+  
   useEffect(() => {
     const filteredHistory = chatHistory.filter((item) =>
       item.name.toLowerCase().includes(searchTerm.toLowerCase().trim()) && !item.isNew
@@ -154,6 +167,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           <div className="sidebar-header">
             <div className="flex">
               <img style={{ width: '100%', height: '24px' }} src="Yoja.svg" />
+            </div>
+            <div className='flex' style={{ gap: '8px' }}>
+              <DirectoryBrowser onFileSelect={handleFileSelected} />
             </div>
             <div className='flex' style={{ gap: '8px' }}>
               <div className="sidebar-header-icon" onClick={newChat}>

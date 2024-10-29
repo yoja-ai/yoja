@@ -41,19 +41,27 @@
   margin-right: 10px;
 }
 
-.directory-list {
+/* Directory List */
+.directory-list, .file-list {
   list-style: none;
   padding-left: 0;
+  margin-top: 10px;
 }
 
-.directory-list li {
+.directory-list li, .file-list li {
   padding: 8px;
   cursor: pointer;
   border-bottom: 1px solid #eee;
 }
 
-.directory-list li:hover {
+.directory-list li:hover, .file-list li:hover {
   background-color: #f5f5f5;
+}
+
+/* Selected file styling */
+.file-list .selected {
+  background-color: #e0f7fa;
+  font-weight: bold;
 }
 
 .modal-actions {
@@ -67,17 +75,17 @@
   padding: 8px 16px;
 }
 
-/* Success Message */
+/* Success and Error Messages */
 .success-message {
   color: green;
   margin-top: 10px;
 }
 
-/* Error Message */
 .error-message {
   color: red;
   margin-top: 10px;
 }
+
 
 .folder-search-icon {
   border-radius: 999%;
