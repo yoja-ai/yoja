@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { SquareChevronRight } from "lucide-react";
 import './DirectoryBrowser.css';
 
 const servicesConfig = (window as any).ServiceConfig;
@@ -114,7 +115,9 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onFileSelect }) => 
 
   return (
     <div>
-      <button onClick={openModal}>Browse Directories</button>
+      <div className="sidebar-header-icon" onClick={openModal}>
+        <SquareChevronRight size={14} strokeWidth={2} />
+      </div>
 
       {isModalOpen && (
         <div className="modal-overlay">
