@@ -49,7 +49,7 @@ TOOL_SEARCH_QUESTION_IN_DB = {
                     "description": "The question for which passages need to be searched"
                 },
             },
-        "required": ["question"]
+            "required": ["question"]
         }
     }
 }
@@ -66,7 +66,7 @@ TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE = {
                     "description": "The question for which passages need to be searched"
                 },
             },
-        "required": ["question"]
+            "required": ["question"]
         }
     }
 }
@@ -87,7 +87,7 @@ TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION = {
                     "description":"The number of file names to return.  Default is to return 10 file names"
                 }
             },
-        "required": ["question"] #, "number_of_files"]
+            "required": ["question"] #, "number_of_files"]
         }
     }
 }
@@ -376,31 +376,6 @@ def replace_tools_in_assistant(new_tools):
         tools=new_tools
     )
 
-
-def update_tool_prompts(tool_data: List[Dict[str, str]]):
-    tools = []
-    for row in tool_data:
-        tool_name = row['Tool Name']
-        description = row['Description']
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": tool_name,
-                "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The question for which passages need to be searched"
-                        }
-                    },
-                    "required": ["question"]
-                }
-            }
-        })
-    # Replace the hardcoded tools with the dynamic tools
-    replace_tools_in_assistant(tools)
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
@@ -1243,14 +1218,17 @@ def chat_completions(event, context):
         documents_list.append(faiss_rm_vdb.get_documents())
         index_map_list.append(faiss_rm_vdb.get_index_map())
 
-    messages = body['messages']
+    toolprompts=None
+    msgs = []
     for msg in body['messages']:
         if msg['content'].strip()[0] == '%':
             print(f"chat_completions: Applying tool prompts sheet {msg['content'][1:]}")
             toolprompts = fetch_tool_prompts(email, msg['content'])
         else:
-            messages.append(msg)
-    if len(messages) == 1:
+            msgs.append(msg)
+    body['messages'] = msgs
+    print(f"chat_completions: finished pre-processing. messages={body['messages']}")
+    if len(body['messages']) == 1:
         return new_chat(event, body, faiss_rms, documents_list, index_map_list,
                         sample_source=sample_source, searchsubdir=searchsubdir,
                         toolprompts=toolprompts)

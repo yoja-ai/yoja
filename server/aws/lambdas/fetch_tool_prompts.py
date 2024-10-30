@@ -50,7 +50,7 @@ def construct_full_path(file_id, file_name, service):
         parent = service.files().get(fileId=parent_id, fields="id, name, parents").execute()
         path_segments.insert(0, parent['name'])
         current_id = parent_id
-    return '/My Drive/' + '/'.join(path_segments)
+    return '/' + '/'.join(path_segments)
 
 def _get_sheet_fileid(creds, full_file_name):
     try:
@@ -72,7 +72,7 @@ def _get_sheet_fileid(creds, full_file_name):
             full_path = construct_full_path(item['id'], file_name, service)
             print(f"Checking path: {full_path}")
             if full_path == desired_path + '/' + file_name:
-                print(f"Match found: {full_path}")
+                print(f"Match found: {full_path}. id={item['id']}")
                 return item['id']
         print(f"_get_sheet_fileid: Error. full path match not found")
         return None
@@ -89,7 +89,6 @@ def fetch_tool_prompts(email, user_input):
         item = get_user_table_entry(email)
         creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
 
-        # Extract the sheet name and tab name from user input: %sheet_name/tab_name
         if not user_input.startswith('%'):
             print(f"fetch_tool_prompts: Error. must start with %. Instead it is {user_input}")
             return None
@@ -107,18 +106,22 @@ def fetch_tool_prompts(email, user_input):
             print(f"fetch_tool_prompts: Error. could not find sheet id. Not using tool prompts")
             return None
 
-        # Open the Google Sheet by ID and select the worksheet by name
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(sheet_id).worksheet(tab_name)
-
-        # Define the range for tool names and descriptions, you can modify this as needed
-        range_name = 'A1:Z10'
-        data = sheet.get(range_name)  # Get the specified range of cells as a list of lists
-
-        # Parse tools into a list of dictionaries with 'Tool Name' and 'Description'
+        service = build("sheets", "v4", credentials=creds)
+        # Call the Sheets API
+        sheet = service.spreadsheets()
+        result = (
+            sheet.values()
+            .get(spreadsheetId=sheet_id, range='A1:Z10')
+            .execute()
+        )
+        values = result.get("values", [])
+        if not values:
+            print("fetch_tool_prompts: No data found in spreadsheet.")
+            return None
         tool_list = []
-        for row in data:
+        for row in values:
             if len(row) >= 2:  # Ensure that both tool name and description are present
+                print(f"eeeeeeeeee len(row)={len(row)}")
                 tool_name = row[0]
                 description = row[1]
                 tool = {
@@ -129,21 +132,27 @@ def fetch_tool_prompts(email, user_input):
                     }
                 }
                 if len(row) >= 5:
-                    tool['parameters'] = {"type": "object", "properties": {}}
-                for ind in range((len(row) - 2)/3):
-                    property_name = row[2 + ((ind * 3) + 0)]
-                    property_type = row[2 + ((ind * 3) + 1)]
-                    property_description = row[2 + ((ind * 3) + 2)]
-                    tool['parameters']['properties'][property_name] = {'type': property_type, 'description': property_description}
-
-        print(f"Fetched tools from {sheet_name}/{tab_name}: {tool_list}")
+                    tool['function']['parameters'] = {"type": "object", "properties": {}}
+                    required = []
+                    for ind in range(int((len(row) - 2)/3)):
+                        property_name = row[2 + ((ind * 3) + 0)]
+                        property_type = row[2 + ((ind * 3) + 1)]
+                        property_description = row[2 + ((ind * 3) + 2)]
+                        tool['function']['parameters']['properties'][property_name] = {'type': property_type, 'description': property_description}
+                        required.append(property_name)
+                    tool['function']['parameters']['required'] = required
+            tool_list.append(tool)
+        if len(tool_list) == 0:
+            print(f"fetch_tool_prompts: Error tool_list is 0 len. Using default tool prompts")
+            return None
+        print(f"Fetched tools from {user_input}: {tool_list}")
         return tool_list
     except HttpError as error:
         print(f"An error occurred while accessing Google Drive API: {error}")
-        return []
+        return None
     except gspread.exceptions.WorksheetNotFound:
         print(f"Error: Worksheet '{tab_name}' not found in sheet '{sheet_name}'.")
-        return []
+        return None
     except Exception as e:
         print(f"An error occurred: {e}")
-        return []
+        return None
