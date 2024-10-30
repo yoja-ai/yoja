@@ -140,12 +140,21 @@ const sendMessage = (newMessage: Message) => {
           // Handling the chat history to ensure no duplicates and correct ordering
           let chatIndex = chatHistory.findIndex(chat => chat.content === currentChat);
 
+          var newname:any = fullUpdatedChat[0]?.content;
+          if (newname != undefined) {
+              if (newname.startsWith("%")) {
+                  newname = fullUpdatedChat?.[1]?.content;
+              }
+          }
+          if (newname == undefined) {
+              newname = 'Chat on ' + new Date().toLocaleDateString();
+          }
           if (chatIndex !== -1) {
               // If the chat was initially marked as new, update and make it visible
               chatHistory[chatIndex] = {
                   ...chatHistory[chatIndex],
                   content: fullUpdatedChat,
-                  name: fullUpdatedChat[0]?.content || 'Chat on ' + new Date().toLocaleDateString(),
+                  name: newname,
                   time: new Date(),
                   isNew: false,  // Making the chat visible after the first response
                   selected: true  // Ensure this chat is selected
@@ -154,7 +163,7 @@ const sendMessage = (newMessage: Message) => {
               // This is genuinely new content, add new chat to the history
               chatHistory.forEach(chat => chat.selected = false); // Unselect other chats
               chatHistory.push({
-                  name: fullUpdatedChat[0]?.content || 'Chat on ' + new Date().toLocaleDateString(),
+                  name: newname,
                   content: fullUpdatedChat,
                   time: new Date(),
                   isNew: false,  // Ensure new chats are visible if not initially marked as new
