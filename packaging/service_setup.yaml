@@ -6,7 +6,7 @@ Description: yoja.ai stack
 Parameters:
   cftVersion:
     Type: String
-    Default: 0.2.8
+    Default: 0.2.9
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
