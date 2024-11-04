@@ -976,7 +976,7 @@ def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], docume
     for chunk_det in cross_sorted_scores:
         if not files_dict.get(chunk_det._get_file_key()):
             files_dict[chunk_det._get_file_key()] = chunk_det
-            msg = f"{_prtime()}: adding {chunk_det.file_path}/{chunk_det.file_name} to listing"
+            msg = f"{_prtime()}: adding {chunk_det.file_path}{chunk_det.file_name} to listing"
             print(msg)
             tracebuf.append(msg)
         if len(files_dict) >= number_of_files: break
