@@ -438,7 +438,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         tools = toolprompts
         print(f"retrieve_using_openai_assistant: toolprompts specified as {tools}")
     else:
-        tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE]
+        tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE, TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION]
         print(f"retrieve_using_openai_assistant: toolprompts not specified. Using default of {tools}")
     assistant = client.beta.assistants.create(
         # Added 'or provide details of the mentioned subject." since openai was not
@@ -969,23 +969,18 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
 def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                          index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                          chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10, searchsubdir:str=None):
-
-    reranked_indices:np.ndarray; sorted_summed_scores:List[DocumentChunkDetails]
-    reranked_indices, sorted_summed_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                              filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
-    
+    cross_sorted_scores:List[DocumentChunkDetails]
+    status, cross_sorted_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                            filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
     files_dict:Dict[str,DocumentChunkDetails] = {}
-    for i in range(len(reranked_indices)):
-        chosen_reranked_index = reranked_indices[i]
-        chunk_det:DocumentChunkDetails = sorted_summed_scores[chosen_reranked_index]
-    
+    for chunk_det in cross_sorted_scores:
         if not files_dict.get(chunk_det._get_file_key()):
             files_dict[chunk_det._get_file_key()] = chunk_det
-        
+            msg = f"{_prtime()}: adding {chunk_det.file_path}/{chunk_det.file_name} to listing"
+            print(msg)
+            tracebuf.append(msg)
         if len(files_dict) >= number_of_files: break
-    
     return ",".join([  f"[{val.file_path}/{val.file_name}]({val.file_path}/{val.file_name})" for key, val in files_dict.items() ])
-        
 
 def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], last_msg:str, use_ivfadc:bool):
     """ Returns the details of the filename specified in the query.  The format of the query is <filename>|<query>.  Looks up the query in the vector db, and only returns matches from the specified file, including details of the file and the matches in the file (paragraph_num and distance)    """
