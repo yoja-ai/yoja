@@ -31,6 +31,7 @@ from searchsubdir import do_set_searchsubdir
 from fetch_tool_prompts import fetch_tool_prompts
 
 MAX_TOKEN_LIMIT=2048
+MAX_PRE_AND_POST_TOKEN_LIMIT=256
 #ASSISTANTS_MODEL="gpt-4"
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
@@ -827,15 +828,18 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     context:str = ''
     all_docs_token_count = 0
     max_token_limit:int = MAX_TOKEN_LIMIT
-    max_pre_and_post_token_limit = 512
+    max_pre_and_post_token_limit = MAX_PRE_AND_POST_TOKEN_LIMIT
     context_chunk_range_list:List[DocumentChunkRange] = []
     for i in range(len(cross_sorted_scores)):
         chunk_det:DocumentChunkDetails = cross_sorted_scores[i]
-        print(f"_get_context_using_retr_and_rerank:: {i} :: chunk details={chunk_det}")
         chunk_range:DocumentChunkRange = DocumentChunkRange(chunk_det)
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
+        msg = f"{_prtime()}: Processing for context={finfo['filename']} path={finfo['path']} chunk={chunk_det.para_id}"
+        print(msg)
+        tracebuf.append(msg)
+
         key = _get_key(finfo)
         if not key:
             emsg = f"ERROR! Could not get key in document for {finfo}"
@@ -847,7 +851,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         if chunk_det.file_type == DocumentType.GH_ISSUES_ZIP:
             chunk_range.start_para_id = chunk_det.para_id
             chunk_range.end_para_id = chunk_det.para_id
-            print(f"_get_context_using_retr_and_rerank: gh issues zip file. Not adding previous or next paragraphs for context")
+            msg = f"{_prtime()}: gh issues zip file. Not adding previous or next paragraphs for context"
+            print(msg)
+            tracebuf.append(msg)
             break
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
@@ -882,7 +888,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                 formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
                 fparagraphs.insert(0,formatted_para)
                 chunk_range.start_para_id = idx
-                print(f"including prior     chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
+                msg = f"{_prtime()}: including prior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
+                print(msg)
+                tracebuf.append(msg)
                 tiktoken_count = calc_tokens(formatted_para)
                 token_count += tiktoken_count
                 all_docs_token_count += tiktoken_count
@@ -898,7 +906,9 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                     formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
                     fparagraphs.append(formatted_para)
                     chunk_range.end_para_id = idx
-                    print(f"including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context.  printed ordering may look incorrect but processing order is correct")
+                    msg = f"{_prtime()}: including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
+                    print(msg)
+                    tracebuf.append(msg)
                     
                     tiktoken_count = calc_tokens(formatted_para)
                     token_count += tiktoken_count
