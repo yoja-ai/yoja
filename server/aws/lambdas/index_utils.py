@@ -50,13 +50,17 @@ from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
 from faiss_rm import FaissRM, DocStorageType
 
-if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
-    vectorizer = MsmarcoDistilbertBaseDotProdV3(
-            tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
-            model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
-        )
+if 'CUSTOM_MODEL_BUCKET' in os.environ and 'CUSTOM_MODEL_OBJECT_KEY' in os.environ:
+    from custom_model import CustomModel
+    vectorizer = CustomModel(os.environ['CUSTOM_MODEL_BUCKET'], os.environ['CUSTOM_MODEL_PATH'])
 else:
-    vectorizer = MsmarcoDistilbertBaseDotProdV3()
+    if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
+        vectorizer = MsmarcoDistilbertBaseDotProdV3(
+                tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
+                model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
+            )
+    else:
+        vectorizer = MsmarcoDistilbertBaseDotProdV3()
     
 def lock_user(email, client, takeover_lock_end_time=0):
     print(f"lock_user: Entered. Trying to lock for email={email}")
