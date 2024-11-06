@@ -52,7 +52,7 @@ from faiss_rm import FaissRM, DocStorageType
 
 if 'CUSTOM_MODEL_BUCKET' in os.environ and 'CUSTOM_MODEL_OBJECT_KEY' in os.environ:
     from custom_model import CustomModel
-    vectorizer = CustomModel(os.environ['CUSTOM_MODEL_BUCKET'], os.environ['CUSTOM_MODEL_PATH'])
+    vectorizer = CustomModel(os.environ['CUSTOM_MODEL_BUCKET'], os.environ['CUSTOM_MODEL_OBJECT_KEY'])
 else:
     if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
         vectorizer = MsmarcoDistilbertBaseDotProdV3(
