@@ -52,25 +52,21 @@ from faiss_rm import FaissRM, DocStorageType
 from custom_model import CustomModel
 
 vectorizer_cache = {}
-default_vectorizer = None
 def get_vectorizer(email):
     global vectorizer_cache
-    global default_vectorizer
     if email in vectorizer_cache:
         return vectorizer_cache[email]
     item = get_user_table_entry(email)
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
-        default_vectorizer = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
+        vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
+    elif os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
+        vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3(
+                tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
+                model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
+            )
     else:
-        if not default_vectorizer:
-            if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
-                default_vectorizer = MsmarcoDistilbertBaseDotProdV3(
-                        tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
-                        model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
-                    )
-            else:
-                default_vectorizer = MsmarcoDistilbertBaseDotProdV3()
-    return default_vectorizer
+        vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3()
+    return vectorizer_cache[email]
 
 def lock_user(email, client, takeover_lock_end_time=0):
     print(f"lock_user: Entered. Trying to lock for email={email}")
