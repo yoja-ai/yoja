@@ -44,7 +44,6 @@ class CustomModel():
         sum_embeddings = torch.sum(masked_embeddings, dim=1)
         sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)  # Avoid division by zero
         mean_pooled_embeddings = sum_embeddings / sum_mask
-        print(f"inner_call: returning type {type(mean_pooled_embeddings)}")
         return mean_pooled_embeddings.detach().numpy()
 
     def _extract_text_from_examples(self, inp_examples: List) -> List[str]:
