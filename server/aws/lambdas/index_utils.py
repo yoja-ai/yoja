@@ -49,6 +49,7 @@ from pptx import Presentation
 from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
 from faiss_rm import FaissRM, DocStorageType
+from custom_model import CustomModel
 
 vectorizer_cache = {}
 default_vectorizer = None
