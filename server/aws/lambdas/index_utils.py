@@ -50,18 +50,27 @@ from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
 from faiss_rm import FaissRM, DocStorageType
 
-if 'CUSTOM_MODEL_BUCKET' in os.environ and 'CUSTOM_MODEL_OBJECT_KEY' in os.environ:
-    from custom_model import CustomModel
-    vectorizer = CustomModel(os.environ['CUSTOM_MODEL_BUCKET'], os.environ['CUSTOM_MODEL_OBJECT_KEY'])
-else:
-    if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
-        vectorizer = MsmarcoDistilbertBaseDotProdV3(
-                tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
-                model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
-            )
+vectorizer_cache = {}
+default_vectorizer = None
+def get_vectorizer(email):
+    global vectorizer_cache
+    global default_vectorizer
+    if email in vectorizer_cache:
+        return vectorizer_cache[email]
+    item = get_user_table_entry(email)
+    if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
+        default_vectorizer = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
     else:
-        vectorizer = MsmarcoDistilbertBaseDotProdV3()
-    
+        if not default_vectorizer:
+            if os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
+                default_vectorizer = MsmarcoDistilbertBaseDotProdV3(
+                        tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
+                        model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
+                    )
+            else:
+                default_vectorizer = MsmarcoDistilbertBaseDotProdV3()
+    return default_vectorizer
+
 def lock_user(email, client, takeover_lock_end_time=0):
     print(f"lock_user: Entered. Trying to lock for email={email}")
     item = get_user_table_entry(email)
@@ -361,7 +370,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                 embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
                 index_map.append((fileid, para_index))
     print(f"init_vdb: finished loading embeddings/index_map. Entries in embeddings={len(embeddings)}")
-
+    vectorizer = get_vectorizer(email)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
 
 def _calc_path(service, entry, folder_details):
@@ -437,10 +446,11 @@ def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
         print(f"get_s3_index: Failed to download files_index.jsonl from s3://{bucket}/{prefix}")
     return rv
 
-def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     doc = docx.Document(file_io)
+    vectorizer = get_vectorizer(email)
     prelude = f"The filename is {filename} and the paragraphs are:"
     prelude_token_len = vectorizer.get_token_count(prelude)
     chunk_len = prelude_token_len
@@ -486,7 +496,8 @@ def read_docx(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
-def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> Dict[str, Union[str, Dict[str,str]]]:
+def read_xlsx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> Dict[str, Union[str, Dict[str,str]]]:
+    vectorizer = get_vectorizer(email)
     workbook = {'filename': filename, 'rows': prev_rows}
     wb = openpyxl.load_workbook(file_io)
     for sn in wb.sheetnames:
@@ -515,7 +526,8 @@ def read_xlsx(filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> 
                 break
     return workbook
 
-def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
+def read_pptx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
+    vectorizer = get_vectorizer(email)
     prs = Presentation(file_io)
     ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}
     ind = 0
@@ -554,7 +566,8 @@ def read_pptx(filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -
         ind += 1
     return ppt
 
-def read_txt(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+    vectorizer = get_vectorizer(email)
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     fulltxt = file_io.getvalue().decode('utf-8')
@@ -603,7 +616,8 @@ def read_txt(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.dateti
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
-def read_html(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+def read_html(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
+    vectorizer = get_vectorizer(email)
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     html_content = file_io.getvalue().decode('utf-8')
@@ -659,7 +673,7 @@ def read_html(filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datet
             doc_dct['paragraphs'].append(para_dct)
     return doc_dct
 
-def process_docx(file_item, filename, fileid, bio):
+def process_docx(email, file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
         prev_paras = file_item['paragraphs']
@@ -667,13 +681,13 @@ def process_docx(file_item, filename, fileid, bio):
     else:
         prev_paras = []
         print(f"process_docx: fn={filename}. did not find partial")
-    doc_dict = read_docx(filename, fileid, bio, file_item['mtime'], prev_paras)
+    doc_dict = read_docx(email, filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'docx'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
-def process_txt(file_item, filename, fileid, bio):
+def process_txt(email, file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
         prev_paras = file_item['paragraphs']
@@ -681,13 +695,13 @@ def process_txt(file_item, filename, fileid, bio):
     else:
         prev_paras = []
         print(f"process_txt: fn={filename}. did not find partial")
-    doc_dict = read_txt(filename, fileid, bio, file_item['mtime'], prev_paras)
+    doc_dict = read_txt(email, filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'txt'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
-def process_html(file_item, filename, fileid, bio):
+def process_html(email, file_item, filename, fileid, bio):
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
         prev_paras = file_item['paragraphs']
@@ -695,13 +709,14 @@ def process_html(file_item, filename, fileid, bio):
     else:
         prev_paras = []
         print(f"process_html: fn={filename}. did not find partial")
-    doc_dict = read_html(filename, fileid, bio, file_item['mtime'], prev_paras)
+    doc_dict = read_html(email, filename, fileid, bio, file_item['mtime'], prev_paras)
     file_item['paragraphs'] = doc_dict['paragraphs']
     file_item['filetype'] = 'html'
     if 'partial' in doc_dict:
         file_item['partial'] = 'true'
 
 def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path):
+    vectorizer = get_vectorizer(email)
     # Each issue is one paragraph
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
@@ -778,7 +793,7 @@ def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path
     if timelimit_exceeded:
         file_item['partial'] = "true"
 
-def process_pptx(file_item, filename, fileid, bio):
+def process_pptx(email, file_item, filename, fileid, bio):
     if 'partial' in file_item and 'slides' in file_item:
         del file_item['partial']
         prev_slides = file_item['slides']
@@ -786,13 +801,13 @@ def process_pptx(file_item, filename, fileid, bio):
     else:
         prev_slides = []
         print(f"process_pptx: fn={filename}. did not find partial")
-    ppt = read_pptx(filename, fileid, bio, file_item['mtime'], prev_slides)
+    ppt = read_pptx(email, filename, fileid, bio, file_item['mtime'], prev_slides)
     file_item['slides'] = ppt['slides']
     file_item['filetype'] = 'pptx'
     if 'partial' in ppt:
         file_item['partial'] = 'true'
 
-def process_xlsx(file_item, filename, fileid, bio):
+def process_xlsx(email, file_item, filename, fileid, bio):
     if 'partial' in file_item and 'rows' in file_item:
         del file_item['partial']
         prev_rows = file_item['rows']
@@ -800,7 +815,7 @@ def process_xlsx(file_item, filename, fileid, bio):
     else:
         prev_rows = []
         print(f"process_xlsx: fn={filename}. did not find partial")
-    xlsx = read_xlsx(filename, fileid, bio, file_item['mtime'], prev_rows)
+    xlsx = read_xlsx(email, filename, fileid, bio, file_item['mtime'], prev_rows)
     file_item['rows'] = xlsx['rows']
     file_item['filetype'] = 'xlsx'
     if 'partial' in xlsx:
@@ -939,21 +954,21 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     continue
             if filename.lower().endswith('.pptx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_pptx(file_item, filename, fileid, bio)
+                process_pptx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_docx(file_item, filename, fileid, bio)
+                process_docx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.xlsx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_xlsx(file_item, filename, fileid, bio)
+                process_xlsx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
@@ -972,7 +987,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to docx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        process_docx(file_item, filename, fileid, fp)
+                        process_docx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -994,7 +1009,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if rv.returncode == 0:
                     print(f"Successfully converted {filename} to pptx. temp file is {tfn}, Proceeding with embedding generation")
                     with open(f"{tfn}x", 'rb') as fp:
-                        process_pptx(file_item, filename, fileid, fp)
+                        process_pptx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -1011,6 +1026,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 else:
                     prev_paras = []
                     print(f"process_files: fn={filename}. did not find partial")
+                vectorizer = get_vectorizer(email)
                 pdf_dict:Dict[str,Any] = read_pdf(email, filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
                 file_item['paragraphs'] = pdf_dict['paragraphs']
                 file_item['filetype'] = 'pdf'
@@ -1034,7 +1050,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        process_pptx(file_item, filename, fileid, fp)
+                        process_pptx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -1054,7 +1070,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        process_docx(file_item, filename, fileid, fp)
+                        process_docx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -1074,7 +1090,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         wfp.write(bio.getvalue())
                     bio.close()
                     with open(f"{tfn}", 'rb') as fp:
-                        process_xlsx(file_item, filename, fileid, fp)
+                        process_xlsx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
                         status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                         if status:
@@ -1082,14 +1098,14 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     os.remove(f'{tfn}')
             elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_txt(file_item, filename, fileid, bio)
+                process_txt(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif (filename.lower().endswith('.html') or mimetype == 'text/html'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
-                process_html(file_item, filename, fileid, bio)
+                process_html(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
                 status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
                 if status:
@@ -1706,6 +1722,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
 if __name__=="__main__":
     with open(sys.argv[1], 'rb') as f:
         bio = io.BytesIO(f.read())
+    vectorizer = get_vectorizer(email)
     rv = read_pdf(None, sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))

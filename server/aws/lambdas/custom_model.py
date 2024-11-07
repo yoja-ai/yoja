@@ -3,7 +3,6 @@ import io
 import sys
 import json
 import codecs
-from pptx import Presentation
 from datetime import datetime, timezone, timedelta
 import torch
 from typing import List, Optional
@@ -24,31 +23,29 @@ class CustomModel():
         s3_client.download_file(bucket_name, object_key, '/tmp/downloaded_file.zip')
         with zipfile.ZipFile('/tmp/downloaded_file.zip', 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
-        #temp_dir='/home/jagane/tmp/tmp8j4s76yc'
-        if torch.cuda.is_available():
-            self._device = torch.device('cuda:0')
-            self._model = AutoModel.from_pretrained(temp_dir, trust_remote_code=True).cuda()
-        elif torch.backends.mps.is_available():
-            self._device = torch.device('mps')
-            self._model = AutoModel.from_pretrained(temp_dir, trust_remote_code=True).mps()
-        else:
-            self._device = torch.device('cpu')
-            self._model = AutoModel.from_pretrained(temp_dir, trust_remote_code=True)
+        self._device = torch.device('cpu')
+        self._model = AutoModel.from_pretrained(temp_dir, trust_remote_code=True)
         self._tokenizer = AutoTokenizer.from_pretrained(temp_dir, model_max_length=512)
         print(f"CustomModel: chosen device={self._device}")
 
-    def _mean_pooling(self, model_output, attention_mask):
-        token_embeddings = model_output[0] #First element of model_output contains all token embeddings
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+    def _inner_call(self, sentences:List):
+        # Tokenize the input sentences and get token embeddings
+        inputs = self._tokenizer(sentences, max_length=512, return_tensors="pt", padding=True, truncation=True)
+        outputs = self._model(**inputs)
 
-    def _inner_call(self, inp: List) -> np.ndarray:
-        encoded_input = self._tokenizer(inp, max_length=512, padding=True, truncation=True, return_tensors='pt').to(self._device)
-        with torch.no_grad():
-            model_output = self._model(**encoded_input.to(self._device))
+        # Extract the last hidden state tensor (token embeddings)
+        token_embeddings = outputs.last_hidden_state  # Shape: (batch_size, seq_length, hidden_size)
+        attention_mask = inputs['attention_mask']  # Shape: (batch_size, seq_length)
 
-        sentence_embeddings = self._mean_pooling(model_output, encoded_input['attention_mask'])
-        return sentence_embeddings.cpu().numpy().tolist()
+        # Apply mean pooling
+        # Mask padding tokens before averaging
+        attention_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        masked_embeddings = token_embeddings * attention_mask_expanded
+        sum_embeddings = torch.sum(masked_embeddings, dim=1)
+        sum_mask = torch.clamp(attention_mask_expanded.sum(dim=1), min=1e-9)  # Avoid division by zero
+        mean_pooled_embeddings = sum_embeddings / sum_mask
+        print(f"inner_call: returning type {type(mean_pooled_embeddings)}")
+        return mean_pooled_embeddings.detach().numpy()
 
     def _extract_text_from_examples(self, inp_examples: List) -> List[str]:
         if isinstance(inp_examples[0], str):
@@ -78,9 +75,3 @@ if __name__ == '__main__':
     emb_npa = np.array(embeddings, dtype=np.float32)
     print(emb_npa[0])
     print(len(emb_npa[0]))
-    print("===========================================")
-    from sentence_transformers import LoggingHandler, SentenceTransformer, evaluation, util
-    model = SentenceTransformer('/home/jagane/tmp/tmp8j4s76yc')
-    embeddings = model.encode(['problem copying from mps tensor to cpu'])
-    print(embeddings)
-    print(len(embeddings[0]))
