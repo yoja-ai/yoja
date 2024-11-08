@@ -32,6 +32,7 @@ from fetch_tool_prompts import fetch_tool_prompts
 
 MAX_TOKEN_LIMIT=2048
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
+MAX_VDB_RESULTS=64
 #ASSISTANTS_MODEL="gpt-4"
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
@@ -666,7 +667,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices_in_faiss = faiss_rm_vdb(qr, k=128, index_type='ivfadc' if use_ivfadc else 'flat' )
+            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat' )
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
@@ -745,7 +746,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     reranker_map = [] # array of index_in_faiss
     reranker_input = [] # array of (query, formatted_para)
-    for idx in range(min(len(sorted_summed_scores), 128)):
+    for idx in range(min(len(sorted_summed_scores), MAX_VDB_RESULTS)):
         curr_chunk:DocumentChunkDetails = sorted_summed_scores[idx]
         curr_chunk.retr_sorted_idx = idx
         index_in_faiss = curr_chunk.index_in_faiss
