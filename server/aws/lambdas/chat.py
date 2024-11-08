@@ -673,7 +673,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                 if searchsubdir:
                     if 'path' in finfo:
                         if finfo['path'].startswith(searchsubdir):
-                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}")
+                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
                             # the first query in queries[] is the actual user chat text. we give that twice the weight
                             dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
                             if ind_in_faiss in passage_scores_dict:
@@ -681,11 +681,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                             else:
                                 passage_scores_dict[ind_in_faiss] = [dist]
                         else:
-                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting for path mismatch {finfo['filename']} path={finfo['path']}")
+                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting for path mismatch {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
                     else:
-                        print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']} since no path")
+                        print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']}, para={index_map[ind_in_faiss][1]} since no path")
                 else:
-                    print(f"retrieve_and_rerank_using_faiss: No searchsubdir. Accepting {finfo['filename']} path={finfo['path'] if 'path' in finfo else 'unavailable'}")
+                    print(f"retrieve_and_rerank_using_faiss: No searchsubdir. Accepting {finfo['filename']} path={finfo['path'] if 'path' in finfo else 'unavailable'}, para={index_map[ind_in_faiss][1]}")
                     # the first query in queries[] is the actual user chat text. we give that twice the weight
                     dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
                     if ind_in_faiss in passage_scores_dict:
