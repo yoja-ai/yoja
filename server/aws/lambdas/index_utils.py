@@ -55,17 +55,21 @@ vectorizer_cache = {}
 def get_vectorizer(email):
     global vectorizer_cache
     if email in vectorizer_cache:
+        print(f"get_vectorizer: Returning {type(vectorizer_cache[email])} object from cache for {email}")
         return vectorizer_cache[email]
     item = get_user_table_entry(email)
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
         vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
+        print(f"get_vectorizer: CustomModelBucket {item['CustomModelBucket']['S']} CustomModelObjectKey {item['CustomModelObjectKey']['S']}. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     elif os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
         vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3(
                 tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
                 model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
             )
+        print(f"get_vectorizer: isdir /var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     else:
         vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3()
+        print(f"get_vectorizer: No custom model and no model in /var. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     return vectorizer_cache[email]
 
 def lock_user(email, client, takeover_lock_end_time=0):
