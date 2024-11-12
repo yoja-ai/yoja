@@ -341,38 +341,40 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
     fls = {}
-    # if the ask is to not build the faiss indexes, then try downloading it..
+    embeddings = []
+    index_map = [] # list of (fileid, paragraph_index)
+    flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
+    ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
-                ff = json.loads(line)
-                ff['mtime'] = from_rfc3339(ff['mtime'])
-                fls[ff['fileid']] = ff
+                finfo = json.loads(line)
+                finfo['mtime'] = from_rfc3339(finfo['mtime'])
+                fls[finfo['fileid']] = finfo
+                if 'slides' in finfo:
+                    key = 'slides'
+                elif 'paragraphs' in finfo:
+                    key = 'paragraphs'
+                elif 'rows' in finfo:
+                    key = 'rows'
+                else:
+                    continue
+                for para_index in range(len(finfo[key])):
+                    para = finfo[key][para_index]
+                    if para:
+                        if not flat_index_fname:
+                            embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
+                        del para['embedding']
+                        index_map.append((finfo['fileid'], para_index))
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None
     print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
-
-    embeddings = []
-    index_map = [] # list of (fileid, paragraph_index)
-    # see further above for structure of fls..
-    for fileid, finfo in fls.items():
-        if 'slides' in finfo:
-            key = 'slides'
-        elif 'paragraphs' in finfo:
-            key = 'paragraphs'
-        elif 'rows' in finfo:
-            key = 'rows'
-        else:
-            continue
-        for para_index in range(len(finfo[key])):
-            para = finfo[key][para_index]
-            if para:
-                embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
-                index_map.append((fileid, para_index))
-    print(f"init_vdb: finished loading embeddings/index_map. Entries in embeddings={len(embeddings)}")
+    print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
+    print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
     vectorizer = get_vectorizer(email)
-    return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100, flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT, ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC)
+    return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100,
+                    flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents
