@@ -8,6 +8,7 @@ import os
 import tempfile
 import math
 import enum
+from text_utils import format_paragraph
 
 class DocStorageType(enum.Enum):
     GoogleDrive = 1
@@ -111,19 +112,6 @@ class FaissRM():
     def get_index_ivfadc(self):
         return self._faiss_index_ivf_adc
         
-    def format_paragraph(self, res:dict):
-        if 'paragraph_text' in res:
-            rtext = res['paragraph_text']
-        elif 'text' in res:
-            if 'title' in res:
-                rtext = f"The title is {res['title']} and the paragraph is {res['text']}"
-            else:
-                rtext = f"The paragraph is {res['text']}"
-        else:
-            print(f"Warning: retrieve result does not contain paragraph_text or text: {res}")
-            rtext = ''
-        return rtext
-
     def _dump_raw_results(self, queries, index_list, distance_list) -> None:
         for i in range(len(queries)):
             indices = index_list[i]
@@ -131,7 +119,7 @@ class FaissRM():
             print(f"Query: {queries[i]}")
             for j in range(len(indices)):
                 para = self.get_paragraph(indices[j])
-                print(f"    Hit {j} = {indices[j]}/{distances[j]}: {self.format_paragraph(para)}")
+                print(f"    Hit {j} = {indices[j]}/{distances[j]}: {format_paragraph(para)}")
         return
 
     def get_paragraph(self, index_in_faiss):
@@ -163,7 +151,7 @@ class FaissRM():
         start_para_index:int = None; end_para_index:int = None
         for ind in range(num_paragraphs):
             if para_index+ind >= 0 and para_index+ind < len(finfo[key]):
-                rv.append(self.format_paragraph(finfo[key][para_index+ind]))
+                rv.append(format_paragraph(finfo[key][para_index+ind]))
                 if start_para_index == None: 
                     start_para_index = para_index + ind
                 end_para_index = para_index + ind

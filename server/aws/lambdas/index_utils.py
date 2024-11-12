@@ -50,6 +50,9 @@ from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
 import pickle
 from faiss_rm import FaissRM, DocStorageType
 from custom_model import CustomModel
+from text_utils import format_paragraph
+from llama_index.core.schema import Document
+from llama_index.retrievers.bm25 import BM25Retriever
 
 vectorizer_cache = {}
 def get_vectorizer(email):
@@ -343,6 +346,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
+    num_llama_index_docs_added = 0
+    llama_index_docs = []
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
@@ -366,6 +371,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
                         del para['embedding']
                         index_map.append((finfo['fileid'], para_index))
+                        llama_index_docs.append(Document(text=format_paragraph(finfo['paragraphs'][para_index]),
+                                                            metadata={'fileid': finfo['fileid'], 'para': para_index}))
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None

@@ -106,6 +106,7 @@ RUN pip3 install tiktoken
 RUN pip3 install BeautifulSoup4
 RUN pip3 install openpyxl
 RUN pip3 install gspread
+RUN pip3 install llama-index-retrievers-bm25
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
@@ -129,5 +130,6 @@ COPY indexing_progress.py ${LAMBDA_TASK_ROOT}
 COPY directory_browser.py ${LAMBDA_TASK_ROOT}
 COPY fetch_tool_prompts.py ${LAMBDA_TASK_ROOT}
 COPY custom_model.py ${LAMBDA_TASK_ROOT}
+COPY text_utils.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

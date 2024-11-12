@@ -29,6 +29,7 @@ import jsons
 import tiktoken
 from searchsubdir import do_set_searchsubdir
 from fetch_tool_prompts import fetch_tool_prompts
+from text_utils import format_paragraph
 
 MAX_TOKEN_LIMIT=2048
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
@@ -626,7 +627,7 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
             print(emsg)
             return respond({"error_msg": emsg}, status=500), None
         for idx in range(chunk_range.start_para_id, chunk_range.end_para_id+1):
-            formatted_para:str = chunk_range.doc_chunk.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+            formatted_para:str = format_paragraph(finfo[key][idx])
             fparagraphs.append(formatted_para)
             print(f"Context: Included chunk from file_name={chunk_det.file_name} para_id={idx} faiss_rm_vdb_id={chunk_det.faiss_rm_vdb_id}")
         prelude = f"Name of the file is {chunk_det.file_name}"
@@ -753,7 +754,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         curr_chunk.para_dict = curr_chunk.faiss_rm_vdb.get_paragraph(index_in_faiss)
         # force an empty formatted_paragraph from format_paragraph() below, by using an empty dict
         if not curr_chunk.para_dict: curr_chunk.para_dict = {}
-        curr_chunk.para_text_formatted = f"Name of the file is {curr_chunk.file_name}\n" + curr_chunk.faiss_rm_vdb.format_paragraph(curr_chunk.para_dict)
+        curr_chunk.para_text_formatted = f"Name of the file is {curr_chunk.file_name}\n" + format_paragraph(curr_chunk.para_dict)
         reranker_input.append([last_msg, curr_chunk.para_text_formatted])
 
     global g_cross_encoder
@@ -860,7 +861,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
             fparagraphs = []
             for para in finfo[key]:
-                fparagraphs.append(chunk_det.faiss_rm_vdb.format_paragraph(para))
+                fparagraphs.append(format_paragraph(para))
             prelude = f"Name of the file is {chunk_det.file_name}"
             if len(context) + len(". ".join(fparagraphs)) > max_token_limit*3:  # each token on average is 3 bytes..
                 # if the document is too long, just use the top hit paragraph and some subseq paras
@@ -886,7 +887,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             for idx in range(chunk_det.para_id, -1, -1):
                 if not finfo[key][idx]: # Paragraphs/Slides/rows can be sparse
                     break
-                formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+                formatted_para:str = format_paragraph(finfo[key][idx])
                 fparagraphs.insert(0,formatted_para)
                 chunk_range.start_para_id = idx
                 msg = f"{_prtime()}: including prior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
@@ -904,7 +905,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                 for idx in range(chunk_det.para_id + 1, len(finfo[key])):
                     if not finfo[key][idx]: # Paragraphs/Slides/rows can be sparse
                         break
-                    formatted_para:str = chunk_det.faiss_rm_vdb.format_paragraph(finfo[key][idx])
+                    formatted_para:str = format_paragraph(finfo[key][idx])
                     fparagraphs.append(formatted_para)
                     chunk_range.end_para_id = idx
                     msg = f"{_prtime()}: including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
@@ -1015,7 +1016,7 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
                     if im[0] != finfo['fileid']:
                         continue
                     else:
-                        fmtxt = faiss_rm_vdb.format_paragraph(finfo['paragraphs'][im[1]])
+                        fmtxt = format_paragraph(finfo['paragraphs'][im[1]])
                         srp += f"\n\ndistance={distances[0][itr]}, paragraph_num={im[1]}, paragraph={fmtxt}"
             srp += "\n"
     if not srp: srp = "File not found in index"
