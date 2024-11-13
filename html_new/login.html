@@ -1,18 +1,23 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yoja Login</title>
-    <link rel="stylesheet" href="login.css" />
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Yoja - Google Drive AI Search and Chat</title>
+      <script src="https://cdn.tailwindcss.com"></script>
   </head>
 
-  <body>
-    <div class="centered-text" id="waitingFlyout">
-      Initializing Yoja. Please wait...
+  <body class="bg-white text-gray-800 font-sans flex items-center justify-center h-screen">
+    <div class="w-full max-w-md mx-auto p-6 bg-white rounded-lg shadow-md">
+      <div class="text-center">
+        <img src="images/Yoja Logo Light.svg" alt="Yoja Logo" class="mx-auto h-9 mb-6">
+        <p class="text-gray-600 mb-6">Initializing</p>
+      </div>
+
+      <script src="serviceconfig.js"></script>
+      <script src="login.js"></script>
+      <div id="buttonDiv"></div>
+      
     </div>
-    <script src="serviceconfig.js"></script>
-    <script src="login.js"></script>
-    <div id="buttonDiv"></div>
   </body>
 </html>
