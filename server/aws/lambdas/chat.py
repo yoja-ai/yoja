@@ -33,7 +33,7 @@ from text_utils import format_paragraph
 
 MAX_TOKEN_LIMIT=2048
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
-MAX_VDB_RESULTS=64
+MAX_VDB_RESULTS=256
 #ASSISTANTS_MODEL="gpt-4"
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
@@ -697,7 +697,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
 
         if len(passage_scores_dict.items()) == 0:
             print(f"retrieve_and_rerank_using_faiss: No entries in passage_scores!!")
-            return False, None, None
+            return False, None
 
         # faiss returns METRIC_INNER_PRODUCT - larger number means better match
         # sum the passage scores

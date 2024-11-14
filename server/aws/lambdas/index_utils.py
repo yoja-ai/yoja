@@ -52,7 +52,6 @@ from faiss_rm import FaissRM, DocStorageType
 from custom_model import CustomModel
 from text_utils import format_paragraph
 from llama_index.core.schema import Document
-from llama_index.retrievers.bm25 import BM25Retriever
 
 vectorizer_cache = {}
 def get_vectorizer(email):
@@ -371,7 +370,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
                         del para['embedding']
                         index_map.append((finfo['fileid'], para_index))
-                        llama_index_docs.append(Document(text=format_paragraph(finfo['paragraphs'][para_index]),
+                        llama_index_docs.append(Document(text=format_paragraph(finfo[key][para_index]),
                                                             metadata={'fileid': finfo['fileid'], 'para': para_index}))
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
@@ -379,9 +378,11 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
     print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
+    print(f"init_vdb: finished creating llama_index_docs. Entries in llama_index_docs={len(llama_index_docs)}")
     vectorizer = get_vectorizer(email)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100,
-                    flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname)
+                    flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
+                    llama_index_docs=llama_index_docs)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents

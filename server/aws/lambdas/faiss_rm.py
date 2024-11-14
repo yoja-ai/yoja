@@ -9,6 +9,11 @@ import tempfile
 import math
 import enum
 from text_utils import format_paragraph
+from llama_index.core.schema import Document
+from llama_index.retrievers.bm25 import BM25Retriever
+
+BM25_NUM_HITS=256
+SEMANTIC_NUM_HITS=256
 
 class DocStorageType(enum.Enum):
     GoogleDrive = 1
@@ -16,7 +21,11 @@ class DocStorageType(enum.Enum):
     Sample = 3
 
 class FaissRM():
-    def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]], pre_calc_embeddings:List[List[float]], vectorizer, doc_storage_type:DocStorageType, k: int = 3, flat_index_fname=None, ivfadc_index_fname:str=None):
+    def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]],
+                    pre_calc_embeddings:List[List[float]], vectorizer,
+                    doc_storage_type:DocStorageType, k: int = SEMANTIC_NUM_HITS,
+                    flat_index_fname=None, ivfadc_index_fname:str=None,
+                    llama_index_docs=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
         The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
@@ -30,6 +39,12 @@ class FaissRM():
         """
         self._vectorizer = vectorizer
         self._index_map = index_map
+
+        self._llama_index_docs = llama_index_docs
+        self._bm25_retriever = None
+        if self._llama_index_docs:
+            self._bm25_retriever = BM25Retriever(nodes=self._llama_index_docs, similarity_top_k=8)
+
         if utils.is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
             for ch in documents:
@@ -207,7 +222,45 @@ class FaissRM():
 
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
         if utils.is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
-        return distance_list, index_list
+
+        if self._bm25_retriever:
+            modified_index_list = []
+            modified_distance_list = []
+            for ind in range(len(queries)):
+                bm25_hits = {}
+                retrieved_nodes = self._bm25_retriever.retrieve(queries[ind])
+                for node in retrieved_nodes:
+                    fileid = node.metadata['fileid']
+                    para = node.metadata['para']
+                    if not fileid in bm25_hits:
+                        bm25_hits[fileid] = {}
+                    bm25_hits[fileid][para] = node.get_score()
+                pstr = f"bm25_hits({queries[ind]})=\n"
+                for ky, vl in bm25_hits.items():
+                    pstr += f"  {self._documents[ky]['filename']}: {vl}\n"
+                print(pstr)
+
+                indices = index_list[ind]
+                distances = distance_list[ind]
+                modified_indices = []
+                modified_distances = []
+                for j in range(len(indices)):
+                    fileid, para_index = self._index_map[indices[j]]
+                    finfo = self._documents[fileid]
+                    if fileid in bm25_hits and para_index in bm25_hits[fileid]:
+                        print(f"{finfo['filename']}, para {para_index} is in both search results. Including")
+                        modified_indices.append(indices[j])
+                        modified_distances.append(distances[j])
+                        if len(modified_indices) == 16:
+                            print("Breaking from loop after picking the top 16 common matches..")
+                            break
+                    else:
+                        print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25. Excluding")
+                modified_index_list.append(np.array(modified_indices))
+                modified_distance_list.append(np.array(modified_distances))
+            return np.array(modified_distance_list), np.array(modified_index_list)
+        else:
+            return distance_list, index_list
 
 if __name__ == '__main__':
     input("Enter the location of the jsonl file: ")
