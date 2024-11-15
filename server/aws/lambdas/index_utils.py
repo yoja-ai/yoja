@@ -351,7 +351,6 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
                 finfo = json.loads(line)
-                print(f"init_vdb: Processing file {finfo['path']}{finfo['filename']}")
                 finfo['mtime'] = from_rfc3339(finfo['mtime'])
                 fls[finfo['fileid']] = finfo
                 if 'slides' in finfo:
@@ -362,7 +361,6 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                     key = 'rows'
                 else:
                     continue
-                print(f"init_vdb: File {finfo['path']}{finfo['filename']}. key={key}")
                 for para_index in range(len(finfo[key])):
                     para = finfo[key][para_index]
                     if para:

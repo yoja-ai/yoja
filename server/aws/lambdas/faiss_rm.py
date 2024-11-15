@@ -11,7 +11,6 @@ import enum
 from text_utils import format_paragraph
 import Stemmer
 import bm25s
-import numpy
 
 BM25_NUM_HITS=256
 SEMANTIC_NUM_HITS=256
@@ -49,14 +48,7 @@ class FaissRM():
             for rc in self._bm25s_corpus_records:
                 finfo = documents[rc['fileid']]
                 rcrd = f"{finfo['path']} {finfo['filename']} {rc['text']}"
-                if finfo['filename'].startswith('Front yard Landscaping'):
-                    print(f"AAAAAAAAAAAAAAAAAAAAA {finfo}. rcrd={rcrd}")
-                elif finfo['filename'].startswith('Sperry Landscaping'):
-                    print(f"BBBBBBBBBBBBBBBBBBBBB {finfo}. rcrd={rcrd}")
                 bm25s_corpus_lst.append(rcrd)
-                #print(f"bm25s_corpus_records: Len {len(bm25s_corpus_lst)} after adding {rcrd}")
-            #for oc in bm25s_corpus_lst:
-                #print(f"bm25corpus: {oc}")
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
@@ -219,7 +211,7 @@ class FaissRM():
                     return np.array([distance_list[0][:trunc_point]]), np.array([index_list[0][:trunc_point]])
             return distance_list, index_list
 
-    def __call__(self, query: str, k: Optional[int] = None, index_type:str = 'flat'):
+    def __call__(self, query: str, k: Optional[int] = None, index_type:str = 'flat', main_themes=None):
         """Search the faiss index for k or self.k top passages for query.
 
         Args:
@@ -239,21 +231,21 @@ class FaissRM():
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
         if utils.is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
 
-        if self._bm25s_retriever:
+        if self._bm25s_retriever and main_themes:
             modified_index_list = []
             modified_distance_list = []
-            query_tokens = bm25s.tokenize(queries, stopwords="en", stemmer=self._stemmer)
-            results = self._bm25s_retriever.retrieve(query_tokens, self._bm25s_corpus_records, k=8)
-            for query_ind in range(numpy.shape(results)[1]):
+            query_tokens = bm25s.tokenize(main_themes, stopwords="en", stemmer=self._stemmer)
+            results = self._bm25s_retriever.retrieve(query_tokens, self._bm25s_corpus_records, k=64)
+            for query_ind in range(np.shape(results)[1]):
                 bm25_hits = {}
-                for hit_ind in range(numpy.shape(results)[2]):
+                for hit_ind in range(np.shape(results)[2]):
                     fileid = results[0][query_ind][hit_ind]['fileid']
                     para = results[0][query_ind][hit_ind]['para']
                     score = results[1][query_ind][hit_ind]
                     if not fileid in bm25_hits:
                         bm25_hits[fileid] = {}
                     bm25_hits[fileid][para] = score
-                print(f"bm25_hits({queries[query_ind]}):")
+                print(f"bm25_hits({main_themes[query_ind]}):")
                 for ky, vl in bm25_hits.items():
                     print(f"  {self._documents[ky]['path']}/{self._documents[ky]['filename']}: {vl}")
                 indices = index_list[query_ind]
@@ -274,7 +266,11 @@ class FaissRM():
                         print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25. Excluding")
                 modified_index_list.append(np.array(modified_indices))
                 modified_distance_list.append(np.array(modified_distances))
-            return np.array(modified_distance_list), np.array(modified_index_list)
+            if not modified_distance_list:
+                # nothing in common between bm25 and the semantic search. return the top 64 hits from the semantic search
+                return np.array(distance_list[:64], index_list[:64])
+            else:
+                return np.array(modified_distance_list), np.array(modified_index_list)
         else:
             return distance_list, index_list
 

@@ -635,6 +635,18 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
         
     return None, new_context
 
+def extract_main_theme(text):
+    client = OpenAI()
+    completion = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "user", "content": f"Extract the main topic as a single word in the following sentence and return the result as a single word: {text}"}
+        ]
+    )
+    retval = completion.choices[0].message.content
+    print(f"extract_main_theme: chatgpt returned {retval}")
+    return retval
+
 def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     chat_config:ChatConfiguration, last_msg:str, searchsubdir:str=None) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
@@ -658,6 +670,10 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     tracebuf.append(f"{_prtime()} Tool call:search_question_in_db: Entered. Queries:")
     tracebuf.extend(queries)
 
+    main_theme = extract_main_theme(last_msg)
+    print(f"main_theme={main_theme}")
+    tracebuf.append(f"{_prtime()} main theme={main_theme}")
+
     sorted_summed_scores:List[DocumentChunkDetails] = []
     for i in range(len(faiss_rms)):
         faiss_rm_vdb = faiss_rms[i]
@@ -668,7 +684,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat' )
+            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat', main_themes=[main_theme])
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
