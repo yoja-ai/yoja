@@ -13,7 +13,6 @@ import numpy as np
 from utils import respond, get_service_conf, check_cookie, set_start_time
 from index_utils import init_vdb, lock_sample_dir, unlock_sample_dir, create_sample_index
 import boto3
-from openai_ner import OpenAiNer
 from openai import OpenAI
 import traceback_with_variables
 import cryptography.fernet 
@@ -208,7 +207,6 @@ class ChatConfiguration:
     print_trace:bool
     use_ivfadc:bool
     cross_encoder_10:bool
-    use_ner:bool
     print_trace_context_choice:bool
     file_details:bool
     retreiver_strategy:RetrieverStrategyEnum
@@ -359,6 +357,8 @@ def ongoing_chat(event, body, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
         res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
+    if chat_config.print_trace or chat_config.print_trace_context_choice:
+        res['choices'][0]['tracebuf'] = tracebuf
     res_str = json.dumps(res)
     return {
         'statusCode': 200,
@@ -382,8 +382,8 @@ def replace_tools_in_assistant(new_tools):
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
-    print_trace, use_ivfadc, cross_encoder_10, use_ner, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
-                (False, False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
+    print_trace, use_ivfadc, cross_encoder_10, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
+                (False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -398,7 +398,6 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = not use_ivfadc
         if c == '#': cross_encoder_10 = True
-        if c == '$': use_ner = True
         if c == '^': print_trace_context_choice = True
         if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
@@ -409,7 +408,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         last_msg = ""
     else:
         last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, file_details, retriever_stratgey, dbg_set_searchsubdir)
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, print_trace_context_choice, file_details, retriever_stratgey, dbg_set_searchsubdir)
     logmsg = f"**{_prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
     print(logmsg)
 
@@ -655,18 +654,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
     
     returns the reranked indices (index into list of documentChunkDetails) and the list of DocumentChunkDetails  """
-    use_ivfadc:bool; cross_encoder_10:bool; use_ner:bool; print_trace_context_choice:bool; retreiver_strategy:RetrieverStrategyEnum
-    use_ivfadc, cross_encoder_10, use_ner, print_trace_context_choice, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.cross_encoder_10, chat_config.use_ner, chat_config.print_trace_context_choice, chat_config.retreiver_strategy)
+    use_ivfadc:bool; cross_encoder_10:bool; print_trace_context_choice:bool; retreiver_strategy:RetrieverStrategyEnum
+    use_ivfadc, cross_encoder_10, print_trace_context_choice, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.cross_encoder_10, chat_config.print_trace_context_choice, chat_config.retreiver_strategy)
     
-    if use_ner:
-        openai_ner = OpenAiNer()
-        ner_result = openai_ner(last_msg)
-        print(f"entities={ner_result}")
-        ner_as_conversation =  openai_ner.convert_to_conversation(ner_result)
-        queries = [last_msg] + ner_as_conversation
-    else:
-        queries = [last_msg]
-    print(f"queries after ner={queries}")
+    queries = [last_msg]
+    print(f"queries={queries}")
     tracebuf.append(f"{_prtime()} Tool call:search_question_in_db: Entered. Queries:")
     tracebuf.extend(queries)
 
@@ -740,25 +732,9 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                                                     para_index,
                                                     finfo[key][para_index],
                                                       ))
-        if use_ner:
-            print(f"retrieve_and_rerank_using_faiss: summed_scores:")
-            if print_trace_context_choice:
-                tracebuf.append(f"{_prtime()}: Summed Scores")
-            for chunk_det in summed_scores:
-                print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
-                if print_trace_context_choice:
-                    tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
         sorted_summed_scores.extend( summed_scores )
     
     sorted_summed_scores = sorted(sorted_summed_scores, key=lambda x: x.distance, reverse=True)
-    if use_ner:
-        print(f"retrieve_and_rerank_using_faiss: sorted_summed_scores:")
-        if print_trace_context_choice:
-            tracebuf.append(f"{_prtime()}: Sorted Summed Scores")
-        for chunk_det in sorted_summed_scores:
-            print(f"    index_in_faiss={chunk_det.index_in_faiss}, score={chunk_det.distance}, file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}")
-            if print_trace_context_choice:
-                tracebuf.append(f"file={chunk_det.file_name}, paragraph_num={chunk_det.para_id}, score={chunk_det.distance}")
 
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     reranker_map = [] # array of index_in_faiss
@@ -906,13 +882,13 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                 formatted_para:str = format_paragraph(finfo[key][idx])
                 fparagraphs.insert(0,formatted_para)
                 chunk_range.start_para_id = idx
-                msg = f"{_prtime()}: including prior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
-                print(msg)
-                tracebuf.append(msg)
                 tiktoken_count = calc_tokens(formatted_para)
                 token_count += tiktoken_count
                 all_docs_token_count += tiktoken_count
                 if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
+            msg = f"{_prtime()}: including prior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}"
+            print(msg)
+            tracebuf.append(msg)
 
             token_count:int = 0
             chunk_range.end_para_id = chunk_det.para_id
@@ -924,14 +900,14 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                     formatted_para:str = format_paragraph(finfo[key][idx])
                     fparagraphs.append(formatted_para)
                     chunk_range.end_para_id = idx
-                    msg = f"{_prtime()}: including posterior chunk: {chunk_det.file_name} para_number={chunk_det.para_id}:  Including para_number={idx}/{len(finfo[key])} in the context"
-                    print(msg)
-                    tracebuf.append(msg)
                     
                     tiktoken_count = calc_tokens(formatted_para)
                     token_count += tiktoken_count
                     all_docs_token_count += tiktoken_count
                     if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
+                msg = f"{_prtime()}: including posterior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}"
+                print(msg)
+                tracebuf.append(msg)
             
             prelude = f"Name of the file is {chunk_det.file_name}"
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
