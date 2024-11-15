@@ -51,7 +51,6 @@ import pickle
 from faiss_rm import FaissRM, DocStorageType
 from custom_model import CustomModel
 from text_utils import format_paragraph
-from llama_index.core.schema import Document
 
 vectorizer_cache = {}
 def get_vectorizer(email):
@@ -345,14 +344,14 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
-    num_llama_index_docs_added = 0
-    llama_index_docs = []
+    bm25s_corpus_records = []
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
                 finfo = json.loads(line)
+                print(f"init_vdb: Processing file {finfo['path']}{finfo['filename']}")
                 finfo['mtime'] = from_rfc3339(finfo['mtime'])
                 fls[finfo['fileid']] = finfo
                 if 'slides' in finfo:
@@ -363,6 +362,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                     key = 'rows'
                 else:
                     continue
+                print(f"init_vdb: File {finfo['path']}{finfo['filename']}. key={key}")
                 for para_index in range(len(finfo[key])):
                     para = finfo[key][para_index]
                     if para:
@@ -370,19 +370,18 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
                             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
                         del para['embedding']
                         index_map.append((finfo['fileid'], para_index))
-                        llama_index_docs.append(Document(text=format_paragraph(finfo[key][para_index]),
-                                                            metadata={'fileid': finfo['fileid'], 'para': para_index}))
+                        bm25s_corpus_records.append({'fileid': finfo['fileid'], 'para': para_index, 'text':  format_paragraph(finfo[key][para_index])})
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None
     print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
     print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
-    print(f"init_vdb: finished creating llama_index_docs. Entries in llama_index_docs={len(llama_index_docs)}")
+    print(f"init_vdb: finished creating bm25s_corpus_records. Entries in bm25s_corpus_records={len(bm25s_corpus_records)}")
     vectorizer = get_vectorizer(email)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100,
                     flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
-                    llama_index_docs=llama_index_docs)
+                    bm25s_corpus_records=bm25s_corpus_records)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents

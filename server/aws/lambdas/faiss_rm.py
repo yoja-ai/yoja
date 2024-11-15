@@ -9,8 +9,9 @@ import tempfile
 import math
 import enum
 from text_utils import format_paragraph
-from llama_index.core.schema import Document
-from llama_index.retrievers.bm25 import BM25Retriever
+import Stemmer
+import bm25s
+import numpy
 
 BM25_NUM_HITS=256
 SEMANTIC_NUM_HITS=256
@@ -25,7 +26,7 @@ class FaissRM():
                     pre_calc_embeddings:List[List[float]], vectorizer,
                     doc_storage_type:DocStorageType, k: int = SEMANTIC_NUM_HITS,
                     flat_index_fname=None, ivfadc_index_fname:str=None,
-                    llama_index_docs=None):
+                    bm25s_corpus_records=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
         The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
@@ -40,10 +41,25 @@ class FaissRM():
         self._vectorizer = vectorizer
         self._index_map = index_map
 
-        self._llama_index_docs = llama_index_docs
-        self._bm25_retriever = None
-        if self._llama_index_docs:
-            self._bm25_retriever = BM25Retriever(nodes=self._llama_index_docs, similarity_top_k=8)
+        self._bm25s_corpus_records = bm25s_corpus_records
+        self._bm25s_retriever = None
+        if self._bm25s_corpus_records:
+            self._stemmer = Stemmer.Stemmer('english')
+            bm25s_corpus_lst = []
+            for rc in self._bm25s_corpus_records:
+                finfo = documents[rc['fileid']]
+                rcrd = f"{finfo['path']} {finfo['filename']} {rc['text']}"
+                if finfo['filename'].startswith('Front yard Landscaping'):
+                    print(f"AAAAAAAAAAAAAAAAAAAAA {finfo}. rcrd={rcrd}")
+                elif finfo['filename'].startswith('Sperry Landscaping'):
+                    print(f"BBBBBBBBBBBBBBBBBBBBB {finfo}. rcrd={rcrd}")
+                bm25s_corpus_lst.append(rcrd)
+                #print(f"bm25s_corpus_records: Len {len(bm25s_corpus_lst)} after adding {rcrd}")
+            #for oc in bm25s_corpus_lst:
+                #print(f"bm25corpus: {oc}")
+            bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
+            self._bm25s_retriever = bm25s.BM25()
+            self._bm25s_retriever.index(bm25s_corpus_tokens)
 
         if utils.is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
@@ -223,25 +239,25 @@ class FaissRM():
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
         if utils.is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
 
-        if self._bm25_retriever:
+        if self._bm25s_retriever:
             modified_index_list = []
             modified_distance_list = []
-            for ind in range(len(queries)):
+            query_tokens = bm25s.tokenize(queries, stopwords="en", stemmer=self._stemmer)
+            results = self._bm25s_retriever.retrieve(query_tokens, self._bm25s_corpus_records, k=8)
+            for query_ind in range(numpy.shape(results)[1]):
                 bm25_hits = {}
-                retrieved_nodes = self._bm25_retriever.retrieve(queries[ind])
-                for node in retrieved_nodes:
-                    fileid = node.metadata['fileid']
-                    para = node.metadata['para']
+                for hit_ind in range(numpy.shape(results)[2]):
+                    fileid = results[0][query_ind][hit_ind]['fileid']
+                    para = results[0][query_ind][hit_ind]['para']
+                    score = results[1][query_ind][hit_ind]
                     if not fileid in bm25_hits:
                         bm25_hits[fileid] = {}
-                    bm25_hits[fileid][para] = node.get_score()
-                pstr = f"bm25_hits({queries[ind]})=\n"
+                    bm25_hits[fileid][para] = score
+                print(f"bm25_hits({queries[query_ind]}):")
                 for ky, vl in bm25_hits.items():
-                    pstr += f"  {self._documents[ky]['filename']}: {vl}\n"
-                print(pstr)
-
-                indices = index_list[ind]
-                distances = distance_list[ind]
+                    print(f"  {self._documents[ky]['path']}/{self._documents[ky]['filename']}: {vl}")
+                indices = index_list[query_ind]
+                distances = distance_list[query_ind]
                 modified_indices = []
                 modified_distances = []
                 for j in range(len(indices)):

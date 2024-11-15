@@ -106,7 +106,9 @@ RUN pip3 install tiktoken
 RUN pip3 install BeautifulSoup4
 RUN pip3 install openpyxl
 RUN pip3 install gspread
-RUN pip3 install llama-index-retrievers-bm25
+RUN pip3 install bm25s[full]
+RUN pip3 install PyStemmer
+RUN pip3 install jax[cpu]
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
