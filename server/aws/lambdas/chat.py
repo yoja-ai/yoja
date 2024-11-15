@@ -206,7 +206,6 @@ class ChatConfiguration:
     print_trace_context_choice:bool
     file_details:bool
     retreiver_strategy:RetrieverStrategyEnum
-    dbg_set_searchsubdir:bool
 
 @dataclasses.dataclass
 class DocumentChunkDetails:
@@ -374,8 +373,8 @@ def replace_tools_in_assistant(new_tools):
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     """ returns the tuple (print_trace, use_ivfadc, cross_encoder_10, enable_NER)"""
-    print_trace, use_ivfadc, cross_encoder_10, file_details, print_trace_context_choice, retriever_stratgey, dbg_set_searchsubdir = \
-                (False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy, False)
+    print_trace, use_ivfadc, cross_encoder_10, file_details, print_trace_context_choice, retriever_stratgey = \
+                (False, False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -393,14 +392,13 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         if c == '^': print_trace_context_choice = True
         if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
-        if c == '~': dbg_set_searchsubdir = True
     
     # strip the debug flags from the question
     if idx == len(query) - 1:
         last_msg = ""
     else:
         last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, print_trace_context_choice, file_details, retriever_stratgey, dbg_set_searchsubdir)
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, cross_encoder_10, print_trace_context_choice, file_details, retriever_stratgey)
     logmsg = f"**{prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
     print(logmsg)
 
@@ -1044,8 +1042,6 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
 
     if chat_config.file_details:
         return print_file_details(event, faiss_rms, documents_list, last_msg, chat_config.use_ivfadc)
-    if chat_config.dbg_set_searchsubdir:
-        return do_set_searchsubdir(last_msg.strip())
 
     # string response??
     srp:str = ""; thread_id:str 
