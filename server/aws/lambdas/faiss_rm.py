@@ -2,7 +2,7 @@ from typing import Union, Optional
 import numpy as np
 import faiss
 from scipy import spatial
-import utils
+from utils import is_lambda_debug_enabled, prtime
 from typing import List, Dict, Any, Tuple
 import os
 import tempfile
@@ -23,7 +23,8 @@ class DocStorageType(enum.Enum):
 class FaissRM():
     def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]],
                     pre_calc_embeddings:List[List[float]], vectorizer,
-                    doc_storage_type:DocStorageType, k: int = SEMANTIC_NUM_HITS,
+                    doc_storage_type:DocStorageType, chat_config, tracebuf,
+                    k: int = SEMANTIC_NUM_HITS,
                     flat_index_fname=None, ivfadc_index_fname:str=None,
                     bm25s_corpus_records=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
@@ -39,6 +40,8 @@ class FaissRM():
         """
         self._vectorizer = vectorizer
         self._index_map = index_map
+        self._chat_config = chat_config
+        self._tracebuf = tracebuf
 
         self._bm25s_corpus_records = bm25s_corpus_records
         self._bm25s_retriever = None
@@ -53,7 +56,7 @@ class FaissRM():
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
 
-        if utils.is_lambda_debug_enabled():
+        if is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
             for ch in documents:
                 print(f"\t{ch}")
@@ -229,7 +232,7 @@ class FaissRM():
         faiss.normalize_L2(emb_npa)
 
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
-        if utils.is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
+        if is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
 
         if self._bm25s_retriever and main_themes:
             modified_index_list = []
@@ -260,7 +263,9 @@ class FaissRM():
                         modified_indices.append(indices[j])
                         modified_distances.append(distances[j])
                         if len(modified_indices) == 16:
-                            print("Breaking from loop after picking the top 16 common matches..")
+                            msg = f"{prtime()}: Breaking from loop after picking the top 16 common matches.."
+                            print(msg)
+                            if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                             break
                     else:
                         print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25. Excluding")
@@ -268,13 +273,17 @@ class FaissRM():
                 modified_distance_list.append(np.array(modified_distances))
             if not modified_distance_list:
                 # nothing in common between bm25 and the semantic search. return the top 64 hits from the semantic search
+                msg = f"{prtime()}: Nothing in common between bm25 and semantic. Returning top 64 hits from semantic"
+                print(msg)
+                if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 return np.array(distance_list[:64], index_list[:64])
             else:
+                msg = f"{prtime()}: using modified context list with {len(modified_distance_list)} entries"
+                print(msg)
+                if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 return np.array(modified_distance_list), np.array(modified_index_list)
         else:
             return distance_list, index_list
 
 if __name__ == '__main__':
     input("Enter the location of the jsonl file: ")
-    
-    

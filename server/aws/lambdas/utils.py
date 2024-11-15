@@ -453,3 +453,8 @@ def lambda_timelimit_exceeded() -> bool:
 def lambda_time_left_seconds() -> int:
     global g_start_time, g_time_limit
     return int(g_time_limit - (datetime.datetime.now() - g_start_time).total_seconds())
+
+def prtime():
+    nw=datetime.datetime.now()
+    return f"{nw.hour}:{nw.minute}:{nw.second}"
+

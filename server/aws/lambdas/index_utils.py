@@ -335,8 +335,11 @@ def _write_progress_file(s3client, bucket, prefix, attr_prefix, num_unmodified, 
         print(f"Caught {ex} while writing progress file")
         return False
 
-def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
-    """ initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.  Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
+def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
+            chat_config=None, tracebuf=None, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
+    """
+    initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.
+    Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
     """
     print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
@@ -377,7 +380,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType, b
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
     print(f"init_vdb: finished creating bm25s_corpus_records. Entries in bm25s_corpus_records={len(bm25s_corpus_records)}")
     vectorizer = get_vectorizer(email)
-    return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type, k=100,
+    return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type,
+                    chat_config, tracebuf, k=100,
                     flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
                     bm25s_corpus_records=bm25s_corpus_records)
 
@@ -1222,8 +1226,9 @@ def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, su
 def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
-    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix, sub_prefix=sub_prefix, doc_storage_type=doc_storage_type)
-    
+    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix,
+                                doc_storage_type=doc_storage_type,
+                                sub_prefix=sub_prefix)
     # save the created index
     faiss_flat_fname = FAISS_INDEX_FLAT
     faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
