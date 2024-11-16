@@ -347,7 +347,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
         res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
-    if chat_config.print_trace or chat_config.print_trace_context_choice:
+    if chat_config.print_trace:
         res['choices'][0]['tracebuf'] = tracebuf
     res_str = json.dumps(res)
     return {
@@ -377,8 +377,6 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
     for idx in range(len(query)):
         # '+': print_trace
         # '@': use ivfadc index
-        # '#': print only 10 results from cross encoder.
-        # '$': enable NER
         # '^': print_trace with info about choice of context
         # '!': print details of file
         c = query[idx]
@@ -386,7 +384,9 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = not use_ivfadc
-        if c == '^': print_trace_context_choice = True
+        if c == '^':
+            print_trace_context_choice = True
+            print_trace = True
         if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
     
@@ -1076,7 +1076,7 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
         res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
-    if chat_config.print_trace or chat_config.print_trace_context_choice:
+    if chat_config.print_trace:
         res['choices'][0]['tracebuf'] = tracebuf
 
     res_str = json.dumps(res)

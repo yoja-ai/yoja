@@ -248,9 +248,13 @@ class FaissRM():
                     if not fileid in bm25_hits:
                         bm25_hits[fileid] = {}
                     bm25_hits[fileid][para] = score
-                print(f"bm25_hits({main_themes[query_ind]}):")
+                msg = f"{prtime()}: bm25_hits({main_themes[query_ind]}):"
+                print(msg)
+                if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
                 for ky, vl in bm25_hits.items():
-                    print(f"  {self._documents[ky]['path']}/{self._documents[ky]['filename']}: {vl}")
+                    msg = f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}"
+                    print(msg)
+                    if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
                 indices = index_list[query_ind]
                 distances = distance_list[query_ind]
                 modified_indices = []
@@ -259,7 +263,9 @@ class FaissRM():
                     fileid, para_index = self._index_map[indices[j]]
                     finfo = self._documents[fileid]
                     if fileid in bm25_hits and para_index in bm25_hits[fileid]:
-                        print(f"{finfo['filename']}, para {para_index} is in both search results. Including")
+                        msg = f"{finfo['filename']}, para {para_index} is in both search results. Including"
+                        print(msg)
+                        if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
                         modified_indices.append(indices[j])
                         modified_distances.append(distances[j])
                         if len(modified_indices) == 16:
@@ -278,7 +284,7 @@ class FaissRM():
                 if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 return np.array(distance_list[:64], index_list[:64])
             else:
-                msg = f"{prtime()}: using modified context list with {len(modified_distance_list)} entries"
+                msg = f"{prtime()}: using modified context list with {len(modified_distance_list[0])} entries"
                 print(msg)
                 if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 return np.array(modified_distance_list), np.array(modified_index_list)
