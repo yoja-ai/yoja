@@ -248,13 +248,9 @@ class FaissRM():
                     if not fileid in bm25_hits:
                         bm25_hits[fileid] = {}
                     bm25_hits[fileid][para] = score
-                msg = f"{prtime()}: bm25_hits({main_themes[query_ind]}):"
-                print(msg)
-                if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
+                print(f"{prtime()}: bm25_hits({main_themes[query_ind]}):")
                 for ky, vl in bm25_hits.items():
-                    msg = f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}"
-                    print(msg)
-                    if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
+                    print(f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}")
                 indices = index_list[query_ind]
                 distances = distance_list[query_ind]
                 modified_indices = []
@@ -265,7 +261,7 @@ class FaissRM():
                     if fileid in bm25_hits and para_index in bm25_hits[fileid]:
                         msg = f"{finfo['filename']}, para {para_index} is in both search results. Including"
                         print(msg)
-                        if self._chat_config and self._chat_config.print_trace_context_choice: self._tracebuf.append(msg)
+                        if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                         modified_indices.append(indices[j])
                         modified_distances.append(distances[j])
                         if len(modified_indices) == 16:

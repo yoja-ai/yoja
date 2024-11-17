@@ -202,7 +202,6 @@ class RetrieverStrategyEnum(enum.Enum):
 class ChatConfiguration:
     print_trace:bool
     use_ivfadc:bool
-    print_trace_context_choice:bool
     file_details:bool
     retreiver_strategy:RetrieverStrategyEnum
 
@@ -371,8 +370,8 @@ def replace_tools_in_assistant(new_tools):
 
 
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
-    print_trace, use_ivfadc, file_details, print_trace_context_choice, retriever_stratgey = \
-                (False, False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+    print_trace, use_ivfadc, file_details, retriever_stratgey = \
+                (False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
     idx = 0
     for idx in range(len(query)):
         # '+': print_trace
@@ -384,9 +383,6 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = not use_ivfadc
-        if c == '^':
-            print_trace_context_choice = True
-            print_trace = True
         if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
     
@@ -395,7 +391,7 @@ def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]
         last_msg = ""
     else:
         last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, print_trace_context_choice, file_details, retriever_stratgey)
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, file_details, retriever_stratgey)
     logmsg = f"**{prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
     print(logmsg)
 
@@ -641,8 +637,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
     
     returns the reranked indices (index into list of documentChunkDetails) and the list of DocumentChunkDetails  """
-    use_ivfadc:bool; print_trace_context_choice:bool; retreiver_strategy:RetrieverStrategyEnum
-    use_ivfadc, print_trace_context_choice, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.print_trace_context_choice, chat_config.retreiver_strategy)
+    use_ivfadc:bool; retreiver_strategy:RetrieverStrategyEnum
+    use_ivfadc, retreiver_strategy = ( chat_config.use_ivfadc, chat_config.retreiver_strategy)
     
     queries = [last_msg]
     print(f"queries={queries}")
