@@ -32,7 +32,7 @@ from text_utils import format_paragraph
 
 MAX_TOKEN_LIMIT=2048
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
-MAX_VDB_RESULTS=512
+MAX_VDB_RESULTS=1024
 #ASSISTANTS_MODEL="gpt-4"
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
@@ -428,7 +428,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
         # Added 'or provide details of the mentioned subject." since openai was not
         # calling our function for a bare chat line such as 'android crypto policy' instead
         # of a full instruction such as 'give me details of android crypto policy'
-        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
+        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject. Fix any spelling errors before calling the tools provided.",
         # BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'gpt-4o' cannot be used with the Assistants API in v1. Follow the migration guide to upgrade to v2: https://platform.openai.com/docs/assistants/migration.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'unsupported_model'}}
         model=ASSISTANTS_MODEL,
         tools=tools
@@ -623,7 +623,7 @@ def extract_named_entities(text):
         model="gpt-4o",
         messages=[
             {"role": "user", "content": 
-f"Extract any named entities present in the following sentence. Return a JSON object in this format: {{ 'entities': ['entity1', 'entity2'] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}"}
+f"Extract any named entities present in the sentence. Return a JSON object in this format: {{ 'entities': ['entity1', 'entity2'] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}"}
         ]
     )
     content = completion.choices[0].message.content

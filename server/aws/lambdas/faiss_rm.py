@@ -12,8 +12,8 @@ from text_utils import format_paragraph
 import Stemmer
 import bm25s
 
-BM25_NUM_HITS=64
-DEFAULT_SEMANTIC_NUM_HITS=512
+BM25_NUM_HITS=8
+DEFAULT_SEMANTIC_NUM_HITS=1024
 MAX_COMMON_HITS=16
 
 class DocStorageType(enum.Enum):
