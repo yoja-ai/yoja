@@ -32,7 +32,7 @@ from text_utils import format_paragraph
 
 MAX_TOKEN_LIMIT=2048
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
-MAX_VDB_RESULTS=256
+MAX_VDB_RESULTS=512
 #ASSISTANTS_MODEL="gpt-4"
 ASSISTANTS_MODEL="gpt-4-1106-preview"
 encoding_model=tiktoken.encoding_for_model(ASSISTANTS_MODEL)
@@ -617,6 +617,28 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
         
     return None, new_context
 
+def extract_named_entities(text):
+    client = OpenAI()
+    completion = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "user", "content": 
+f"Extract any named entities present in the following sentence. Return a JSON object in this format: {{ 'entities': ['entity1', 'entity2'] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}"}
+        ]
+    )
+    content = completion.choices[0].message.content
+    print(f"extract_named_entities: chatgpt returned content {content}")
+    try:
+        js = json.loads(content)
+    except Exception as ex:
+        print(f"extract_named_entities: caught {ex}")
+        return None
+    print(f"extract_named_entities: js= {js}")
+    if 'entities' in js and js['entities']:
+        return js['entities']
+    else:
+        return None
+
 def extract_main_theme(text):
     client = OpenAI()
     completion = client.chat.completions.create(
@@ -645,9 +667,14 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     tracebuf.append(f"{prtime()} Tool call:search_question_in_db: Entered. Queries:")
     tracebuf.extend(queries)
 
-    main_theme = extract_main_theme(last_msg)
-    print(f"main_theme={main_theme}")
-    tracebuf.append(f"{prtime()} main theme={main_theme}")
+    main_theme = None
+    bm25terms = extract_named_entities(last_msg)
+    if not bm25terms:
+        main_theme = extract_main_theme(last_msg)
+        if main_theme:
+            bm25terms = [main_theme]
+    print(f"bm25terms={bm25terms}, main_theme={main_theme}")
+    tracebuf.append(f"{prtime()} bm25terms={bm25terms}, main theme={main_theme}")
 
     sorted_summed_scores:List[DocumentChunkDetails] = []
     for i in range(len(faiss_rms)):
@@ -659,7 +686,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat', main_themes=[main_theme])
+            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat', bm25terms=bm25terms)
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
