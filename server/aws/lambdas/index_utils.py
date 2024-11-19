@@ -47,10 +47,13 @@ import docx
 from pptx import Presentation
 
 from distilbert_dotprod import MsmarcoDistilbertBaseDotProdV3
+from stella import StellaV5
 import pickle
 from faiss_rm import FaissRM, DocStorageType
 from custom_model import CustomModel
 from text_utils import format_paragraph
+
+import traceback
 
 vectorizer_cache = {}
 def get_vectorizer(email):
@@ -62,6 +65,12 @@ def get_vectorizer(email):
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
         vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
         print(f"get_vectorizer: CustomModelBucket {item['CustomModelBucket']['S']} CustomModelObjectKey {item['CustomModelObjectKey']['S']}. Returning {type(vectorizer_cache[email])} object from cache for {email}")
+    elif os.path.isdir('/var/task/sentence-transformers/dunzhang/stella_en_400M_v5'):
+        vectorizer_cache[email] = StellaV5(
+                tokenizer_name_or_path='/var/task/sentence-transformers/dunzhang/stella_en_400M_v5',
+                model_name_or_path='/var/task/sentence-transformers/dunzhang/stella_en_400M_v5'
+            )
+        print(f"get_vectorizer: isdir /var/task/sentence-transformers/dunzhang/stella_en_400M_v5. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     elif os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
         vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3(
                 tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
@@ -1137,6 +1146,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     prev_update = updtime
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
+            traceback.print_exc()
             to_del_from_needs_embedding.append(fileid)
             status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
             if status:

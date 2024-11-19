@@ -84,12 +84,26 @@ RUN pip3 install einops
 RUN pip3 install python-docx
 RUN pip3 install reportlab 
 
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+#RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='configuration.py', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='modeling.py', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='modules.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='sentence_bert_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='2_Dense_1024/config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='2_Dense_1024/model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
+RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='dunzhang/stella_en_400M_v5', filename='2_Dense_1024/pytorch_model.bin', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/dunzhang/stella_en_400M_v5', local_dir_use_symlinks=False)"
 
 RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
 RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='pytorch_model.bin', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
@@ -133,5 +147,6 @@ COPY directory_browser.py ${LAMBDA_TASK_ROOT}
 COPY fetch_tool_prompts.py ${LAMBDA_TASK_ROOT}
 COPY custom_model.py ${LAMBDA_TASK_ROOT}
 COPY text_utils.py ${LAMBDA_TASK_ROOT}
+COPY stella.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum
