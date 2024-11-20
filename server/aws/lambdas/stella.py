@@ -10,6 +10,7 @@ import numpy as np
 from transformers import AutoTokenizer, AutoModel
 import base64
 import pickle
+from sklearn.preprocessing import normalize
 
 class StellaV5():
     def __init__(
@@ -33,7 +34,7 @@ class StellaV5():
         self._vector_linear = torch.nn.Linear(in_features=self._model.config.hidden_size, out_features=vector_dim)
         vector_linear_dict = {
             k.replace("linear.", ""): v for k, v in
-            torch.load(os.path.join(model_name_or_path, f"{vector_linear_directory}/pytorch_model.bin")).items()
+            torch.load(os.path.join(model_name_or_path, f"{vector_linear_directory}/pytorch_model.bin"), map_location=torch.device('cpu')).items()
         }
         self._vector_linear.load_state_dict(vector_linear_dict)
         if torch.cuda.is_available():
