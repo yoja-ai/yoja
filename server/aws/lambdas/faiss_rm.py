@@ -12,7 +12,7 @@ from text_utils import format_paragraph
 import Stemmer
 import bm25s
 
-BM25_NUM_HITS=8
+BM25_NUM_HITS=32
 DEFAULT_SEMANTIC_NUM_HITS=1024
 MAX_COMMON_HITS=16
 
@@ -233,7 +233,7 @@ class FaissRM():
         faiss.normalize_L2(emb_npa)
 
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
-        msg = f"{prtime()}: faiss search returns {len(distance_list)} hits"
+        msg = f"{prtime()}: faiss search returns {len(distance_list[0])} hits"
         print(msg)
         if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
         if is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
@@ -252,9 +252,13 @@ class FaissRM():
                     if not fileid in bm25_hits:
                         bm25_hits[fileid] = {}
                     bm25_hits[fileid][para] = score
-                print(f"{prtime()}: bm25_hits({bm25terms[bm25_query_ind]}):")
+                msg = f"{prtime()}: bm25_hits({bm25terms[bm25_query_ind]}):"
+                print(msg)
+                if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 for ky, vl in bm25_hits.items():
-                    print(f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}")
+                    msg = f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}"
+                    print(msg)
+                    if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(msg)
                 bm25terms_hits.append(bm25_hits)
             # next, for each term in the semantic search, filter semantic search results by presence in any of the bm25terms_hits
             common_hits_found = 0
@@ -300,7 +304,7 @@ class FaissRM():
                 modified_distances_rv = []
                 for semantic_query_ind in range(len(index_list)):
                     modified_index_rv.append(np.array(index_list[semantic_query_ind][:per_sem_query_hits]))
-                    modified_distances_rv.append(np.array(distances_list[semantic_query_ind][:per_sem_query_hits]))
+                    modified_distances_rv.append(np.array(distance_list[semantic_query_ind][:per_sem_query_hits]))
                 return np.array(modified_distances_rv), np.array(modified_index_rv)
         else:
             return distance_list, index_list
