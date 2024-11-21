@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 import traceback
 import tempfile
 import uuid
@@ -1142,11 +1143,16 @@ def chat_completions(event, context):
     start_time:datetime.datetime = datetime.datetime.now()
     set_start_time(start_time)
 
-    rv = check_cookie(event, False)
-    email = rv['google']
-    if not email:
-        print(f"chat_completions: check_cookie did not return email. Sending 403")
-        return respond({"status": "Unauthorized: please login to google auth"}, 403, None)
+    if 'YOJA_USER' in os.environ:
+        rv = {}
+        email = os.environ['YOJA_USER']
+        print(f"chat_completions: YOJA_USER specified email={email}. Bypassing cookie..")
+    else:
+        rv = check_cookie(event, False)
+        email = rv['google']
+        if not email:
+            print(f"chat_completions: check_cookie did not return email. Sending 403")
+            return respond({"status": "Unauthorized: please login to google auth"}, 403, None)
 
     if not 'body' in event:
         return respond({"error_msg": "Error. body not present"}, status=400)
@@ -1250,5 +1256,22 @@ def chat_completions(event, context):
         return ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms, documents_list, index_map_list,
                             sample_source=sample_source, searchsubdir=searchsubdir,
                             toolprompts=toolprompts)
-        
-if __name__ != '__main1__': traceback_with_variables.global_print_exc()
+
+#
+# to run this locally:
+# $ cd <yoja>/server/aws
+# $ (cd lambdas; docker build -t yoja-img .)
+# $ docker run -v /tmp:/host-tmp --interactive --tty --entrypoint /bin/bash yoja-img
+# Once in the container:
+# # cp /host-tmp/credentials .
+# # OAUTH_CLIENT_ID='123456789012-abcdefghijklmonpqrstuvwxyzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-abcdefgh_abdefghijklmnop-qab' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=2400 USERS_TABLE=yoja-users SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy  AWS_SHARED_CREDENTIALS_FILE=./credentials OPENAI_API_KEY=sk-ABCDEFGHIJKLMONPQRSTUVWXYZabcedfghijklmnopqestuv python chat.py <email> <chat_msg>
+#
+if __name__=="__main__":
+    if len(sys.argv) < 3:
+        print(f"Usage: chat.py user_email chat_msg")
+        sys.exit(255)
+    os.environ['YOJA_USER'] = sys.argv[1]
+    event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
+    event['body'] = json.dumps({'messages': [{'content': sys.argv[2]}]})
+    res = chat_completions(event, None)
+    sys.exit(0)
