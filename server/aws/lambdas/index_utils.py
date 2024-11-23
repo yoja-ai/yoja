@@ -15,7 +15,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_ddb_time, set_user_table_cache_entry
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_ddb_time, set_user_table_cache_entry, prtime
 from typing import Dict, List, Tuple, Any, Optional, Union
 from dataclasses import dataclass
 import datetime
@@ -29,6 +29,7 @@ import openpyxl
 from bs4 import BeautifulSoup
 import re
 import zipfile
+import traceback
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -53,14 +54,14 @@ from custom_model import CustomModel
 from text_utils import format_paragraph
 
 vectorizer_cache = {}
-def get_vectorizer(email):
+def get_vectorizer(email, tracebuf):
     global vectorizer_cache
     if email in vectorizer_cache:
         print(f"get_vectorizer: Returning {type(vectorizer_cache[email])} object from cache for {email}")
         return vectorizer_cache[email]
     item = get_user_table_entry(email)
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
-        vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'])
+        vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'], tracebuf)
         print(f"get_vectorizer: CustomModelBucket {item['CustomModelBucket']['S']} CustomModelObjectKey {item['CustomModelObjectKey']['S']}. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     elif os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
         vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3(
@@ -258,6 +259,7 @@ def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
         file = io.BytesIO()
         for chunk in resp.iter_content(chunk_size=1024): 
             if chunk:
+                print(f"export_gdrive_file: writing {len(chunk)} bytes for {file_id}, fmt {fmt}")
                 file.write(chunk)
         file.seek(0, os.SEEK_SET)
         return file
@@ -344,6 +346,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     """
     print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
+    tracebuf.append(f"{prtime()} init_vdb: Entered. s3://{bucket}/{user_prefix}")
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
@@ -379,7 +382,8 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
     print(f"init_vdb: finished creating bm25s_corpus_records. Entries in bm25s_corpus_records={len(bm25s_corpus_records)}")
-    vectorizer = get_vectorizer(email)
+    tracebuf.append(f"{prtime()} init_vdb: finished loading files_index and creating bm25s_corpus")
+    vectorizer = get_vectorizer(email, tracebuf)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type,
                     chat_config, tracebuf, k=100,
                     flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
@@ -1137,6 +1141,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     prev_update = updtime
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
+            traceback.print_exc()
             to_del_from_needs_embedding.append(fileid)
             status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
             if status:

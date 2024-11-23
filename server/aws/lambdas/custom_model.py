@@ -13,19 +13,25 @@ import pickle
 import boto3
 import zipfile
 import tempfile
+from utils import prtime
 
 class CustomModel():
-    def __init__(self, bucket_name, object_key):
+    def __init__(self, bucket_name, object_key, tracebuf):
+        self._tracebuf = tracebuf
+        tracebuf.append(f"{prtime()} CustomModel: Entered. s3://{bucket_name}/{object_key}")
         print(f"CustomModel: Downloading s3://{bucket_name}/{object_key}")
         s3_client = boto3.client('s3')
         temp_dir = tempfile.mkdtemp()
         print(f"CustomModel: temp_dir={temp_dir}")
         s3_client.download_file(bucket_name, object_key, '/tmp/downloaded_file.zip')
+        tracebuf.append(f"{prtime()} CustomModel: Download complete. s3://{bucket_name}/{object_key}")
         with zipfile.ZipFile('/tmp/downloaded_file.zip', 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
+        tracebuf.append(f"{prtime()} CustomModel: unzip complete. s3://{bucket_name}/{object_key}")
         self._device = torch.device('cpu')
         self._model = AutoModel.from_pretrained(temp_dir, trust_remote_code=True)
         self._tokenizer = AutoTokenizer.from_pretrained(temp_dir, model_max_length=512)
+        tracebuf.append(f"{prtime()} CustomModel: AutoModel, AutoTokenizer creation complete. s3://{bucket_name}/{object_key}. device={self._device}")
         print(f"CustomModel: chosen device={self._device}")
 
     def _inner_call(self, sentences:List):

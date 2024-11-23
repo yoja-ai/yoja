@@ -12,7 +12,7 @@ from text_utils import format_paragraph
 import Stemmer
 import bm25s
 
-BM25_NUM_HITS=32
+BM25_NUM_HITS=8
 DEFAULT_SEMANTIC_NUM_HITS=1024
 MAX_COMMON_HITS=16
 
@@ -39,6 +39,7 @@ class FaissRM():
         
         index_map: the corresponding text chunk for each embedding in 'pre_calc_embeddings' above.  each element is the tuple (fileid, paragraph_index).  This is used to locate te text chunk in 'documents'
         """
+        tracebuf.append(f"{prtime()} FaissRM: Entered")
         self._vectorizer = vectorizer
         self._index_map = index_map
         self._chat_config = chat_config
@@ -56,6 +57,7 @@ class FaissRM():
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
+        tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
 
         if is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
@@ -75,9 +77,11 @@ class FaissRM():
                 print(f"FaissRM: embedding dimension={d}")
                 self._faiss_index:faiss.IndexFlatL2 = faiss.index_factory(d, "Flat", faiss.METRIC_INNER_PRODUCT)
                 self._faiss_index.add(xb)
+                tracebuf.append(f"{prtime()} FaissRM: flat index computed using pre calc embedding vectors")
         else:
             print(f"Reading flat index from file {flat_index_fname}")
             self._faiss_index =faiss.read_index(flat_index_fname)
+            tracebuf.append(f"{prtime()} FaissRM: pre computed flat index loaded")
         print(f"faiss_index_flat:  total vectors={self._faiss_index.ntotal}; index_memory={self._get_memory(self._faiss_index)}")
         
         if not ivfadc_index_fname:
@@ -100,6 +104,7 @@ class FaissRM():
                 self._faiss_index_ivf_adc.add(xb)
                 self._faiss_index_ivf_adc.nprobe = 16
                 print(f"faiss_index_ivf_adc:  total vectors={self._faiss_index_ivf_adc.ntotal}; index_memory={self._get_memory(self._faiss_index_ivf_adc)}")
+                tracebuf.append(f"{prtime()} FaissRM: faiss_index_ivf_adc created")
             # if size not met, then just use the flat index.
             else:
                 print(f"Not computing IVFADC since not enough embedding vectors: vector count={xb.shape[0]}.  Reusing flat index instead")
@@ -108,6 +113,7 @@ class FaissRM():
             print(f"Reading ivfadc index from file {ivfadc_index_fname}.  Note that this can be flat index due to not enough embeddings.")
             self._faiss_index_ivf_adc = faiss.read_index(ivfadc_index_fname)
             self._faiss_index_ivf_adc.nprobe = 16
+            tracebuf.append(f"{prtime()} FaissRM: ivfadc index loaded file file")
         print(f"faiss_index_ivfadc:  total vectors={self._faiss_index_ivf_adc.ntotal}; index_memory={self._get_memory(self._faiss_index_ivf_adc)}")
 
         self._documents = documents  # save the input document chunks
