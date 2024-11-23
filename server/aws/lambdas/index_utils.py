@@ -29,6 +29,7 @@ import openpyxl
 from bs4 import BeautifulSoup
 import re
 import zipfile
+import tarfile
 import traceback
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -255,14 +256,19 @@ def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
         else:
             print(f"export_gdrive_file: Unknown format {fmt} for fileid {file_id}. Do not know how to download..")
             return None
-        resp = requests.get(url, stream=True, headers=headers)
-        file = io.BytesIO()
-        for chunk in resp.iter_content(chunk_size=1024): 
-            if chunk:
-                print(f"export_gdrive_file: writing {len(chunk)} bytes for {file_id}, fmt {fmt}")
-                file.write(chunk)
-        file.seek(0, os.SEEK_SET)
-        return file
+        try:
+            resp = requests.get(url, stream=True, headers=headers)
+            resp.raise_for_status()
+            file = io.BytesIO()
+            for chunk in resp.iter_content(chunk_size=1024): 
+                if chunk:
+                    print(f"export_gdrive_file: writing {len(chunk)} bytes for {file_id}, fmt {fmt}")
+                    file.write(chunk)
+            file.seek(0, os.SEEK_SET)
+            return file
+        except Exception as ex:
+            print(f"export_gdrive_file: Caught {ex}")
+            return None
     except Exception as ex:
         print(f"export_gdrive_file: Caught {ex} exporting {file_id} of format {fmt}")
         return None
@@ -289,6 +295,7 @@ INDEX_METADATA_JSON = "/tmp/index_metadata.json"
 FAISS_INDEX_FLAT = "/tmp/faiss_index_flat"
 FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
 BM25S_INDEX = "/tmp/bm25s_index"
+BM25S_INDEX_TAR = "/tmp/bm25s_index.tar"
 
 def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool:
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
@@ -331,11 +338,11 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
             print(f"Caught {ex} while downloading {faiss_index_ivfadc_fname} from s3://{bucket}/{prefix}")
             return False
         try:
-            print(f"Downloading {BM25S_INDEX} from s3://{bucket}/{prefix}")
+            print(f"Downloading {BM25S_INDEX_TAR} from s3://{bucket}/{prefix}")
             # index1/raj@yoja.ai/bm25s_index
-            s3client.download_file(bucket, f"{prefix}/{os.path.basename(BM25S_INDEX)}", BM25S_INDEX)
+            s3client.download_file(bucket, f"{prefix}/{os.path.basename(BM25S_INDEX_TAR)}", BM25S_INDEX_TAR)
         except Exception as ex:
-            print(f"Caught {ex} while downloading {BM25S_INDEX} from s3://{bucket}/{prefix}")
+            print(f"Caught {ex} while downloading {BM25S_INDEX_TAR} from s3://{bucket}/{prefix}")
             return False
     
     return True
@@ -368,7 +375,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     bm25s_corpus_records = []
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
-    bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX
+    bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX_TAR
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
@@ -482,7 +489,7 @@ def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     doc = docx.Document(file_io)
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     prelude = f"The filename is {filename} and the paragraphs are:"
     prelude_token_len = vectorizer.get_token_count(prelude)
     chunk_len = prelude_token_len
@@ -1117,17 +1124,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     if status:
                         prev_update = updtime
                 else:
-                    tfd, tfn = tempfile.mkstemp(suffix=".xlsx", dir="/tmp")
-                    with os.fdopen(tfd, "wb") as wfp:
-                        wfp.write(bio.getvalue())
-                    bio.close()
-                    with open(f"{tfn}", 'rb') as fp:
-                        process_xlsx(email, file_item, filename, fileid, fp)
-                        done_embedding[fileid] = file_item
-                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
-                        if status:
-                            prev_update = updtime
-                    os.remove(f'{tfn}')
+                    process_xlsx(email, file_item, filename, fileid, bio)
             elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_txt(email, file_item, filename, fileid, bio)
@@ -1233,7 +1230,7 @@ def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3
 
 def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
     """  user_prefix == prefix + email + sub_prefix """
-    for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC, BM25S_INDEX):
+    for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC, BM25S_INDEX_TAR):
         faiss_s3_key = f"{user_prefix}/{os.path.basename(faiss_index_fname)}"
         if os.path.exists(faiss_index_fname): 
             print(f"Deleting faiss index {faiss_index_fname} in local filesystem")
@@ -1244,7 +1241,11 @@ def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, su
             s3client.delete_object(Bucket=bucket, Key=faiss_s3_key)
         except Exception as e:
             pass
-    
+
+def create_tar_file(directory_path, tar_file_path):
+    with tarfile.open(tar_file_path, "w") as tar:
+        tar.add(directory_path, arcname=os.path.basename(directory_path))
+
 def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
@@ -1271,12 +1272,13 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     os.remove(faiss_ivfadc_fname)
 
     # save the bm25s retriever
-    bm25s_retriever = faiss.get_bm25s_retriever()
+    bm25s_retriever = faiss_rm.get_bm25s_retriever()
     bm25s_retriever.save(BM25S_INDEX)
+    create_tar_file(BM25S_INDEX, BM25S_INDEX_TAR)
     _update_index_metadata_json_local(IndexMetadata(bm25s_index_last_modified=time.time()))
-    print(f"Uploading bm25s index {BM25S_INDEX}.  Size of index={os.path.getsize(BM25S_INDEX)}")
-    s3client.upload_file(BM25S_INDEX, bucket, f"{user_prefix}/{os.path.basename(BM25S_INDEX)}")
-    os.remove(BM25S_INDEX)
+    print(f"Uploading bm25s index {BM25S_INDEX_TAR}.  Size of index={os.path.getsize(BM25S_INDEX_TAR)}")
+    s3client.upload_file(BM25S_INDEX_TAR, bucket, f"{user_prefix}/{os.path.basename(BM25S_INDEX_TAR)}")
+    os.remove(BM25S_INDEX_TAR)
 
     # update index_metadata_json
     _update_index_metadata_json_local(IndexMetadata(index_ivfadc_last_modified=time.time()))

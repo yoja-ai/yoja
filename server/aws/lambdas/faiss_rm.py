@@ -11,6 +11,7 @@ import enum
 from text_utils import format_paragraph
 import Stemmer
 import bm25s
+import tarfile
 
 BM25_NUM_HITS=8
 DEFAULT_SEMANTIC_NUM_HITS=1024
@@ -20,6 +21,10 @@ class DocStorageType(enum.Enum):
     GoogleDrive = 1
     DropBox = 2
     Sample = 3
+
+def extract_tar_file(tar_file_path, extract_to_directory):
+    with tarfile.open(tar_file_path, "r") as tar:
+        tar.extractall(path=extract_to_directory)
 
 class FaissRM():
     def __init__(self, documents:Dict[str, dict], index_map:List[Tuple[str,int]],
@@ -39,19 +44,24 @@ class FaissRM():
         
         index_map: the corresponding text chunk for each embedding in 'pre_calc_embeddings' above.  each element is the tuple (fileid, paragraph_index).  This is used to locate te text chunk in 'documents'
         """
-        tracebuf.append(f"{prtime()} FaissRM: Entered")
+        msg = f"{prtime()} FaissRM: Entered"
+        tracebuf.append(msg)
+        print(msg)
         self._vectorizer = vectorizer
         self._index_map = index_map
         self._chat_config = chat_config
         self._tracebuf = tracebuf
 
         self._bm25s_corpus_records = bm25s_corpus_records
-        if not bm25s_index_fname:
-            tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
-            self._bm25s_retriever = bm25s.BM25.load(bm25s_index_fname, load_corpus=False)
-            tracebuf.append(f"{prtime()} FaissRM: saved bm25s index {bm25s_index_fname} loaded")
+        self._stemmer = Stemmer.Stemmer('english')
+        if bm25s_index_fname:
+            tmpdir=tempfile.mkdtemp()
+            extract_tar_file(bm25s_index_fname, tmpdir)
+            self._bm25s_retriever = bm25s.BM25.load(os.path.join(tmpdir, 'bm25s_index'), load_corpus=False)
+            msg = f"{prtime()} FaissRM: saved bm25s index {bm25s_index_fname} untarred into {tmpdir} and loaded"
+            tracebuf.append(msg)
+            print(msg)
         else:
-            self._stemmer = Stemmer.Stemmer('english')
             bm25s_corpus_lst = []
             for rc in self._bm25s_corpus_records:
                 finfo = documents[rc['fileid']]
@@ -60,7 +70,9 @@ class FaissRM():
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
-            tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
+            msg = f"{prtime()} FaissRM: bm25s index created"
+            tracebuf.append(msg)
+            print(msg)
 
         if is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
