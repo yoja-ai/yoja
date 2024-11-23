@@ -275,8 +275,8 @@ class IndexMetadata:
     bm25s_index_last_modified: float = 0
     
     def is_vdb_index_stale(self):
-        if not jsonl_last_modified and not index_flat_last_modified and \
-                not index_ivfadc_last_modified and not bm25s_index_last_modified:
+        if not self.jsonl_last_modified and not self.index_flat_last_modified and \
+                not self.index_ivfadc_last_modified and not self.bm25s_index_last_modified:
             print(f"IndexMetadata.is_vdb_index_stale: all values 0. Returning stale")
             return True
         return self.jsonl_last_modified > self.index_flat_last_modified \
