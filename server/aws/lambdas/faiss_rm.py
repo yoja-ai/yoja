@@ -27,7 +27,7 @@ class FaissRM():
                     doc_storage_type:DocStorageType, chat_config, tracebuf,
                     k: int = DEFAULT_SEMANTIC_NUM_HITS,
                     flat_index_fname=None, ivfadc_index_fname:str=None,
-                    bm25s_corpus_records=None):
+                    bm25s_index_fname=None, bm25s_corpus_records=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
         The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
@@ -46,8 +46,11 @@ class FaissRM():
         self._tracebuf = tracebuf
 
         self._bm25s_corpus_records = bm25s_corpus_records
-        self._bm25s_retriever = None
-        if self._bm25s_corpus_records:
+        if not bm25s_index_fname:
+            tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
+            self._bm25s_retriever = bm25s.BM25.load(bm25s_index_fname, load_corpus=False)
+            tracebuf.append(f"{prtime()} FaissRM: saved bm25s index {bm25s_index_fname} loaded")
+        else:
             self._stemmer = Stemmer.Stemmer('english')
             bm25s_corpus_lst = []
             for rc in self._bm25s_corpus_records:
@@ -57,7 +60,7 @@ class FaissRM():
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
-        tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
+            tracebuf.append(f"{prtime()} FaissRM: bm25s index created")
 
         if is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
@@ -134,6 +137,9 @@ class FaissRM():
         # delete saved index
         os.remove(tmpfile)
         return file_size
+
+    def get_bm25s_retriever(self):
+        return self._bm25s_retriever
 
     def get_documents(self):
         """ documents is a dict like {fileid: finfo}; """

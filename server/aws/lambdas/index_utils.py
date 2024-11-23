@@ -272,15 +272,24 @@ class IndexMetadata:
     jsonl_last_modified:float  = 0 # time.time()
     index_flat_last_modified:float = 0
     index_ivfadc_last_modified: float = 0
+    bm25s_index_last_modified: float = 0
     
     def is_vdb_index_stale(self):
-        return self.jsonl_last_modified > self.index_flat_last_modified or self.jsonl_last_modified > self.index_ivfadc_last_modified
+        if not jsonl_last_modified and not index_flat_last_modified and \
+                not index_ivfadc_last_modified and not bm25s_index_last_modified:
+            print(f"IndexMetadata.is_vdb_index_stale: all values 0. Returning stale")
+            return True
+        return self.jsonl_last_modified > self.index_flat_last_modified \
+                or self.jsonl_last_modified > self.index_ivfadc_last_modified \
+                or self.jsonl_last_modified > self.bm25s_index_last_modified
 
 FILES_INDEX_JSONL = "/tmp/files_index.jsonl"    
 FILES_INDEX_JSONL_GZ = "/tmp/files_index.jsonl.gz"
 INDEX_METADATA_JSON = "/tmp/index_metadata.json"
 FAISS_INDEX_FLAT = "/tmp/faiss_index_flat"
 FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
+BM25S_INDEX = "/tmp/bm25s_index"
+
 def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool:
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)
@@ -313,7 +322,6 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
         except Exception as ex:
             print(f"Caught {ex} while downloading {faiss_index_flat_fname} from s3://{bucket}/{prefix}")
             return False
-
         try:
             faiss_index_ivfadc_fname = FAISS_INDEX_IVFADC
             print(f"Downloading {faiss_index_ivfadc_fname} from s3://{bucket}/{prefix}")
@@ -321,6 +329,13 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
             s3client.download_file(bucket, f"{prefix}/{os.path.basename(faiss_index_ivfadc_fname)}", faiss_index_ivfadc_fname)
         except Exception as ex:
             print(f"Caught {ex} while downloading {faiss_index_ivfadc_fname} from s3://{bucket}/{prefix}")
+            return False
+        try:
+            print(f"Downloading {BM25S_INDEX} from s3://{bucket}/{prefix}")
+            # index1/raj@yoja.ai/bm25s_index
+            s3client.download_file(bucket, f"{prefix}/{os.path.basename(BM25S_INDEX)}", BM25S_INDEX)
+        except Exception as ex:
+            print(f"Caught {ex} while downloading {BM25S_INDEX} from s3://{bucket}/{prefix}")
             return False
     
     return True
@@ -353,6 +368,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     bm25s_corpus_records = []
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
+    bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX
     if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
@@ -387,7 +403,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type,
                     chat_config, tracebuf, k=100,
                     flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
-                    bm25s_corpus_records=bm25s_corpus_records)
+                    bm25s_index_fname=bm25s_index_fname, bm25s_corpus_records=bm25s_corpus_records)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents
@@ -513,7 +529,7 @@ def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
     return doc_dct
 
 def read_xlsx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_rows) -> Dict[str, Union[str, Dict[str,str]]]:
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     workbook = {'filename': filename, 'rows': prev_rows}
     wb = openpyxl.load_workbook(file_io)
     for sn in wb.sheetnames:
@@ -543,7 +559,7 @@ def read_xlsx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_ro
     return workbook
 
 def read_pptx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_slides) -> Dict[str, Union[str, Dict[str,str]]]:
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     prs = Presentation(file_io)
     ppt={"filename": filename, "fileid": fileid, "mtime": mtime, "slides": prev_slides}
     ind = 0
@@ -583,7 +599,7 @@ def read_pptx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_sl
     return ppt
 
 def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     fulltxt = file_io.getvalue().decode('utf-8')
@@ -633,7 +649,7 @@ def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime
     return doc_dct
 
 def read_html(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime.datetime, prev_paras) -> Dict[str, Union[str,Dict[str, str]]]:
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     prev_len = len(prev_paras)
     html_content = file_io.getvalue().decode('utf-8')
@@ -732,7 +748,7 @@ def process_html(email, file_item, filename, fileid, bio):
         file_item['partial'] = 'true'
 
 def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path):
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     # Each issue is one paragraph
     if 'partial' in file_item and 'paragraphs' in file_item:
         del file_item['partial']
@@ -1042,7 +1058,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 else:
                     prev_paras = []
                     print(f"process_files: fn={filename}. did not find partial")
-                vectorizer = get_vectorizer(email)
+                vectorizer = get_vectorizer(email, [])
                 pdf_dict:Dict[str,Any] = read_pdf(email, filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
                 file_item['paragraphs'] = pdf_dict['paragraphs']
                 file_item['filetype'] = 'pdf'
@@ -1172,6 +1188,7 @@ def _update_index_metadata_json_local(in_index_metadata:IndexMetadata):
     if in_index_metadata.jsonl_last_modified: index_metadata.jsonl_last_modified = in_index_metadata.jsonl_last_modified
     if in_index_metadata.index_flat_last_modified: index_metadata.index_flat_last_modified = in_index_metadata.index_flat_last_modified
     if in_index_metadata.index_ivfadc_last_modified: index_metadata.index_ivfadc_last_modified = in_index_metadata.index_ivfadc_last_modified
+    if in_index_metadata.bm25s_index_last_modified: index_metadata.bm25s_index_last_modified = in_index_metadata.bm25s_index_last_modified
     
     with open(INDEX_METADATA_JSON, "w") as f:
          json.dump(jsons.dump(index_metadata), f)
@@ -1216,7 +1233,7 @@ def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3
 
 def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
     """  user_prefix == prefix + email + sub_prefix """
-    for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC):
+    for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC, BM25S_INDEX):
         faiss_s3_key = f"{user_prefix}/{os.path.basename(faiss_index_fname)}"
         if os.path.exists(faiss_index_fname): 
             print(f"Deleting faiss index {faiss_index_fname} in local filesystem")
@@ -1233,7 +1250,7 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     # now build the index.
     faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix,
                                 doc_storage_type=doc_storage_type,
-                                sub_prefix=sub_prefix)
+                                sub_prefix=sub_prefix, tracebuf=[])
     # save the created index
     faiss_flat_fname = FAISS_INDEX_FLAT
     faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
@@ -1253,6 +1270,14 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
     os.remove(faiss_ivfadc_fname)
 
+    # save the bm25s retriever
+    bm25s_retriever = faiss.get_bm25s_retriever()
+    bm25s_retriever.save(BM25S_INDEX)
+    _update_index_metadata_json_local(IndexMetadata(bm25s_index_last_modified=time.time()))
+    print(f"Uploading bm25s index {BM25S_INDEX}.  Size of index={os.path.getsize(BM25S_INDEX)}")
+    s3client.upload_file(BM25S_INDEX, bucket, f"{user_prefix}/{os.path.basename(BM25S_INDEX)}")
+    os.remove(BM25S_INDEX)
+
     # update index_metadata_json
     _update_index_metadata_json_local(IndexMetadata(index_ivfadc_last_modified=time.time()))
     print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
@@ -1270,11 +1295,9 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
         extend_ddb_time(email, time_left)
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
-            # we update the index only when we have 1 to 100 embeddings that need to be updated..
             build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type)
         else:
             print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds.  Deleting stale faiss indexes if needed..")
-            # delete the existing faiss indexes since they are not in sync with files_index.jsonl.gz
             _delete_faiss_index(email, s3client, bucket, prefix, sub_prefix, user_prefix)
             
     else:
@@ -1740,7 +1763,7 @@ def create_sample_index(email, start_time, s3client, bucket, prefix):
 if __name__=="__main__":
     with open(sys.argv[1], 'rb') as f:
         bio = io.BytesIO(f.read())
-    vectorizer = get_vectorizer(email)
+    vectorizer = get_vectorizer(email, [])
     rv = read_pdf(None, sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))
