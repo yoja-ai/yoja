@@ -245,33 +245,46 @@ def download_gdrive_file(service, file_id, filename) -> io.BytesIO:
   return file
 
 def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
-    try:
-        headers={"Authorization": f"Bearer {access_token}"}
-        if fmt == 'pptx':
-            url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
-        elif fmt == 'docx':
-            url = f"https://docs.google.com/document/d/{file_id}/export?format=doc"
-        elif fmt == 'xlsx':
-            url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
-        else:
-            print(f"export_gdrive_file: Unknown format {fmt} for fileid {file_id}. Do not know how to download..")
-            return None
+    headers={"Authorization": f"Bearer {access_token}"}
+    if fmt == 'pptx':
+        url = f"https://docs.google.com/presentation/d/{file_id}/export/{fmt}"
+    elif fmt == 'docx':
+        url = f"https://docs.google.com/document/d/{file_id}/export?format=doc"
+    elif fmt == 'xlsx':
+        url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
+    else:
+        print(f"export_gdrive_file: Unknown format {fmt} for fileid {file_id}. Do not know how to download..")
+        return None
+    for attempt in range(2):
         try:
             resp = requests.get(url, stream=True, headers=headers)
             resp.raise_for_status()
             file = io.BytesIO()
             for chunk in resp.iter_content(chunk_size=1024): 
                 if chunk:
-                    print(f"export_gdrive_file: writing {len(chunk)} bytes for {file_id}, fmt {fmt}")
                     file.write(chunk)
             file.seek(0, os.SEEK_SET)
+            # open the files. If the open throws an exception, sleep and retry one time
+            if fmt == 'xlsx':
+                wb = openpyxl.load_workbook(file)
+                file.seek(0, os.SEEK_SET)
+            elif fmt == 'pptx':
+                prs = Presentation(file)
+                file.seek(0, os.SEEK_SET)
+            elif fmt == 'docx':
+                doc = docx.Document(file)
+                file.seek(0, os.SEEK_SET)
             return file
+        except requests.exceptions.HTTPError as http_err:
+            if response.status_code == 401:
+                print(f"401 Unauthorized error occurred for file_id {file_id}")
+                return None
+            else:
+                print(f"HTTP error occurred: {http_err}. Sleeping and continuing..")
         except Exception as ex:
-            print(f"export_gdrive_file: Caught {ex}")
-            return None
-    except Exception as ex:
-        print(f"export_gdrive_file: Caught {ex} exporting {file_id} of format {fmt}")
-        return None
+            print(f"export_gdrive_file: Caught {ex}. Sleeping 10 seconds")
+            time.sleep(10)
+    return None
 
 @dataclass
 class IndexMetadata:
@@ -982,9 +995,9 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
         # handle errors like these: a docx file that was deleted (in Trash) but is still visible in google drive api: raise BadZipFile("File is not a zip file")
         try:
             if 'size' in file_item and int(file_item['size']) == 0: 
-                if mimetype != 'application/vnd.google-apps.presentation' \
-                        and mimetype != 'application/vnd.google-apps.document' \
-                        and mimetype != 'application/vnd.google-apps.spreadsheet':
+                if not (mimetype == 'application/vnd.google-apps.presentation' \
+                        or mimetype == 'application/vnd.google-apps.document' \
+                        or mimetype == 'application/vnd.google-apps.spreadsheet'):
                     print(f"skipping google drive with file size == 0, and not of type google sheet, slides or docs: {file_item}")
                     to_del_from_needs_embedding.append(fileid)
                     status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
@@ -1084,17 +1097,11 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     if status:
                         prev_update = updtime
                 else:
-                    tfd, tfn = tempfile.mkstemp(suffix=".pptx", dir="/tmp")
-                    with os.fdopen(tfd, "wb") as wfp:
-                        wfp.write(bio.getvalue())
-                    bio.close()
-                    with open(f"{tfn}", 'rb') as fp:
-                        process_pptx(email, file_item, filename, fileid, fp)
-                        done_embedding[fileid] = file_item
-                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
-                        if status:
-                            prev_update = updtime
-                    os.remove(f'{tfn}')
+                    process_pptx(email, file_item, filename, fileid, bio)
+                    done_embedding[fileid] = file_item
+                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    if status:
+                        prev_update = updtime
             elif mimetype == 'application/vnd.google-apps.document':
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if not bio:
@@ -1104,17 +1111,11 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     if status:
                         prev_update = updtime
                 else:
-                    tfd, tfn = tempfile.mkstemp(suffix=".docx", dir="/tmp")
-                    with os.fdopen(tfd, "wb") as wfp:
-                        wfp.write(bio.getvalue())
-                    bio.close()
-                    with open(f"{tfn}", 'rb') as fp:
-                        process_docx(email, file_item, filename, fileid, fp)
-                        done_embedding[fileid] = file_item
-                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
-                        if status:
-                            prev_update = updtime
-                    os.remove(f'{tfn}')
+                    process_docx(email, file_item, filename, fileid, bio)
+                    done_embedding[fileid] = file_item
+                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    if status:
+                        prev_update = updtime
             elif mimetype == 'application/vnd.google-apps.spreadsheet':
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 if not bio:
@@ -1125,6 +1126,10 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         prev_update = updtime
                 else:
                     process_xlsx(email, file_item, filename, fileid, bio)
+                    done_embedding[fileid] = file_item
+                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    if status:
+                        prev_update = updtime
             elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_txt(email, file_item, filename, fileid, bio)
