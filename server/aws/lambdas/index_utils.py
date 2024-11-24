@@ -276,7 +276,7 @@ def export_gdrive_file(access_token, file_id, fmt) -> io.BytesIO:
                 file.seek(0, os.SEEK_SET)
             return file
         except requests.exceptions.HTTPError as http_err:
-            if response.status_code == 401:
+            if resp.status_code == 401:
                 print(f"401 Unauthorized error occurred for file_id {file_id}")
                 return None
             else:
