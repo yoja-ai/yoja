@@ -58,7 +58,7 @@ class FaissRM():
             tmpdir=tempfile.mkdtemp()
             extract_tar_file(bm25s_index_fname, tmpdir)
             self._bm25s_retriever = bm25s.BM25.load(os.path.join(tmpdir, 'bm25s_index'), load_corpus=False)
-            msg = f"{prtime()} FaissRM: saved bm25s index {bm25s_index_fname} untarred into {tmpdir} and loaded"
+            msg = f"{prtime()} FaissRM: loaded pre-created bm25s index {bm25s_index_fname} untarred into {tmpdir}"
             tracebuf.append(msg)
             print(msg)
         else:
