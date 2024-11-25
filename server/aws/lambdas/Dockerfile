@@ -84,18 +84,29 @@ RUN pip3 install einops
 RUN pip3 install python-docx
 RUN pip3 install reportlab 
 
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3', local_dir_use_symlinks=False)"
+RUN python3 -c "\
+from huggingface_hub import hf_hub_download;\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+from transformers import AutoModel, AutoTokenizer;\
+model = AutoModel.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+tokenizer = AutoTokenizer.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+model.half();\
+model.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3');\
+tokenizer.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3')" && \
+    /bin/rm -rf ${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full
 
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='pytorch_model.bin', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
-RUN python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2', local_dir_use_symlinks=False)"
+RUN python3 -c "\
+from huggingface_hub import hf_hub_download;\
+hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2');\
+hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='pytorch_model.bin', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2');\
+hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2');\
+hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2');\
+hf_hub_download(repo_id='cross-encoder/ms-marco-MiniLM-L-6-v2', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/cross-encoder/ms-marco-MiniLM-L-6-v2');"
 
 RUN pip3 install jsons 
 RUN pip3 install pandasql 
