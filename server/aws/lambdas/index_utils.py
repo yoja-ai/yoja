@@ -385,7 +385,6 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
-    bm25s_corpus_records = []
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
     bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX_TAR
@@ -410,20 +409,18 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
                             embeddings.append(pickle.loads(base64.b64decode(para['embedding'].strip()))[0])
                         del para['embedding']
                         index_map.append((finfo['fileid'], para_index))
-                        bm25s_corpus_records.append({'fileid': finfo['fileid'], 'para': para_index, 'text':  format_paragraph(finfo[key][para_index])})
     else:
         print(f"init_vdb: Failed to download files_index.jsonl from s3://{bucket}/{user_prefix}")
         return None
     print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
     print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
-    print(f"init_vdb: finished creating bm25s_corpus_records. Entries in bm25s_corpus_records={len(bm25s_corpus_records)}")
     tracebuf.append(f"{prtime()} init_vdb: finished loading files_index and creating bm25s_corpus")
     vectorizer = get_vectorizer(email, tracebuf)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type,
                     chat_config, tracebuf, k=100,
                     flat_index_fname=flat_index_fname, ivfadc_index_fname=ivfadc_index_fname,
-                    bm25s_index_fname=bm25s_index_fname, bm25s_corpus_records=bm25s_corpus_records)
+                    bm25s_index_fname=bm25s_index_fname)
 
 def _calc_path(service, entry, folder_details):
     # calculate path by walking up parents
@@ -1254,9 +1251,14 @@ def create_tar_file(directory_path, tar_file_path):
 def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
-    faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix,
+    try:
+        faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix,
                                 doc_storage_type=doc_storage_type,
                                 sub_prefix=sub_prefix, tracebuf=[])
+    except Exception as ex:
+        print(f"build_and_save_faiss: Caught {ex}")
+        traceback.print_exc()
+
     # save the created index
     faiss_flat_fname = FAISS_INDEX_FLAT
     faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)

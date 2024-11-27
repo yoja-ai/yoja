@@ -668,14 +668,10 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     tracebuf.append(f"{prtime()} Tool call:search_question_in_db: Entered. Queries:")
     tracebuf.extend(queries)
 
-    main_theme = None
-    bm25terms = extract_named_entities(last_msg)
-    if not bm25terms:
-        main_theme = extract_main_theme(last_msg)
-        if main_theme:
-            bm25terms = [main_theme]
-    print(f"bm25terms={bm25terms}, main_theme={main_theme}")
-    tracebuf.append(f"{prtime()} bm25terms={bm25terms}, main theme={main_theme}")
+    named_entities = extract_named_entities(last_msg)
+    main_theme = extract_main_theme(last_msg)
+    print(f"named_entities={named_entities}, main_theme={main_theme}")
+    tracebuf.append(f"{prtime()} named_entities={named_entities}, main theme={main_theme}")
 
     sorted_summed_scores:List[DocumentChunkDetails] = []
     for i in range(len(faiss_rms)):
@@ -687,7 +683,8 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
         passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat', bm25terms=bm25terms)
+            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat',
+                                                    named_entities=named_entities, main_theme=main_theme)
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
