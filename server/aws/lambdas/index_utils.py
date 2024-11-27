@@ -415,7 +415,7 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     print(f"init_vdb: finished reading files_index.jsonl.gz. Num files={len(fls.items())}")
     print(f"init_vdb: finished loading index_map. Entries in index_map={len(index_map)}")
     print(f"init_vdb: finished loading embeddings. Entries in embeddings={len(embeddings)}")
-    tracebuf.append(f"{prtime()} init_vdb: finished loading files_index and creating bm25s_corpus")
+    tracebuf.append(f"{prtime()} init_vdb: finished loading files_index")
     vectorizer = get_vectorizer(email, tracebuf)
     return FaissRM(fls, index_map, embeddings, vectorizer, doc_storage_type,
                     chat_config, tracebuf, k=100,
