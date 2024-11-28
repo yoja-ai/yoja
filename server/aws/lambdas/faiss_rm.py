@@ -61,9 +61,9 @@ class FaissRM():
             self._lg(f"{prtime()} FaissRM: loaded pre-created bm25s index {bm25s_index_fname} untarred into {tmpdir}")
         else:
             bm25s_corpus_lst = []
-            for ind in index_map:
-                finfo = documents[ind[0]]
-                para = self.get_paragraph(ind[1])
+            for ind in range(len(index_map)):
+                finfo = documents[index_map[ind][0]]
+                para = self.get_paragraph(ind)
                 rcrd = f"{finfo['path']} {finfo['filename']} {format_paragraph(para)}"
                 bm25s_corpus_lst.append(rcrd)
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
