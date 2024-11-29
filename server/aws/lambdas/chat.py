@@ -95,6 +95,10 @@ TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION = {
     }
 }
 
+def _lg(tracebuf, lgstr):
+    print(lgstr)
+    tracebuf.append(lgstr)
+
 def calc_tokens(context):
     global encoding_model
     return len(encoding_model.encode(context))
@@ -528,7 +532,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                 print(f"{prtime()}: Running tool {tool}")
                 if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
-                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                    context:str = _get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, True, False, searchsubdir=searchsubdir)
                     print(f"{prtime()}: Tool output: context={context}")
                     tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
@@ -538,7 +542,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                     })
                 elif tool.function.name == "search_question_in_db_return_more" or tool.function.name == 'search_question_in_db_return_more.controls':
                     tool_arg_question = args_dict.get('question')
-                    context:str = _get_context_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                    context:str = _get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, False, True, searchsubdir=searchsubdir)
                     print(f"{prtime()}: Tool output: context={context}")
                     tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
@@ -652,7 +656,7 @@ def extract_main_theme(text):
     print(f"extract_main_theme: chatgpt returned {retval}")
     return retval
 
-def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+def _retrieve_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     chat_config:ChatConfiguration, last_msg:str, searchsubdir:str=None) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
     """
@@ -691,7 +695,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                 if searchsubdir:
                     if 'path' in finfo:
                         if finfo['path'].startswith(searchsubdir):
-                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
+                            print(f"_retrieve_rerank: searchsubdir={searchsubdir}. Accepting {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
                             # the first query in queries[] is the actual user chat text. we give that twice the weight
                             dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
                             if ind_in_faiss in passage_scores_dict:
@@ -699,11 +703,11 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                             else:
                                 passage_scores_dict[ind_in_faiss] = [dist]
                         else:
-                            print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting for path mismatch {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
+                            print(f"_retrieve_rerank: searchsubdir={searchsubdir}. Rejecting for path mismatch {finfo['filename']} path={finfo['path']}, para={index_map[ind_in_faiss][1]}")
                     else:
-                        print(f"retrieve_and_rerank_using_faiss: searchsubdir={searchsubdir}. Rejecting {finfo['filename']}, para={index_map[ind_in_faiss][1]} since no path")
+                        print(f"_retrieve_rerank: searchsubdir={searchsubdir}. Rejecting {finfo['filename']}, para={index_map[ind_in_faiss][1]} since no path")
                 else:
-                    print(f"retrieve_and_rerank_using_faiss: No searchsubdir. Accepting {finfo['filename']} path={finfo['path'] if 'path' in finfo else 'unavailable'}, para={index_map[ind_in_faiss][1]}")
+                    print(f"_retrieve_rerank: No searchsubdir. Accepting {finfo['filename']} path={finfo['path'] if 'path' in finfo else 'unavailable'}, para={index_map[ind_in_faiss][1]}")
                     # the first query in queries[] is the actual user chat text. we give that twice the weight
                     dist = distances[0][idx] if qind == 0 else distances[0][idx]/2.0
                     if ind_in_faiss in passage_scores_dict:
@@ -712,7 +716,7 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
                         passage_scores_dict[ind_in_faiss] = [dist]
 
         if len(passage_scores_dict.items()) == 0:
-            print(f"retrieve_and_rerank_using_faiss: No entries in passage_scores!!")
+            print(f"_retrieve_rerank: No entries in passage_scores!!")
             return False, None
 
         # faiss returns METRIC_INNER_PRODUCT - larger number means better match
@@ -760,25 +764,25 @@ def retrieve_and_rerank_using_faiss(faiss_rms:List[faiss_rm.FaissRM], documents_
     global g_cross_encoder
     # https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-2-v2
     if not g_cross_encoder: g_cross_encoder = CrossEncoder('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') if os.path.isdir('/var/task/cross-encoder/ms-marco-MiniLM-L-6-v2') else CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-    # retrieve_and_rerank_using_faiss: cross_scores=[-10.700319  -11.405142   -3.5650876  -8.041701   -9.972779   -9.609493 -10.653023   -6.8494396  -7.601103  -11.405787  -10.690331  -10.050377 ...
+    # _retrieve_rerank: cross_scores=[-10.700319  -11.405142   -3.5650876  -8.041701   -9.972779   -9.609493 -10.653023   -6.8494396  -7.601103  -11.405787  -10.690331  -10.050377 ...
     # Note that these three arrays are aligned: using the same index in these 3 arrays retrieves corresponding elements: reranker_map (array of faiss_indexes), reranker_input (array of (query, formatted para)) and cross_scores (array of cross encoder scores)
     # 
     # Negative Scores for cross-encoder/ms-marco-MiniLM-L-6-v2 #1058: https://github.com/UKPLab/sentence-transformers/issues/1058
     cross_scores:np.ndarray = g_cross_encoder.predict(reranker_input)
-    print(f"retrieve_and_rerank_using_faiss: cross_scores={cross_scores}")
+    print(f"_retrieve_rerank: cross_scores={cross_scores}")
     # Returns the indices into the given cross_scores array, that would sort the given cross_scores array.
     # Perform an indirect sort along the given axis using the algorithm specified by the kind keyword. It returns an array of indices of the same shape as a that index data along the given axis in sorted order.
     reranked_indices = np.argsort(cross_scores)[::-1]
-    print(f"retrieve_and_rerank_using_faiss: reranked_indices={reranked_indices}")
+    print(f"_retrieve_rerank: reranked_indices={reranked_indices}")
     cross_sorted_scores:List[DocumentChunkDetails] = []
     for ind in range(len(reranked_indices)):
         chk=sorted_summed_scores[reranked_indices[ind]]
         chk.cross_encoder_score = cross_scores[reranked_indices[ind]]
         cross_sorted_scores.append(chk)
-    print("retrieve_and_rerank_using_faiss: cross_sorted_scores=")
+    _lg(tracebuf, f"{prtime()}_retrieve_rerank: cross_sorted_scores:")
     for ind in range(len(cross_sorted_scores)):
         chk = cross_sorted_scores[ind]
-        print(f"retrieve_and_rerank_using_faiss: reranker_sorted_idx={ind}, cross_encoder_score={chk.cross_encoder_score}, index_in_faiss={chk.index_in_faiss}, distance={chk.distance}; filename={chk.file_name}; file_id={chk.file_id}")
+        _lg(tracebuf, f"  reranker_sorted_idx={ind}, {chk.file_info['path']}{chk.file_info['filename']},para={chk.para_id}: cross_encoder_score={chk.cross_encoder_score}, index_in_faiss={chk.index_in_faiss}, distance={chk.distance}")
     return True, cross_sorted_scores
 
 def _calc_cross_sorted_diffs(cross_sorted_scores):
@@ -803,7 +807,7 @@ def _truncate_cross_sorted_scores(cross_sorted_scores, most_relevant):
     print(f"_truncate_cross_sorted_scores: after truncating. truncated cross_sorted_scores={rv}")
     return rv
 
-def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+def _get_context(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
                                     index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool, least_relevant_only:bool, searchsubdir:str=None):
     """
@@ -813,10 +817,10 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
     the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context
     """
     cross_sorted_scores:List[DocumentChunkDetails]
-    status, cross_sorted_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
     if not status:
-        print(f"_get_context_using_retr_and_rerank: no context from retrieve_and_rerank_using_faiss")
+        print(f"_get_context: no context from _retrieve_rerank")
         return "No context found"
 
     cross_sorted_scores = cross_sorted_scores[:16]
@@ -826,6 +830,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
             cross_sorted_scores = _truncate_cross_sorted_scores(cross_sorted_scores, True)
         elif least_relevant_only:
             cross_sorted_scores = _truncate_cross_sorted_scores(cross_sorted_scores, False)
+    _lg(tracebuf, f"{prtime()}_get_context: length of truncated cross_sorted_scores = {len(cross_sorted_scores)}")
 
     context:str = ''
     all_docs_token_count = 0
@@ -838,9 +843,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
-        msg = f"{prtime()}: Processing for context={finfo['filename']} path={finfo['path']} chunk={chunk_det.para_id}"
-        print(msg)
-        tracebuf.append(msg)
+        _lg(tracebuf, f"{prtime()}_get_context: Processing {finfo['path']}{finfo['filename']},para={chunk_det.para_id}")
 
         key = _get_key(finfo)
         if not key:
@@ -853,9 +856,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
         if chunk_det.file_type == DocumentType.GH_ISSUES_ZIP:
             chunk_range.start_para_id = chunk_det.para_id
             chunk_range.end_para_id = chunk_det.para_id
-            msg = f"{prtime()}: gh issues zip file. Not adding previous or next paragraphs for context"
-            print(msg)
-            tracebuf.append(msg)
+            _lg(tracebuf, f"{prtime()}_get_context: gh issues zip file. Not adding previous or next paragraphs for context")
             break
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
@@ -894,9 +895,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                 token_count += tiktoken_count
                 all_docs_token_count += tiktoken_count
                 if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
-            msg = f"{prtime()}: including prior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}"
-            print(msg)
-            tracebuf.append(msg)
+            _lg(tracebuf, f"{prtime()}_get_context: including prior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
 
             token_count:int = 0
             chunk_range.end_para_id = chunk_det.para_id
@@ -913,9 +912,7 @@ def _get_context_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documen
                     token_count += tiktoken_count
                     all_docs_token_count += tiktoken_count
                     if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
-                msg = f"{prtime()}: including posterior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}"
-                print(msg)
-                tracebuf.append(msg)
+                _lg(tracebuf, f"{prtime()}_get_context: including posterior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
             
             prelude = f"Name of the file is {chunk_det.file_name}"
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
@@ -972,7 +969,7 @@ def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], docume
                                          index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                          chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10, searchsubdir:str=None):
     cross_sorted_scores:List[DocumentChunkDetails]
-    status, cross_sorted_scores = retrieve_and_rerank_using_faiss(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
     files_dict:Dict[str,DocumentChunkDetails] = {}
     for chunk_det in cross_sorted_scores:
