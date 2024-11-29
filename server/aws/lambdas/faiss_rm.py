@@ -15,7 +15,8 @@ import tarfile
 
 BM25_NUM_HITS=8
 DEFAULT_SEMANTIC_NUM_HITS=1024
-MAX_COMMON_HITS=16
+COMMON_HITS_PER_QUERY=8
+SEMANTIC_HITS_PER_QUERY=16
 
 class DocStorageType(enum.Enum):
     GoogleDrive = 1
@@ -291,7 +292,7 @@ class FaissRM():
                 else:
                     # No hits using bm25 for the named entities
                     print(f"No hits using bm25 for the named entities. Returning truncated lists")
-                    per_sem_query_hits = int(MAX_COMMON_HITS/len(queries))
+                    per_sem_query_hits = int(COMMON_HITS_PER_QUERY/len(queries))
                     print(f"No hits using bm25 for the named entities. {per_sem_query_hits} hits per semantic query")
                     modified_index_rv = []
                     modified_distances_rv = []
@@ -326,45 +327,43 @@ class FaissRM():
                     modified_index_rv = []
                     modified_distances_rv = []
                     for semantic_query_ind in range(len(index_list)):
-                        print(f"{prtime()}: begin filtering results of semantic query for {queries[semantic_query_ind]} by results of all bm25 search terms. common_hits_found={common_hits_found}")
+                        print(f"{prtime()}: begin filtering results of semantic query for {queries[semantic_query_ind]} by results of all bm25 search terms")
                         indices = index_list[semantic_query_ind]
                         distances = distance_list[semantic_query_ind]
                         modified_indices = []
                         modified_distances = []
-                        if common_hits_found < MAX_COMMON_HITS:
-                            for sem_ind in range(len(indices)):
-                                index = indices[sem_ind]
-                                distance = distances[sem_ind]
-                                fileid, para_index = self._index_map[index]
-                                finfo = self._documents[fileid]
-                                for bm25_ind in range(len(bm25terms_hits)):
-                                    bm25_hits = bm25terms_hits[bm25_ind]
-                                    if fileid in bm25_hits and para_index in bm25_hits[fileid]:
-                                        self._lg(f"{finfo['filename']}, para {para_index} is in both search results. Including")
-                                        modified_indices.append(index)
-                                        modified_distances.append(distance)
-                                        common_hits_found += 1
-                                        break
-                                    else:
-                                        print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25 term {bm25terms[bm25_ind]}. Excluding")
-                                if common_hits_found >= MAX_COMMON_HITS:
+                        common_hits_found = 0
+                        for sem_ind in range(len(indices)):
+                            index = indices[sem_ind]
+                            distance = distances[sem_ind]
+                            fileid, para_index = self._index_map[index]
+                            finfo = self._documents[fileid]
+                            for bm25_ind in range(len(bm25terms_hits)):
+                                bm25_hits = bm25terms_hits[bm25_ind]
+                                if fileid in bm25_hits and para_index in bm25_hits[fileid]:
+                                    self._lg(f"{finfo['filename']}, para {para_index} is in both search results. Including")
+                                    modified_indices.append(index)
+                                    modified_distances.append(distance)
+                                    common_hits_found += 1
                                     break
+                                else:
+                                    print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25 term {bm25terms[bm25_ind]}. Excluding")
+                            if common_hits_found >= COMMON_HITS_PER_QUERY:
+                                break
+                        semantic_hits = 0
+                        for sem_ind in range(len(indices)):
+                            index = indices[sem_ind]
+                            distance = distances[sem_ind]
+                            if index in modified_indices:
+                                continue
+                            modified_indices.append(index)
+                            modified_distances.append(distance)
+                            semantic_hits += 1
+                            if semantic_hits > SEMANTIC_HITS_PER_QUERY:
+                                break
                         modified_index_rv.append(np.array(modified_indices))
                         modified_distances_rv.append(np.array(modified_distances))
-                    # finally, if we found common hits return those, otherwise truncate the semantic list and return that
-                    if common_hits_found > 0:
-                        print(f"{common_hits_found} common hits found. Returning modified lists")
-                        return np.array(modified_distances_rv), np.array(modified_index_rv)
-                    else:
-                        print(f"No common hits found. Returning truncated lists")
-                        per_sem_query_hits = int(MAX_COMMON_HITS/len(queries))
-                        print(f"No common hits found. {per_sem_query_hits} hits per semantic query")
-                        modified_index_rv = []
-                        modified_distances_rv = []
-                        for semantic_query_ind in range(len(index_list)):
-                            modified_index_rv.append(np.array(index_list[semantic_query_ind][:per_sem_query_hits]))
-                            modified_distances_rv.append(np.array(distance_list[semantic_query_ind][:per_sem_query_hits]))
-                        return np.array(modified_distances_rv), np.array(modified_index_rv)
+                    return np.array(modified_distances_rv), np.array(modified_index_rv)
         else:
             return distance_list, index_list
 
