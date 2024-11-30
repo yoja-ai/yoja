@@ -10,7 +10,7 @@ Parameters:
     Description: 'Version of Yoja UI static HTML and Javascript files'
   YojaApiServiceSemanticVersionParameter:
     Type: String
-    Default: 0.4.5
+    Default: 0.4.6
   YojaWebhookServiceSemanticVersionParameter:
     Type: String
     Default: 0.1.2
