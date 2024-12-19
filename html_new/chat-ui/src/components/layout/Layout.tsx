@@ -115,9 +115,10 @@ const sendMessage = (newMessage: Message) => {
   localStorage.setItem("current_chat", JSON.stringify(updatedCurrentChat));
 
   chatApi(updatedCurrentChat).then(async (res: any) => {
-      const text = await res.text();
-      const result = JSON.parse(text.slice(5));
-      if (result) {
+      if (res.status == 200) {
+        const text = await res.text();
+        const result = JSON.parse(text.slice(5));
+        if (result) {
           const resMessage = {
               ...result.choices[0].delta,
               source: newConvertFileNameAndID(result.choices[0].context_sources)
@@ -177,6 +178,12 @@ const sendMessage = (newMessage: Message) => {
 
           setChatHistory([...chatHistory]);
           localStorage.setItem("chat_history", JSON.stringify(chatHistory));
+        }
+      } else {
+        if (res.status == 507) {
+          setIsLoading(false);
+          alert('Index is being generated. Please wait and try later');
+        }
       }
   }).catch((error: any) => {
       setIsLoading(false);

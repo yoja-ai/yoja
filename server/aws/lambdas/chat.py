@@ -1185,7 +1185,7 @@ def chat_completions(event, context):
             if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
     if not len(faiss_rms) or not faiss_rms[0]:
         print(f"chat_completions: index not available.")
-        return respond({"error_msg": f"Index not available. Please wait and try later.."}, status=503)
+        return respond({"error_msg": f"Index creation in progress. Please wait and try later.."}, status=507)
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []

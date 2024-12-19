@@ -62,6 +62,9 @@ export const chatApi = async (messages: Message[]) => {
         await new Promise(resolve => setTimeout(resolve, 10000)); 
         continue;
       }
+    } else if (res.status === 507) {
+      console.log("Received 507 Insufficient Storage. Index creation is in progress.");
+      return res;
     } else if (res.status == 403) {
       console.log("Received 403 Unauthorized. Redirecting to /login.html ...");
       alert("Login expired");
