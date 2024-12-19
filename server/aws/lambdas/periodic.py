@@ -2,6 +2,7 @@ import io
 import json
 import os
 import sys
+import argparse
 import traceback
 import tempfile
 import uuid
@@ -202,21 +203,81 @@ def exit_gracefully(signum, frame):
     print(f"Received {signum} signal")
     set_time_limit(0)
 
-if __name__=="__main__":
+def parse_arguments():
+    """
+    Parses command line arguments:
+    - user_email: optional
+    - docs_dir and index_dir: optional, but both must be provided together.
+    """
+    parser = argparse.ArgumentParser(
+        description="Process user email and optional directory pairs."
+    )
+
+    # Required argument
+    parser.add_argument(
+        "--user_email",
+        type=str,
+        default=None,
+        help="Email address of the user (optional)."
+    )
+
+    # Optional paired arguments
+    parser.add_argument(
+        "--docs_dir",
+        type=str,
+        default=None,
+        help="Path to the documents directory (optional, must be paired with --index_dir)."
+    )
+
+    parser.add_argument(
+        "--index_dir",
+        type=str,
+        default=None,
+        help="Path to the index directory (optional, must be paired with --docs_dir)."
+    )
+
+    args = parser.parse_args()
+
+    # Ensure docs_dir and index_dir are both provided or both absent
+    if (args.docs_dir is None) ^ (args.index_dir is None):  # XOR check
+        print("Error: --docs_dir and --index_dir must both be provided together or omitted.")
+        sys.exit(1)
+
+    return args
+
+def main():
+    event = {'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}}}
+    # Parse arguments
+    args = parse_arguments()
+
+    # Display the parsed arguments
+    print(f"User Email: {args.user_email}")
+    if args.docs_dir and args.index_dir:
+        print(f"Documents Directory: {args.docs_dir}")
+        print(f"Index Directory: {args.index_dir}")
+        event['docs_dir'] = args.docs_dir
+        event['index_dir'] = args.index_dir
+    else:
+        print("Documents and Index Directories: Not provided")
     signal.signal(signal.SIGINT, exit_gracefully)
     signal.signal(signal.SIGTERM, exit_gracefully)
 
-    event = {'requestContext': {'http': {'method': 'POST', 'path': '/rest/entrypoint/periodic'}}}
-    if len(sys.argv) < 2:
+    if not args.user_email:
         if 'YOJA_USER' in os.environ:
             event['body'] = json.dumps({'username': os.environ['YOJA_USER']})
         else:
-            print(f"Usage: periodic.py user_email")
+            print(f"Usage: periodic.py [--user_email email] [--docs_dir docs_dir] [--index_dir index_dir]")
             sys.exit(255)
     else:
-        event['body'] = json.dumps({'username': sys.argv[1]})
+        event['body'] = json.dumps({'username': args.user_email})
+    
     res = periodic(event, None)
     if 'gdrive_next_page_token' in res:
         sys.exit(0)
     else:
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+

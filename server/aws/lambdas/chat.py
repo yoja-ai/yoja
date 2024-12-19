@@ -12,7 +12,7 @@ import datetime
 from urllib.parse import unquote
 import numpy as np
 from utils import respond, get_service_conf, check_cookie, set_start_time, prtime
-from index_utils import init_vdb, lock_sample_dir, unlock_sample_dir, create_sample_index
+from index_utils import init_vdb
 import boto3
 from openai import OpenAI
 import traceback_with_variables
@@ -303,7 +303,7 @@ class DocumentChunkRange:
         return out_chunk_range_list
         
 def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat', sample_source=None,
+                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat',
                     searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
@@ -347,8 +347,6 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
             "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
-    if sample_source:
-        res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
     if chat_config.print_trace:
@@ -1046,7 +1044,7 @@ def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:L
 
 g_cross_encoder = None
 def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat', sample_source=None,
+                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat',
                 searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
@@ -1090,8 +1088,6 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
             "context_sources": json.loads(jsons.dumps(context_srcs_links))
         }
     ]
-    if sample_source:
-        res['choices'][0]['sample_source'] = sample_source
     if searchsubdir:
         res['choices'][0]['searchsubdir'] = searchsubdir
     if chat_config.print_trace:
@@ -1161,7 +1157,6 @@ def chat_completions(event, context):
     chat_config, last_msg = _debug_flags(last_msg, tracebuf)
 
     searchsubdir = None
-    sample_source=None
     faiss_rms:List[faiss_rm.FaissRM] = []
     if 'searchsubdir' in rv:
         ss1 = rv['searchsubdir']
@@ -1189,42 +1184,8 @@ def chat_completions(event, context):
                                                     build_faiss_indexes=False, sub_prefix=index)
             if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
     if not len(faiss_rms) or not faiss_rms[0]:
-        print(f"chat_completions: No full indexes found. Looking for sample index")
-        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix,
-                                    faiss_rm.DocStorageType.Sample,
-                                    chat_config=chat_config, tracebuf=tracebuf,
-                                    build_faiss_indexes=False, sub_prefix="sample")
-        if faiss_rm_vdb:
-            print(f"chat_completions: Found and loaded sample index for {email}")
-            faiss_rms.append(faiss_rm_vdb)
-        else:
-            print(f"chat_completions: No sample index found for {email}. Creating sample index")
-            ddbclient = boto3.client('dynamodb')
-            if lock_sample_dir(email, ddbclient):
-                print(f"chat_completions: Acquired sample index lock for {email}. Now creating..")
-                try:
-                    if create_sample_index(email, start_time, s3client, bucket, prefix):
-                        faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, s3client, bucket, prefix,
-                                                                faiss_rm.DocStorageType.Sample,
-                                                                chat_config=chat_config, tracebuf=tracebuf,
-                                                                build_faiss_indexes=False, sub_prefix="sample")
-                        if faiss_rm_vdb:
-                            faiss_rms.append(faiss_rm_vdb)
-                        else:
-                            print(f"chat_completions: Error in create sample index for {email}")
-                            return respond({"error_msg": f"Error in create sample index for {email}"}, status=403)
-                    else:
-                        print(f"chat_completions: Unable to create sample index for {email}")
-                        return respond({"error_msg": f"Unable to create sample index for {email}"}, status=403)
-                except Exception as ex:
-                    print(f"chat_completions: Caught {ex} creating sample index for {email}")
-                    return respond({"error_msg": f"Caught {ex} creating sample index for {email}"}, status=403)
-                finally:
-                    unlock_sample_dir(email, ddbclient)
-            else:
-                print(f"chat_completions: sample index for user {email} is being created by another lambda instance.")
-                return respond({"error_msg": f"No document index found and sample index being created by another lambda. Please wait and try later.."}, status=503)
-        sample_source = get_filenames(faiss_rms[0])
+        print(f"chat_completions: index not available.")
+        return respond({"error_msg": f"Index not available. Please wait and try later.."}, status=503)
 
     documents_list:List[Dict[str, dict]] = []
     index_map_list:List[List[Tuple[str,str]]] = []
@@ -1244,11 +1205,11 @@ def chat_completions(event, context):
     print(f"chat_completions: finished pre-processing. messages={body['messages']}")
     if len(body['messages']) == 1:
         return new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms, documents_list, index_map_list,
-                        sample_source=sample_source, searchsubdir=searchsubdir,
+                        searchsubdir=searchsubdir,
                         toolprompts=toolprompts)
     else:
         return ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms, documents_list, index_map_list,
-                            sample_source=sample_source, searchsubdir=searchsubdir,
+                            searchsubdir=searchsubdir,
                             toolprompts=toolprompts)
 
 #
