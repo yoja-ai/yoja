@@ -22,6 +22,7 @@ class DocStorageType(enum.Enum):
     GoogleDrive = 1
     DropBox = 2
     Sample = 3
+    Local = 4
 
 def extract_tar_file(tar_file_path, extract_to_directory):
     with tarfile.open(tar_file_path, "r") as tar:

@@ -144,5 +144,6 @@ COPY directory_browser.py ${LAMBDA_TASK_ROOT}
 COPY fetch_tool_prompts.py ${LAMBDA_TASK_ROOT}
 COPY custom_model.py ${LAMBDA_TASK_ROOT}
 COPY text_utils.py ${LAMBDA_TASK_ROOT}
+COPY lock.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

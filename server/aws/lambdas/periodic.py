@@ -28,9 +28,9 @@ class PeriodicBody:
     username:Optional[str] = ''
     dropbox_sub:Optional[str] = ''
 
-def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_time):
+def upd_in_lambda(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time):
     print(f"upd_in_lambda: Entered {email}")
-    gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
+    gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, index_dir, client)
     if status:
         if 'ecs_clustername' in service_conf and 'ecs_maxtasks' in service_conf \
                         and 'ecs_subnets' in service_conf and 'ecs_securitygroups' in service_conf:
@@ -53,7 +53,7 @@ def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_t
                 print(f"upd_in_lambda: ecs: caught exception {ex}")
         else:
             print(f"upd_in_lambda: gdrive_next_page_token present, or ecs config absent. Processing in lambda..")
-        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
+        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, index_dir, docs_dir, s3client,
                                 bucket=bucket, prefix=prefix,
                                 start_time=start_time,
                                 gdrive_next_page_token=gdrive_next_page_token,
@@ -63,32 +63,33 @@ def upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_t
         print(f"periodic.upd_in_lambda: failed to get lock for {email}. Returning without doing any work..")
     return gdrive_next_page_token, dropbox_next_page_token
 
-def upd_in_non_lambda(service_conf, email, client, s3client, bucket, prefix, start_time):
+def upd_in_non_lambda(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time):
     print(f"periodic.upd_in_non_lambda: Entered {email}")
     if 'YOJA_TAKEOVER_LOCK_END_TIME' in os.environ:
         print(f"periodic.upd_in_non_lambda: {email} YOJA_TAKEOVER_LOCK_END_TIME present. Trying to lock")
-        gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client,
+        gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, index_dir, client,
                                     takeover_lock_end_time=int(os.environ['YOJA_TAKEOVER_LOCK_END_TIME']))
     else:
         print(f"periodic.upd_in_non_lambda: {email} YOJA_TAKEOVER_LOCK_END_TIME absent. Trying to lock")
-        gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, client)
+        gdrive_next_page_token, dropbox_next_page_token, status = lock_user(email, index_dir, client)
     if status:
-        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, s3client,
+        gdrive_next_page_token, dropbox_next_page_token = update_index_for_user(email, index_dir, docs_dir, s3client,
                             bucket=bucket, prefix=prefix,
                             start_time=start_time,
                             gdrive_next_page_token=gdrive_next_page_token,
                             dropbox_next_page_token=dropbox_next_page_token)
         print(f"periodic.upd_in_non_lambda: after updating index. gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
-        update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token)
+        if not index_dir:
+            update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token)
     else:
         print(f"periodic.upd_in_non_lambda: failed to get lock for {email}. Returning without doing any work..")
     return gdrive_next_page_token, dropbox_next_page_token
 
-def upd(service_conf, email, client, s3client, bucket, prefix, start_time):
+def upd(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time):
     if 'AWS_LAMBDA_FUNCTION_NAME' in os.environ:
-        return upd_in_lambda(service_conf, email, client, s3client, bucket, prefix, start_time)
+        return upd_in_lambda(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time)
     else:
-        return upd_in_non_lambda(service_conf, email, client, s3client, bucket, prefix, start_time)
+        return upd_in_non_lambda(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time)
 
 def do_full_scan(service_conf, s3client, client, bucket, prefix, start_time):
     try:
@@ -103,7 +104,7 @@ def do_full_scan(service_conf, s3client, client, bucket, prefix, start_time):
                 for item in resp['Items']:
                     email = item['email']['S']
                     print(f"do_full_scan: Updating user {email}")
-                    upd(service_conf, email, client, s3client, bucket, prefix, start_time)
+                    upd(service_conf, email, None, client, s3client, bucket, prefix, start_time)
                 if 'LastEvaluatedKey' in resp:
                     last_evaluated_key = resp['LastEvaluatedKey']
                 else:
@@ -116,12 +117,12 @@ def do_full_scan(service_conf, s3client, client, bucket, prefix, start_time):
         return respond({"error_msg": f"Caught {ex} while scanning users table"}, status=403)
     return respond(None, res={'version': os.environ['LAMBDA_VERSION']})
 
-def update_gdrive_user(service_conf, s3client, client, email, bucket, prefix, start_time):
+def update_gdrive_user(service_conf, index_dir, docs_dir, s3client, client, email, bucket, prefix, start_time):
     item = get_user_table_entry(email)
     if not item:
         print(f"update_gdrive_user: Hmm. user table entry not found for {email}")
         return respond({"error_msg": f"update_gdrive_user: Hmm. user table entry not found for {email}"}, status=403)
-    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, email, client, s3client, bucket, prefix, start_time)
+    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, email, index_dir, docs_dir, client, s3client, bucket, prefix, start_time)
     res={'version': os.environ['LAMBDA_VERSION']}
     if gdrive_next_page_token:
         res['gdrive_next_page_token'] = gdrive_next_page_token
@@ -129,12 +130,12 @@ def update_gdrive_user(service_conf, s3client, client, email, bucket, prefix, st
         res['dropbox_next_page_token'] = dropbox_next_page_token
     return respond(None, res=res)
 
-def update_dropbox_user(service_conf, s3client, client, dropbox_sub, bucket, prefix, start_time):
+def update_dropbox_user(service_conf, index_dir, docs_dir, s3client, client, dropbox_sub, bucket, prefix, start_time):
     item = get_user_table_entry_dropbox_sub(dropbox_sub)
     if not item:
         print(f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub {dropbox_sub}")
         return respond({"error_msg": f"update_dropbox_user: Hmm. user table entry not found for dropbox_sub{dropbox_sub}"}, status=403)
-    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, item['email']['S'], client, s3client, bucket, prefix, start_time)
+    gdrive_next_page_token, dropbox_next_page_token = upd(service_conf, item['email']['S'], index_dir, docs_dir, client, s3client, bucket, prefix, start_time)
     res={'version': os.environ['LAMBDA_VERSION']}
     if gdrive_next_page_token:
         res['gdrive_next_page_token'] = gdrive_next_page_token
@@ -169,26 +170,41 @@ def periodic(event:dict, context) -> dict:
         print(f"Caught {ex} while getting service_conf")
         return respond({"error_msg": f"Caught {ex} while getting service_conf"}, status=403)
 
-    if 'bucket' not in service_conf or 'prefix' not in service_conf:
-        print(f"Error. bucket and prefix not specified in service conf")
-        return respond({"error_msg": "Error. bucket and prefix not specified in service_conf"}, status=403)
-    bucket = service_conf['bucket']['S']
-    prefix = service_conf['prefix']['S'].strip().strip('/')
-    print(f"Index Location: s3://{bucket}/{prefix}")
-
-    s3client = boto3.client('s3')
-    client = boto3.client('dynamodb')
+    s3client = None
+    client = None
+    bucket = None
+    prefix = None
+    index_dir = None
+    docs_dir = None
+    if 'index_dir' in event and 'docs_dir' in event:
+        index_dir = event['index_dir']
+        docs_dir = event['docs_dir']
+    elif 'bucket' in service_conf and 'prefix' in service_conf:
+        bucket = service_conf['bucket']['S']
+        prefix = service_conf['prefix']['S'].strip().strip('/')
+        print(f"Index Location: s3://{bucket}/{prefix}")
+        s3client = boto3.client('s3')
+        client = boto3.client('dynamodb')
+    else:
+        print(f"Error. index_dir/docs_dir not in event and bucket/prefix not specified in service conf")
+        return respond({"error_msg": "Error. index_dir/docs_dir not in event and bucket/prefix not specified in service_conf"}, status=403)
     start_time:datetime.datetime = datetime.datetime.now()
     set_start_time(start_time)
     if post_body:
         if post_body.username:
             print(f"periodic: post_body contains username {post_body.username}. Updating")
-            return update_gdrive_user(service_conf, s3client, client, post_body.username, bucket, prefix, start_time)
+            return update_gdrive_user(service_conf, index_dir, docs_dir, s3client, client, post_body.username, bucket, prefix, start_time)
         elif post_body.dropbox_sub:
             print(f"periodic: post_body contains dropbox_sub {post_body.dropbox_sub}. Updating")
-            return update_dropbox_user(service_conf, s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
-    print(f"periodic: no post_body or post_body does not contain username or dropbox_sub. Doing a full scan")
-    return do_full_scan(service_conf, s3client, client, bucket, prefix, start_time)
+            return update_dropbox_user(service_conf, index_dir, docs_dir, s3client, client, post_body.dropbox_sub, bucket, prefix, start_time)
+    else:
+        if index_dir:
+            print(f"periodic: index_dir specified, but no username or dropbox_sub. Cannot proceed")
+            return respond({"error_msg": "Error. index_dir specified, but no username or dropbox_sub. Cannot proceed"}, status=403)
+        else:
+            print(f"periodic: no post_body or post_body does not contain username or dropbox_sub. Doing a full scan")
+            return do_full_scan(service_conf, s3client, client, bucket, prefix, start_time)
+
 
 # You can invoke and run the periodic lambda in your local machine as follows
 #
@@ -251,7 +267,7 @@ def main():
     args = parse_arguments()
 
     # Display the parsed arguments
-    print(f"User Email: {args.user_email}")
+    print(f"Args: {args}")
     if args.docs_dir and args.index_dir:
         print(f"Documents Directory: {args.docs_dir}")
         print(f"Index Directory: {args.index_dir}")
@@ -261,13 +277,14 @@ def main():
         print("Documents and Index Directories: Not provided")
     signal.signal(signal.SIGINT, exit_gracefully)
     signal.signal(signal.SIGTERM, exit_gracefully)
+    if 'LAMBDA_VERSION' not in os.environ:
+        os.environ['LAMBDA_VERSION'] = 'local-devel-version'
 
     if not args.user_email:
         if 'YOJA_USER' in os.environ:
             event['body'] = json.dumps({'username': os.environ['YOJA_USER']})
         else:
-            print(f"Usage: periodic.py [--user_email email] [--docs_dir docs_dir] [--index_dir index_dir]")
-            sys.exit(255)
+            event['body'] = json.dumps({'username': 'notused'})
     else:
         event['body'] = json.dumps({'username': args.user_email})
     

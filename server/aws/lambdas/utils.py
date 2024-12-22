@@ -87,6 +87,9 @@ def get_service_conf():
     global cached_service_conf
     if cached_service_conf:
         return cached_service_conf
+    if 'SERVICECONF_TABLE' not in os.environ:
+        cached_service_conf = {}
+        return cached_service_conf
     client = boto3.client('dynamodb')
     for ind in range(2):
         try:
@@ -138,9 +141,12 @@ def get_user_table_entry(email):
     if email in user_table_cache:
         return user_table_cache[email]
     try:
-        client = boto3.client('dynamodb')
-        response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}}, ConsistentRead=True)
-        user_table_cache[email] = response['Item']
+        if 'USERS_TABLE' not in os.environ:
+            user_table_cache[email] = {'email': {'S': email}}
+        else:
+            client = boto3.client('dynamodb')
+            response = client.get_item(TableName=os.environ['USERS_TABLE'], Key={'email': {'S': email}}, ConsistentRead=True)
+            user_table_cache[email] = response['Item']
         return user_table_cache[email]
     except Exception as ex:
         print(f"Caught {ex} while getting info for {email} from users table")

@@ -31,6 +31,9 @@ import re
 import zipfile
 import tarfile
 import traceback
+from lock import lock_user_local, unlock_user_local
+import shutil
+import mimetypes
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
@@ -38,7 +41,7 @@ else:
     S3Client = object
 
 from googleapiclient.http import MediaIoBaseDownload
-from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339
+from google.api_core.datetime_helpers import to_rfc3339, from_rfc3339, from_microseconds
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import google.oauth2.credentials 
@@ -75,35 +78,42 @@ def get_vectorizer(email, tracebuf):
         print(f"get_vectorizer: No custom model and no model in /var. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     return vectorizer_cache[email]
 
-def lock_user(email, client, takeover_lock_end_time=0):
+def lock_user(email, index_dir, client, takeover_lock_end_time=0):
     print(f"lock_user: Entered. Trying to lock for email={email}")
+    if index_dir:
+        return lock_user_local(index_dir)
+    else:
+        return lock_user_aws(email, client, takeover_lock_end_time)
+
+def lock_user_aws(email, client, takeover_lock_end_time=0):
+    print(f"lock_user_aws: Entered. Trying to lock for email={email}")
     item = get_user_table_entry(email)
-    print(f"lock_user: User table entry for {email}={item}")
+    print(f"lock_user_aws: User table entry for {email}={item}")
     now = time.time()
     now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
     gdrive_next_page_token = None
     dropbox_next_page_token = None
     if not 'lock_end_time' in item:
-        print(f"lock_user: no lock_end_time in ddb. now={now}/{now_s}")
+        print(f"lock_user_aws: no lock_end_time in ddb. now={now}/{now_s}")
         l_e_t = None
         l_e_t_s = None
     else:
         l_e_t=int(float(item['lock_end_time']['N']))
         l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
-        print(f"lock_user: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+        print(f"lock_user_aws: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
         if takeover_lock_end_time != 0:
             if takeover_lock_end_time == l_e_t:
                 if 'gdrive_next_page_token' in item:
                     gdrive_next_page_token = item['gdrive_next_page_token']['S']
                 if 'dropbox_next_page_token' in item:
                     dropbox_next_page_token = item['dropbox_next_page_token']['S']
-                print(f"lock_user: Takeover successful for {email}. lock_end_time {l_e_t}/{l_e_t_s}")
+                print(f"lock_user_aws: Takeover successful for {email}. lock_end_time {l_e_t}/{l_e_t_s}")
                 return gdrive_next_page_token, dropbox_next_page_token, True
             else:
-                print(f"lock_user: Takeover unsuccessful for {email}. ddb lock_end_time {l_e_t}/{l_e_t_s}, takeover_lock_end_time={takeover_lock_end_time}")
+                print(f"lock_user_aws: Takeover unsuccessful for {email}. ddb lock_end_time {l_e_t}/{l_e_t_s}, takeover_lock_end_time={takeover_lock_end_time}")
                 return gdrive_next_page_token, dropbox_next_page_token, False
         else:
-            print(f"lock_user: takeover_lock_end_time is 0. Not attempting to take over existing lock. Proceeding with new lock attempt")
+            print(f"lock_user_aws: takeover_lock_end_time is 0. Not attempting to take over existing lock. Proceeding with new lock attempt")
     try:
         time_left = int(lambda_time_left_seconds())
         if time_left > (60 * 15):
@@ -123,18 +133,21 @@ def lock_user(email, client, takeover_lock_end_time=0):
                 gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
             if 'dropbox_next_page_token' in response['Attributes']:
                 dropbox_next_page_token = response['Attributes']['dropbox_next_page_token']['S']
-        print(f"lock_user: conditional check success. No other instance of lambda is active for user {email}. "
+        print(f"lock_user_aws: conditional check success. No other instance of lambda is active for user {email}. "
                 f"gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
         return gdrive_next_page_token, dropbox_next_page_token, True
     except ClientError as e:
         if e.response['Error']['Code'] == "ConditionalCheckFailedException":
-            print(f"lock_user: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
+            print(f"lock_user_aws: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
             return gdrive_next_page_token, dropbox_next_page_token, False
         else:
             raise
 
 def update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token):
     print(f"update_next_page_tokens: Entered. email={email}")
+    if 'USERS_TABLE' not in os.environ:
+        print(f"update_next_page_tokens: USERS_TABLE environment variable not present. Assume local execution")
+        return True
     try:
         if gdrive_next_page_token and dropbox_next_page_token:
             ue="SET gdrive_next_page_token = :pt, dropbox_next_page_token = :db"
@@ -268,6 +281,45 @@ FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
 BM25S_INDEX = "/tmp/bm25s_index"
 BM25S_INDEX_TAR = "/tmp/bm25s_index.tar"
 
+def make_temp_copy(index_dir, copy_faiss_index):
+    src = os.path.join(index_dir, os.path.basename(FILES_INDEX_JSONL_GZ))
+    dst = FILES_INDEX_JSONL_GZ
+    try:
+        shutil.copy2(src, dst)
+    except Exception as ex:
+        print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
+        return False
+    src = os.path.join(index_dir, os.path.basename(INDEX_METADATA_JSON))
+    dst = INDEX_METADATA_JSON
+    try:
+        shutil.copy2(src, dst)
+    except Exception as ex:
+        print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
+        return False
+    if copy_faiss_index:
+        src = os.path.join(index_dir, os.path.basename(FAISS_INDEX_FLAT))
+        dst = FAISS_INDEX_FLAT
+        try:
+            shutil.copy2(src, dst)
+        except Exception as ex:
+            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
+            return False
+        src = os.path.join(index_dir, os.path.basename(FAISS_INDEX_IVFADC))
+        dst = FAISS_INDEX_IVFADC
+        try:
+            shutil.copy2(src, dst)
+        except Exception as ex:
+            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
+            return False
+        src = os.path.join(index_dir, os.path.basename(BM25S_INDEX))
+        dst = BM25S_INDEX
+        try:
+            shutil.copy2(src, dst)
+        except Exception as ex:
+            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
+            return False
+    return True
+
 def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool:
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)
@@ -318,26 +370,29 @@ def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool
     
     return True
 
-def _write_progress_file(s3client, bucket, prefix, attr_prefix, num_unmodified, unmodified_size, num_needs_embedding, needs_embedding_size):
+def _write_progress_file(index_dir, s3client, bucket, prefix, attr_prefix, num_unmodified, unmodified_size, num_needs_embedding, needs_embedding_size):
     try:
         with open('/tmp/indexing_progress.json', 'w+') as fl:
             fl.write(json.dumps({f"{attr_prefix}_num_unmodified": num_unmodified,
                                  f"{attr_prefix}_unmodified_size": unmodified_size,
                                  f"{attr_prefix}_num_needs_embedding": num_needs_embedding,
                                  f"{attr_prefix}_needs_embedding_size": needs_embedding_size}))
-        s3client.upload_file('/tmp/indexing_progress.json', bucket, f"{prefix}/indexing_progress.json")
+        if index_dir:
+            shutil.copy2('/tmp/indexing_progress.json', os.path.join(index_dir, 'indexing_progress.json'))
+        else:
+            s3client.upload_file('/tmp/indexing_progress.json', bucket, f"{prefix}/indexing_progress.json")
     except Exception as ex:
         print(f"Caught {ex} while writing progress file")
         return False
 
-def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
+def init_vdb(email, index_dir, s3client, bucket, prefix, doc_storage_type:DocStorageType,
             chat_config=None, tracebuf=None, build_faiss_indexes=True, sub_prefix=None) -> FaissRM :
     """
     initializes a faiss vector db with the embeddings specified in bucket/prefix/files_index.jsonl.
     Downloads the index from S3.  Returns a FaissRM instance which encapsulates vectorDB, metadata, documents.  Or None, if index not found in S3
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
     """
-    print(f"init_vdb: Entered. email={email}, index=s3://{bucket}/{prefix}; sub_prefix={sub_prefix}")
+    print(f"init_vdb: Entered. email={email}, index_dir={index_dir}, bucket={bucket}, prefix={prefix}, sub_prefix={sub_prefix}")
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
     tracebuf.append(f"{prtime()} init_vdb: Entered. s3://{bucket}/{user_prefix}")
     fls = {}
@@ -346,7 +401,11 @@ def init_vdb(email, s3client, bucket, prefix, doc_storage_type:DocStorageType,
     flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
     ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
     bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX_TAR
-    if download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes):
+    if index_dir:
+        sts = make_temp_copy(index_dir, not build_faiss_indexes)
+    else:
+        sts = download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes)
+    if sts:
         with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
             for line in rfp:
                 finfo = json.loads(line)
@@ -441,9 +500,13 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
             
     return unmodified, needs_embedding, deleted
 
-def get_s3_index(s3client, bucket, prefix) -> Dict[str, dict]:
+def get_s3_index(index_dir, s3client, bucket, prefix) -> Dict[str, dict]:
     rv = {}
-    if download_files_index(s3client, bucket, prefix, False):
+    if index_dir:
+        sts = make_temp_copy(index_dir, False)
+    else:
+        sts = download_files_index(s3client, bucket, prefix, False)
+    if sts:
         with gzip.open(FILES_INDEX_JSONL_GZ, "rb") as rfp:
             for line in rfp:
                 ff = json.loads(line)
@@ -833,6 +896,38 @@ class StorageReader:
         pass
     def descriptor(self):
         pass
+    def download_to_local(self, fileid, filename, mimetype, localfn):
+        pass
+
+class LocalFileReader(StorageReader):
+    def __init__(self, docs_dir, file_details, dir_details):
+        self._docs_dir = docs_dir
+        self._file_details = file_details
+        self._dir_details = dir_details
+
+    def read(self, fileid, filename, mimetype):
+        print(f"LocalFileReader.read: Entered. fileid={fileid}, filename={filename}, mimetype={mimetype}")
+        finfo = self._file_details[fileid]
+        path = ""
+        while True:
+            if not 'parents' in finfo:
+                break
+            fileid = finfo['parents'][0]
+            dirinfo = self._dir_details[fileid]
+            path = os.path.join(dirinfo['filename'], path)
+            finfo = dirinfo
+        full_fn = os.path.join(self._docs_dir, path, filename)
+        print(f"LocalFileReader._read: full_fn={full_fn}")
+        with open(full_fn, 'rb') as rfp:
+            return io.BytesIO(rfp.read())
+
+    def download_to_local(self, fileid, filename, mimetype, localfn):
+        bio = self.read(fileid, filename, mimetype)
+        with open(localfn, 'wb') as wfp:
+            wfp.write(bio.getvalue())
+
+    def descriptor(self):
+        return 'local'
 
 class GoogleDriveReader(StorageReader):
     def __init__(self, service, access_token):
@@ -898,7 +993,7 @@ class DropboxReader(StorageReader):
     def descriptor(self):
         return 'dropbox'
 
-def update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, force):
+def _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, force):
     now = int(time.time())
     if not force:
         if prev_update and (now - prev_update) < 60:
@@ -924,13 +1019,13 @@ def update_progress_file(storage_reader, unmodified, needs_embedding, done_embed
         for de_key, de_value in done_embedding.items():
             if 'size' in de_value:
                 done_embedding_size = done_embedding_size + int(de_value['size'])
-    print(f"update_progress_file: {storage_reader.descriptor()} unmodified_size={unmodified_size}, needs_embedding_size={needs_embedding_size}, done_embedding_size={done_embedding_size}")
-    _write_progress_file(s3client, bucket, prefix, storage_reader.descriptor(),
+    print(f"_update_progress_file: {storage_reader.descriptor()} unmodified_size={unmodified_size}, needs_embedding_size={needs_embedding_size}, done_embedding_size={done_embedding_size}")
+    _write_progress_file(index_dir, s3client, bucket, prefix, storage_reader.descriptor(),
                 len_unmodified + len_done_embedding, unmodified_size + done_embedding_size,
                 len_needs_embedding - len_done_embedding, needs_embedding_size - done_embedding_size)
     return True, now
 
-def process_files(email, storage_reader:StorageReader, unmodified, needs_embedding, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
+def process_files(email, storage_reader:StorageReader, unmodified, needs_embedding, index_dir, s3client, bucket, prefix) -> Tuple[Dict[str, Dict[str, Any]], bool] : 
     """ processs the files in google drive. returns a dict:  { fileid: {filename, fileid, mtime} }
     'service': google drive service ; 'needs_embedding':  the list of files as a dict that needs to be embedded; s3client, bucket, prefix: location of the vector db/index file 
     Note: will stop processing files after PERIOIDIC_PROCESS_FILES_TIME_LIMIT minutes (env variable)
@@ -939,7 +1034,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
     time_limit_exceeded = False
     prev_update = 0
     done_embedding = {}
-    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
     if status:
         prev_update = updtime
     to_del_from_needs_embedding = []
@@ -955,7 +1050,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                         or mimetype == 'application/vnd.google-apps.spreadsheet'):
                     print(f"skipping google drive with file size == 0, and not of type google sheet, slides or docs: {file_item}")
                     to_del_from_needs_embedding.append(fileid)
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
                     continue
@@ -963,21 +1058,21 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_pptx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.docx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_docx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.xlsx'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_xlsx(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.doc'):
@@ -996,7 +1091,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     with open(f"{tfn}x", 'rb') as fp:
                         process_docx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
-                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                        status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                         if status:
                             prev_update = updtime
                     os.remove(f'{tfn}x')
@@ -1018,7 +1113,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     with open(f"{tfn}x", 'rb') as fp:
                         process_pptx(email, file_item, filename, fileid, fp)
                         done_embedding[fileid] = file_item
-                        status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                        status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                         if status:
                             prev_update = updtime
                     os.remove(f'{tfn}x')
@@ -1040,7 +1135,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if 'partial' in pdf_dict:
                     file_item['partial'] = 'true'
                 done_embedding[fileid] = file_item                    
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif mimetype == 'application/vnd.google-apps.presentation':
@@ -1048,13 +1143,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if not bio:
                     print(f"process_files: Unable to export {filename} to pptx format")
                     to_del_from_needs_embedding.append(fileid)
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
                 else:
                     process_pptx(email, file_item, filename, fileid, bio)
                     done_embedding[fileid] = file_item
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
             elif mimetype == 'application/vnd.google-apps.document':
@@ -1062,13 +1157,13 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if not bio:
                     print(f"process_files: Unable to export {filename} to docx format")
                     to_del_from_needs_embedding.append(fileid)
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
                 else:
                     process_docx(email, file_item, filename, fileid, bio)
                     done_embedding[fileid] = file_item
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
             elif mimetype == 'application/vnd.google-apps.spreadsheet':
@@ -1076,47 +1171,47 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                 if not bio:
                     print(f"process_files: Unable to export {filename} to xlsx format")
                     to_del_from_needs_embedding.append(fileid)
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
                 else:
                     process_xlsx(email, file_item, filename, fileid, bio)
                     done_embedding[fileid] = file_item
-                    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                     if status:
                         prev_update = updtime
             elif (filename.lower().endswith('.txt') or mimetype == 'text/plain'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_txt(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif (filename.lower().endswith('.html') or mimetype == 'text/html'):
                 bio:io.BytesIO = storage_reader.read(fileid, filename, mimetype)
                 process_html(email, file_item, filename, fileid, bio)
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             elif filename.lower().endswith('.gh-issues.zip'):
                 storage_reader.download_to_local(fileid, filename, mimetype, '/tmp/downloaded_file.zip')
                 process_gh_issues_zip(email, file_item, filename, fileid, mimetype, '/tmp/downloaded_file.zip')
                 done_embedding[fileid] = file_item
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
             else:
                 print(f"process_files: skipping unknown file type {filename} mimetype={mimetype}")
                 to_del_from_needs_embedding.append(fileid)
-                status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+                status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
                 if status:
                     prev_update = updtime
         except Exception as e:
             print(f"process_files(): skipping filename={filename} with fileid={fileid} due to exception={e}")
             traceback.print_exc()
             to_del_from_needs_embedding.append(fileid)
-            status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, s3client, bucket, prefix, False)
+            status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, prev_update, index_dir, s3client, bucket, prefix, False)
             if status:
                 prev_update = updtime
         if lambda_timelimit_exceeded():
@@ -1126,7 +1221,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
     # final update
     for itm in to_del_from_needs_embedding:
         del needs_embedding[itm]
-    status, updtime = update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, 0, s3client, bucket, prefix, True)
+    status, updtime = _update_progress_file(storage_reader, unmodified, needs_embedding, done_embedding, 0, index_dir, s3client, bucket, prefix, True)
     if status:
         prev_update = updtime
     return done_embedding, time_limit_exceeded
@@ -1158,8 +1253,8 @@ def _read_index_metadata_json_local() -> IndexMetadata:
         print(f"read {INDEX_METADATA_JSON} = {index_metadata}")
     return index_metadata
     
-def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client):
-    print(f"update_files_index_jsonl: Entered dest=s3://{bucket}/{user_prefix} . new embeddings={len(done_embedding.items())}, unmodified={len(unmodified.items())}")
+def update_files_index_jsonl(done_embedding, unmodified, index_dir, bucket, user_prefix, s3client):
+    print(f"update_files_index_jsonl: Entered index_dir={index_dir}, bucket={bucket}, use_prefilx={user_prefix} . num new embeddings={len(done_embedding.items())}, num unmodified={len(unmodified.items())}")
     # consolidate unmodified and done_embedding
     for fileid, file_item in done_embedding.items():
         unmodified[fileid] = file_item
@@ -1173,8 +1268,12 @@ def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3
             file_item['mtime'] = to_rfc3339(file_item['mtime'])
             wfp.write((json.dumps(file_item) + "\n").encode())
     
-    print(f"Uploading  {files_index_jsonl_gz}  Size of file={os.path.getsize(files_index_jsonl_gz)}")
-    s3client.upload_file(files_index_jsonl_gz, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl_gz)}")
+    if index_dir:
+        print(f"Copying  {files_index_jsonl_gz}  Size of file={os.path.getsize(files_index_jsonl_gz)} to index_dir {index_dir}")
+        shutil.copy2(files_index_jsonl_gz, os.path.join(index_dir, os.path.basename(files_index_jsonl_gz)))
+    else:
+        print(f"Uploading  {files_index_jsonl_gz}  Size of file={os.path.getsize(files_index_jsonl_gz)}")
+        s3client.upload_file(files_index_jsonl_gz, bucket, f"{user_prefix}/{os.path.basename(files_index_jsonl_gz)}")
     os.remove(FILES_INDEX_JSONL_GZ)
     # remove stale files_index.jsonl
     if os.path.exists(FILES_INDEX_JSONL): os.remove(FILES_INDEX_JSONL)
@@ -1185,10 +1284,14 @@ def update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3
     else:
         # update index_metadata_json
         _update_index_metadata_json_local(IndexMetadata(jsonl_last_modified=time.time()))
-    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
-    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+    if index_dir:
+        print(f"Copying  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)} to index_dir {index_dir}")
+        shutil.copy2(INDEX_METADATA_JSON, os.path.join(index_dir, os.path.basename(INDEX_METADATA_JSON)))
+    else:
+        print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+        s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
 
-def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
+def _delete_faiss_index(email:str, index_dir, s3client:S3Client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str ):
     """  user_prefix == prefix + email + sub_prefix """
     for faiss_index_fname in (FAISS_INDEX_FLAT, FAISS_INDEX_IVFADC, BM25S_INDEX_TAR):
         faiss_s3_key = f"{user_prefix}/{os.path.basename(faiss_index_fname)}"
@@ -1196,9 +1299,15 @@ def _delete_faiss_index(email:str, s3client:S3Client, bucket:str, prefix:str, su
             print(f"Deleting faiss index {faiss_index_fname} in local filesystem")
             os.remove(faiss_index_fname)
         try:
-            s3client.head_object(Bucket=bucket, Key=faiss_s3_key)
-            print(f"Deleting faiss index {faiss_index_fname} in S3 key={faiss_s3_key}")
-            s3client.delete_object(Bucket=bucket, Key=faiss_s3_key)
+            if index_dir:
+                faiss_fbase = os.path.join(index_dir, os.path.basename(faiss_index_fname))
+                print(f"Deleting faiss index {faiss_fbase}")
+                if os.path.exists(faiss_fbase):
+                    os.remove(faiss_fbase)
+            else:
+                s3client.head_object(Bucket=bucket, Key=faiss_s3_key)
+                print(f"Deleting faiss index {faiss_index_fname} in S3 key={faiss_s3_key}")
+                s3client.delete_object(Bucket=bucket, Key=faiss_s3_key)
         except Exception as e:
             pass
 
@@ -1206,11 +1315,11 @@ def create_tar_file(directory_path, tar_file_path):
     with tarfile.open(tar_file_path, "w") as tar:
         tar.add(directory_path, arcname=os.path.basename(directory_path))
 
-def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
+def build_and_save_faiss(email, index_dir, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type:DocStorageType):
     """ Note that user_prefix == prefix + email + sub_prefix """
     # now build the index.
     try:
-        faiss_rm:FaissRM = init_vdb(email, s3client, bucket, prefix,
+        faiss_rm:FaissRM = init_vdb(email, index_dir, s3client, bucket, prefix,
                                 doc_storage_type=doc_storage_type,
                                 sub_prefix=sub_prefix, tracebuf=[])
     except Exception as ex:
@@ -1220,20 +1329,32 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     # save the created index
     faiss_flat_fname = FAISS_INDEX_FLAT
     faiss.write_index(faiss_rm.get_index_flat(), faiss_flat_fname)
-    print(f"Uploading faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)}")
-    s3client.upload_file(faiss_flat_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_flat_fname)}")
+    if index_dir:
+        print(f"Copying faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)} to index_dir={index_dir}")
+        shutil.copy2(faiss_flat_fname, os.path.join(index_dir, os.path.basename(faiss_flat_fname)))
+    else:
+        print(f"Uploading faiss flat index {faiss_flat_fname}  Size of index={os.path.getsize(faiss_flat_fname)}")
+        s3client.upload_file(faiss_flat_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_flat_fname)}")
     os.remove(faiss_flat_fname)
     
     # update index_metadata_json    
     _update_index_metadata_json_local(IndexMetadata(index_flat_last_modified=time.time()))
-    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
-    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+    if index_dir:
+        print(f"Copying faiss flat index {INDEX_METADATA_JSON}  Size of index={os.path.getsize(INDEX_METADATA_JSON)} to index_dir={index_dir}")
+        shutil.copy2(INDEX_METADATA_JSON, os.path.join(index_dir, os.path.basename(INDEX_METADATA_JSON)))
+    else:
+        print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+        s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
     
     # save the created index
     faiss_ivfadc_fname = FAISS_INDEX_IVFADC
     faiss.write_index(faiss_rm.get_index_ivfadc(), faiss_ivfadc_fname)
-    print(f"Uploading faiss ivfadc index {faiss_ivfadc_fname}.  Size of index={os.path.getsize(faiss_ivfadc_fname)}")
-    s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
+    if index_dir:
+        print(f"Copying faiss flat index {faiss_ivfadc_fname}  Size of index={os.path.getsize(faiss_ivfadc_fname)} to index_dir={index_dir}")
+        shutil.copy2(faiss_ivfadc_fname, os.path.join(index_dir, os.path.basename(faiss_ivfadc_fname)))
+    else:
+        print(f"Uploading faiss ivfadc index {faiss_ivfadc_fname}.  Size of index={os.path.getsize(faiss_ivfadc_fname)}")
+        s3client.upload_file(faiss_ivfadc_fname, bucket, f"{user_prefix}/{os.path.basename(faiss_ivfadc_fname)}")
     os.remove(faiss_ivfadc_fname)
 
     # save the bm25s retriever
@@ -1241,16 +1362,24 @@ def build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefi
     bm25s_retriever.save(BM25S_INDEX)
     create_tar_file(BM25S_INDEX, BM25S_INDEX_TAR)
     _update_index_metadata_json_local(IndexMetadata(bm25s_index_last_modified=time.time()))
-    print(f"Uploading bm25s index {BM25S_INDEX_TAR}.  Size of index={os.path.getsize(BM25S_INDEX_TAR)}")
-    s3client.upload_file(BM25S_INDEX_TAR, bucket, f"{user_prefix}/{os.path.basename(BM25S_INDEX_TAR)}")
+    if index_dir:
+        print(f"Copying faiss flat index {BM25S_INDEX_TAR}  Size of index={os.path.getsize(BM25S_INDEX_TAR)} to index_dir={index_dir}")
+        shutil.copy2(BM25S_INDEX_TAR, os.path.join(index_dir, os.path.basename(BM25S_INDEX_TAR)))
+    else:
+        print(f"Uploading bm25s index {BM25S_INDEX_TAR}.  Size of index={os.path.getsize(BM25S_INDEX_TAR)}")
+        s3client.upload_file(BM25S_INDEX_TAR, bucket, f"{user_prefix}/{os.path.basename(BM25S_INDEX_TAR)}")
     os.remove(BM25S_INDEX_TAR)
 
     # update index_metadata_json
     _update_index_metadata_json_local(IndexMetadata(index_ivfadc_last_modified=time.time()))
-    print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
-    s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
+    if index_dir:
+        print(f"Copying faiss flat index {INDEX_METADATA_JSON}  Size of index={os.path.getsize(INDEX_METADATA_JSON)} to index_dir={index_dir}")
+        shutil.copy2(INDEX_METADATA_JSON, os.path.join(index_dir, os.path.basename(INDEX_METADATA_JSON)))
+    else:
+        print(f"Uploading  {INDEX_METADATA_JSON}  Size of file={os.path.getsize(INDEX_METADATA_JSON)}")
+        s3client.upload_file(INDEX_METADATA_JSON, bucket, f"{user_prefix}/{os.path.basename(INDEX_METADATA_JSON)}")
 
-def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str, doc_storage_type:DocStorageType ):
+def _build_and_save_faiss_if_needed(email:str, index_dir, s3client, bucket:str, prefix:str, sub_prefix:str, user_prefix:str, doc_storage_type:DocStorageType ):
     """  user_prefix == prefix + email + sub_prefix 
     """
     
@@ -1262,10 +1391,10 @@ def _build_and_save_faiss_if_needed(email:str, s3client, bucket:str, prefix:str,
         extend_ddb_time(email, time_left)
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
-            build_and_save_faiss(email, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type)
+            build_and_save_faiss(email, index_dir, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type)
         else:
             print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} < 300 seconds.  Deleting stale faiss indexes if needed..")
-            _delete_faiss_index(email, s3client, bucket, prefix, sub_prefix, user_prefix)
+            _delete_faiss_index(email, index_dir, s3client, bucket, prefix, sub_prefix, user_prefix)
             
     else:
         print(f"Not updating faiss index for s3://{bucket}/{user_prefix} as it isn't stale: {index_metadata}")
@@ -1343,7 +1472,7 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
     sub_prefix = "dropbox"
     user_prefix = f"{prefix}/{email}/{sub_prefix}"
     try:
-        s3_index = get_s3_index(s3client, bucket, user_prefix)
+        s3_index = get_s3_index(None, s3client, bucket, user_prefix)
         access_token = refresh_user_dropbox(item)
     except HttpError as error:
         print(f"HttpError occurred: {error}")
@@ -1373,9 +1502,9 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
     for td in to_del:
         del unmodified[td]
 
-    done_embedding, time_limit_exceeded = process_files(email, DropboxReader(access_token), unmodified, needs_embedding, s3client, bucket, user_prefix)
+    done_embedding, time_limit_exceeded = process_files(email, DropboxReader(access_token), unmodified, needs_embedding, None, s3client, bucket, user_prefix)
     if len(done_embedding.items()) > 0 or num_deleted_files > 0:
-        update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
+        update_files_index_jsonl(done_embedding, unmodified, None, bucket, user_prefix, s3client)
     else:
         print(f"update_index_for_user_dropbox: No new embeddings or deleted files. Not updating files_index.jsonl")
     if time_limit_exceeded:
@@ -1386,7 +1515,7 @@ def update_index_for_user_dropbox(email, s3client, bucket:str, prefix:str, dropb
         dropbox_next_page_token = None # force full scan next time
         
     # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)    
-    _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, sub_prefix, user_prefix, DocStorageType.DropBox )
+    _build_and_save_faiss_if_needed(email, None, s3client, bucket, prefix, sub_prefix, user_prefix, DocStorageType.DropBox )
     return dropbox_next_page_token
     
 FOLDER = 'application/vnd.google-apps.folder'
@@ -1572,6 +1701,87 @@ def _get_gdrive_listing_full(service, item):
             break
     return gdrive_listing, folder_details, gdrive_next_page_token
 
+def _get_details_recursively(path, parent_fileid, file_details, dir_details):
+    print(f"_get_detail_recursively: path={path}, parent_fileid={parent_fileid}")
+    try:
+        entries = os.listdir(path)
+    except PermissionError as e:
+        print(f"Permission denied: {path} - {e}")
+        return
+    except FileNotFoundError as e:
+        print(f"Path not found: {path} - {e}")
+        return
+    for entry in entries:
+        entry_path = os.path.join(path, entry)
+        try:
+            entry_stat = os.stat(entry_path)
+            #mtime = DatetimeWithNanoseconds(datetime.datetime.fromtimestamp(entry_stat.st_mtime))
+            mtime = from_microseconds(entry_stat.st_mtime*1000000.0)
+            fileid = str(entry_stat.st_ino)
+            if os.path.isdir(entry_path):
+                dir_details[fileid] = {"filename": entry, "fileid": fileid,
+                                        "mtime": mtime, "mimetype": 'application/vnd.google-apps.folder',
+                                        "parents": [parent_fileid]}
+                print(f"_get_detail_recursively: adding dir {entry_path}, fileid={fileid}")
+                _get_details_recursively(entry_path, fileid, file_details, dir_details)
+            else:
+                file_details[fileid] = {"filename": entry, "fileid": fileid,
+                                        "mtime": mtime, "mimetype": mimetypes.guess_type(entry)[0],
+                                        "parents": [parent_fileid], "size": entry_stat.st_size}
+                print(f"_get_detail_recursively: adding file {entry_path}, fileid={fileid}, size={entry_stat.st_size}")
+        except PermissionError as e:
+            print(f"Permission denied: {entry_path} - {e}")
+        except FileNotFoundError as e:
+            print(f"File not found: {entry_path} - {e}")
+        except Exception as e:
+            print(f"Error reading entry: {entry_path} - {e}")
+
+def update_index_for_user_local(email, index_dir, docs_dir):
+    print(f'update_index_for_user_local: Entered. email={email}, index_dir={index_dir}, docs_dir={docs_dir}')
+    docs_dir_stat = os.stat(docs_dir)
+    docs_dir_fileid = str(docs_dir_stat.st_ino)
+    file_details = {}
+    dir_details = {docs_dir_fileid: {"filename": docs_dir, "fileid": docs_dir_fileid}} # we use 1 as the dummy fileid for the docs_dir
+    _get_details_recursively(docs_dir, docs_dir_fileid, file_details, dir_details)
+    print(f"update_index_for_user_local: dir_details={dir_details}, file_details={file_details}")
+    s3_index:Dict[str, dict] = get_s3_index(index_dir, None, None, None)
+    print(f"update_index_for_user_local: s3_index={s3_index}")
+    unmodified, needs_embedding, deleted_files = calc_file_lists(None, s3_index, file_details, dir_details)
+    # remove deleted files from the index
+    for fileid in deleted_files:
+        if fileid in unmodified:
+            print(f"update_index_for_user_local: removing deleted fileid {fileid} from s3_index")
+            unmodified.pop(fileid)
+        else:
+            print(f"update_index_for_user_local: deleted fileid {fileid} not in unmodified index")
+
+    # Move items in 'partial' state from umodified to needs_embedding
+    to_del=[]
+    for fid, entry in unmodified.items():
+        if 'partial' in entry:
+            pth = entry['path'] if 'path' in entry else ''
+            print(f"update.gdrive: fileid={fid}, path={pth}, filename={entry['filename']} is in partial state. Moving from unmodified to needs_embedding")
+            needs_embedding[fid] = entry
+            to_del.append(fid)
+    for td in to_del:
+        del unmodified[td]
+
+    gdrive_next_page_token = "notused_gdrive_next_token"
+    done_embedding, time_limit_exceeded = process_files(email, LocalFileReader(docs_dir, file_details, dir_details),
+                                                        unmodified, needs_embedding, index_dir, None, None, None)
+    if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
+        update_files_index_jsonl(done_embedding, unmodified, index_dir, None, "", None)
+    else:
+        print(f"update_index_for_user_local: No new embeddings or deleted files. Not updating files_index.jsonl")
+    if time_limit_exceeded:
+        print("update_index_for_user_local: time limit exceeded. Forcing full listing next time..")
+        gdrive_next_page_token = None # force full scan next time
+    if partial_present(done_embedding):
+        print("update_index_for_user_local: partial present. Forcing full listing next time..")
+        gdrive_next_page_token = None # force full scan next time
+    _build_and_save_faiss_if_needed(email, index_dir, None, None, None, None, "", DocStorageType.Local)
+    return gdrive_next_page_token
+
 def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive_next_page_token:str=None):
     print(f'update_index_for_user_gdrive: Entered. {email}, gdrive_next_page_token={gdrive_next_page_token}')
     item = get_user_table_entry(email)
@@ -1579,7 +1789,7 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
     user_prefix = f"{prefix}/{email}"
     try:
         # user_prefix = 'index1/raj@yoja.ai' 
-        s3_index:Dict[str, dict] = get_s3_index(s3client, bucket, user_prefix)
+        s3_index:Dict[str, dict] = get_s3_index(None, s3client, bucket, user_prefix)
         try:
             creds:google.oauth2.credentials.Credentials = refresh_user_google(item)
         except Exception as ex:
@@ -1624,9 +1834,9 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
             del unmodified[td]
 
         done_embedding, time_limit_exceeded = process_files(email, GoogleDriveReader(service, item['access_token']['S']),
-                                                            unmodified, needs_embedding, s3client, bucket, user_prefix)
+                                                            unmodified, needs_embedding, None, s3client, bucket, user_prefix)
         if len(done_embedding.items()) > 0 or len(deleted_files) > 0:
-            update_files_index_jsonl(done_embedding, unmodified, bucket, user_prefix, s3client)
+            update_files_index_jsonl(done_embedding, unmodified, None, bucket, user_prefix, s3client)
         else:
             print(f"update_index_for_user_gdrive: No new embeddings or deleted files. Not updating files_index.jsonl")
         if time_limit_exceeded:
@@ -1637,7 +1847,7 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
             gdrive_next_page_token = None # force full scan next time
 
         # at this point, we must have the index_metadata.json file: it must have been downloaded above (and is unmodified as no files need to be embedded) or it was modified above (as files needed to be embedded)
-        _build_and_save_faiss_if_needed(email, s3client, bucket, prefix, None, user_prefix, DocStorageType.GoogleDrive)
+        _build_and_save_faiss_if_needed(email, None, s3client, bucket, prefix, None, user_prefix, DocStorageType.GoogleDrive)
             
     except HttpError as error:
         print(f"HttpError occurred: {error}")
@@ -1645,13 +1855,17 @@ def update_index_for_user_gdrive(email, s3client, bucket:str, prefix:str, gdrive
         print(f"Exception occurred: {ex}")
     return gdrive_next_page_token
 
-def update_index_for_user(email, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
+def update_index_for_user(email, index_dir, docs_dir, s3client, bucket:str, prefix:str, start_time:datetime.datetime,
                             gdrive_next_page_token:str=None, dropbox_next_page_token:str=None):
-    if not lambda_timelimit_exceeded():
-        gdrive_next_page_token = update_index_for_user_gdrive(email, s3client, bucket, prefix, gdrive_next_page_token)
-    if not lambda_timelimit_exceeded():
-        dropbox_next_page_token = update_index_for_user_dropbox(email, s3client, bucket, prefix, dropbox_next_page_token)
-    return gdrive_next_page_token, dropbox_next_page_token
+    if index_dir:
+        update_index_for_user_local(email, index_dir, docs_dir)
+        return 'notused_gdrive_next_token', 'notused_dropbox_next_token'
+    else:
+        if not lambda_timelimit_exceeded():
+            gdrive_next_page_token = update_index_for_user_gdrive(email, s3client, bucket, prefix, gdrive_next_page_token)
+        if not lambda_timelimit_exceeded():
+            dropbox_next_page_token = update_index_for_user_dropbox(email, s3client, bucket, prefix, dropbox_next_page_token)
+        return gdrive_next_page_token, dropbox_next_page_token
 
 if __name__=="__main__":
     with open(sys.argv[1], 'rb') as f:
