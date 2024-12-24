@@ -105,15 +105,6 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
         },
     }
 
-def replace_tools_in_assistant(new_tools):
-    global assistant
-    assistant = client.beta.assistants.create(
-        instructions="You are a helpful assistant. Use the provided functions to access confidential and private information and answer questions or provide details of the mentioned subject.",
-        model=ASSISTANTS_MODEL,
-        tools=new_tools
-    )
-
-
 def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     print_trace, use_ivfadc, file_details, retriever_stratgey = \
                 (False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
