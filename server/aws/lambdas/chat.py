@@ -29,7 +29,8 @@ from fetch_tool_prompts import fetch_tool_prompts
 from text_utils import format_paragraph
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
-from openai_client import retrieve_using_openai_assistant, get_openai_max_token_limit
+from openai_client import retrieve_using_openai_assistant
+from yoja_retrieve import get_max_token_limit
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
     for msg in messages:
@@ -65,8 +66,8 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
-        pct=(float(run_usage.prompt_tokens)/float(get_openai_max_token_limit()))*100.0
-        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_openai_max_token_limit()}), completion={run_usage.completion_tokens}"
+        pct=(float(run_usage.prompt_tokens)/float(get_max_token_limit()))*100.0
+        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_max_token_limit()}), completion={run_usage.completion_tokens}"
     
     context_srcs_links:List[ContextSource]
     context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
@@ -243,8 +244,8 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
-        pct=int((float(run_usage.prompt_tokens)/float(get_openai_max_token_limit()))*100.0)
-        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_openai_max_token_limit()}), completion={run_usage.completion_tokens}"
+        pct=int((float(run_usage.prompt_tokens)/float(get_max_token_limit()))*100.0)
+        srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_max_token_limit()}), completion={run_usage.completion_tokens}"
 
     context_srcs_links:List[ContextSource]
     context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
