@@ -311,8 +311,8 @@ def make_temp_copy(index_dir, copy_faiss_index):
         except Exception as ex:
             print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
             return False
-        src = os.path.join(index_dir, os.path.basename(BM25S_INDEX))
-        dst = BM25S_INDEX
+        src = os.path.join(index_dir, os.path.basename(BM25S_INDEX_TAR))
+        dst = BM25S_INDEX_TAR
         try:
             shutil.copy2(src, dst)
         except Exception as ex:

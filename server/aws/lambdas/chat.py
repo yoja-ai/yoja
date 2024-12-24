@@ -312,12 +312,24 @@ def chat_completions(event, context):
         print(f"Caught {ex} while getting service_conf")
         return respond({"error_msg": f"Caught {ex} while getting service_conf"}, status=403)
 
-    if 'bucket' not in service_conf or 'prefix' not in service_conf:
-        print(f"Error. bucket and prefix not specified in service conf")
-        return respond({"error_msg": "Error. bucket and prefix not specified in service_conf"}, status=403)
-    bucket = service_conf['bucket']['S']
-    prefix = service_conf['prefix']['S'].strip().strip('/')
-    print(f"Index Location: s3://{bucket}/{prefix}")
+    if not 'body' in event:
+        return respond({"error_msg": "Error. body not present"}, status=400)
+    body = json.loads(event['body'])
+    print(f"body={body}")
+
+    index_dir = None
+    bucket = None
+    prefix = None
+    if 'index_dir' in body:
+        index_dir = body['index_dir']
+    else:
+        if 'bucket' not in service_conf or 'prefix' not in service_conf:
+            print(f"Error. index_dir not specified in body, and bucket/prefix not specified in service conf")
+            return respond({"error_msg": "Error. index_dir not specified in body, and bucket/prefix not specified in service_conf"}, status=403)
+        else:
+            bucket = service_conf['bucket']['S']
+            prefix = service_conf['prefix']['S'].strip().strip('/')
+            print(f"Index Location: s3://{bucket}/{prefix}")
 
     start_time:datetime.datetime = datetime.datetime.now()
     set_start_time(start_time)
@@ -333,13 +345,7 @@ def chat_completions(event, context):
             print(f"chat_completions: check_cookie did not return email. Sending 403")
             return respond({"status": "Unauthorized: please login to google auth"}, 403, None)
 
-    if not 'body' in event:
-        return respond({"error_msg": "Error. body not present"}, status=400)
-
     s3client = boto3.client('s3')
-
-    body = json.loads(event['body'])
-    print(f"body={body}")
 
     last_msg:str = body['messages'][-1]['content']
     tracebuf = [f"{prtime()} Begin Trace"];
@@ -418,11 +424,15 @@ def chat_completions(event, context):
 # # OAUTH_CLIENT_ID='123456789012-abcdefghijklmonpqrstuvwxyzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-abcdefgh_abdefghijklmnop-qab' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=2400 USERS_TABLE=yoja-users SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy  AWS_SHARED_CREDENTIALS_FILE=./credentials OPENAI_API_KEY=sk-ABCDEFGHIJKLMONPQRSTUVWXYZabcedfghijklmnopqestuv python chat.py <email> <chat_msg>
 #
 if __name__=="__main__":
+    event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
     if len(sys.argv) < 3:
         print(f"Usage: chat.py user_email chat_msg")
         sys.exit(255)
-    os.environ['YOJA_USER'] = sys.argv[1]
-    event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
-    event['body'] = json.dumps({'messages': [{'content': sys.argv[2]}]})
+    if sys.argv[1].find('@') != -1:
+        os.environ['YOJA_USER'] = sys.argv[1]
+        event['body'] = json.dumps({'messages': [{'content': sys.argv[2]}]})
+    else:
+        os.environ['YOJA_USER'] = 'notused'
+        event['body'] = json.dumps({'index_dir': sys.argv[1], 'messages': [{'content': sys.argv[2]}]})
     res = chat_completions(event, None)
     sys.exit(0)
