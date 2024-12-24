@@ -423,6 +423,11 @@ def chat_completions(event, context):
 # # cp /host-tmp/credentials .
 # # OAUTH_CLIENT_ID='123456789012-abcdefghijklmonpqrstuvwxyzabcdef.apps.googleusercontent.com' OAUTH_CLIENT_SECRET='GOCSPX-abcdefgh_abdefghijklmnop-qab' OAUTH_REDIRECT_URI='https://chat.example.ai/rest/entrypoint/oauth2cb' AWS_PROFILE=example AWS_DEFAULT_REGION=us-east-1 PERIOIDIC_PROCESS_FILES_TIME_LIMIT=2400 USERS_TABLE=yoja-users SERVICECONF_TABLE=yoja-ServiceConf LAMBDA_VERSION=dummy  AWS_SHARED_CREDENTIALS_FILE=./credentials OPENAI_API_KEY=sk-ABCDEFGHIJKLMONPQRSTUVWXYZabcedfghijklmnopqestuv python chat.py <email> <chat_msg>
 #
+# if you want to run this to index a local file system directory, run as follows:
+# Step 1: Build the docker container using (cd lambdas; docker build -t yoja-img .)
+# Step 2: Start the docker container: docker run -v /home/jagane/tmp:/host-tmp --interactive --tty --entrypoint /bin/bash yoja-img
+# Step 3: In the docker container, run: OPENAI_API_KEY='ABCDEFGHIJLMNOPQRSTUVabcdefghijklmnopqestuvwxyz' python chat.py /host-tmp/index 'how do I decale my coffee maker?'
+#
 if __name__=="__main__":
     event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
     if len(sys.argv) < 3:

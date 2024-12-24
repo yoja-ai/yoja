@@ -215,6 +215,11 @@ def periodic(event:dict, context) -> dict:
 # Then run 'docker run --interactive --tty --entrypoint /bin/bash yoja-img'
 # When the docker container starts up, copy the aws credentials profile in the above command (example.ai) into a file called credentials in /var/task. Then add AWS_SHARED_CREDENTIALS_FILE=./credentials to the above command line.
 #
+# if you want to run this to index a local file system directory, run as follows:
+# Step 1: Build the docker container using (cd lambdas; docker build -t yoja-img .)
+# Step 2: Start the docker container: docker run -v /home/jagane/tmp:/host-tmp --interactive --tty --entrypoint /bin/bash yoja-img
+# Step 3: In the docker container, run: python periodic.py --user_email xyz@example.com --docs_dir /host-tmp/docs --index_dir /host-tmp/index
+#
 def exit_gracefully(signum, frame):
     print(f"Received {signum} signal")
     set_time_limit(0)
