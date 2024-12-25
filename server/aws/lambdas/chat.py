@@ -30,6 +30,7 @@ from text_utils import format_paragraph
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from openai_client import retrieve_using_openai_assistant
+from ollama_client import retrieve_using_ollama_assistant
 from yoja_retrieve import get_max_token_limit
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
@@ -61,7 +62,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
         return respond({"error_msg": emsg}, status=500)
 
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {};
-    srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms,documents_list, index_map_list, index_type,
+    srp, thread_id, run_usage = retrieve_using_ollama_assistant(faiss_rms,documents_list, index_map_list, index_type,
                         tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
@@ -239,7 +240,7 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id, run_usage = retrieve_using_openai_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    srp, thread_id, run_usage = retrieve_using_ollama_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                                     filekey_to_file_chunks_dict, None, chat_config, last_msg, searchsubdir, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)

@@ -120,6 +120,7 @@ RUN pip3 install gspread
 RUN pip3 install bm25s[full]
 RUN pip3 install PyStemmer
 RUN pip3 install jax[cpu]
+RUN pip3 install ollama
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
@@ -149,5 +150,6 @@ COPY openai_client.py ${LAMBDA_TASK_ROOT}
 COPY documentchunk.py ${LAMBDA_TASK_ROOT}
 COPY chatconfig.py ${LAMBDA_TASK_ROOT}
 COPY yoja_retrieve.py ${LAMBDA_TASK_ROOT}
+COPY ollama_client.py ${LAMBDA_TASK_ROOT}
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum
