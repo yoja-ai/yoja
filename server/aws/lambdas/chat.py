@@ -419,7 +419,8 @@ def chat_completions(event, context):
 # if you want to run this to index a local file system directory, run as follows:
 # Step 1: Build the docker container using (cd lambdas; docker build -t yoja-img .)
 # Step 2: Start the docker container: docker run -v /home/jagane/tmp:/host-tmp --interactive --tty --entrypoint /bin/bash yoja-img
-# Step 3: In the docker container, run: OPENAI_API_KEY='ABCDEFGHIJLMNOPQRSTUVabcdefghijklmnopqestuvwxyz' python chat.py /host-tmp/index 'how do I decale my coffee maker?'
+# Step 3: In the container, run: OPENAI_API_KEY='ABCDEFGHIJLMNOPQRSTUVabcdefghijklmnopqestuvwxyz' python chat.py /host-tmp/index 'how do I descale my coffee maker?'
+# Alt Step 3: In the container, run (192.168.1.100 is the IP where ollama is listening): OLLAMA_HOST='192.168.1.100' python chat.py /host-tmp/index 'how do I descale my coffee maker?'
 #
 if __name__=="__main__":
     event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
