@@ -24,8 +24,8 @@ RUN rpm -Uvh https://archives.fedoraproject.org/pub/archive/epel/7/x86_64/Packag
 RUN yum -y update
 RUN yum install -y tesseract
 RUN yum install -y tesseract-osd
-RUN yum install -y vim
 # End tesseract block
+RUN yum install -y vim
 
 RUN set -xo pipefail && \
     curl "https://downloadarchive.documentfoundation.org/libreoffice/old/7.6.7.2/rpm/x86_64/LibreOffice_7.6.7.2_Linux_x86-64_rpm.tar.gz" | tar -xz
@@ -121,6 +121,8 @@ RUN pip3 install bm25s[full]
 RUN pip3 install PyStemmer
 RUN pip3 install jax[cpu]
 RUN pip3 install ollama
+RUN pip3 install gunicorn
+RUN pip3 install flask
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
@@ -151,5 +153,6 @@ COPY documentchunk.py ${LAMBDA_TASK_ROOT}
 COPY chatconfig.py ${LAMBDA_TASK_ROOT}
 COPY yoja_retrieve.py ${LAMBDA_TASK_ROOT}
 COPY ollama_client.py ${LAMBDA_TASK_ROOT}
+COPY www ${LAMBDA_TASK_ROOT}/
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

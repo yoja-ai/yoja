@@ -346,10 +346,10 @@ def chat_completions(event, context):
 
     index_dir = None
     docs_dir = None
-    if 'index_dir' in body:
-        index_dir = body['index_dir']
-    if 'docs_dir' in body:
-        docs_dir = body['docs_dir']
+    if 'INDEX_DIR' in os.environ:
+        index_dir = os.environ['INDEX_DIR']
+    if 'DOCS_DIR' in os.environ:
+        docs_dir = os.environ['DOCS_DIR']
 
     searchsubdir = None
     faiss_rms:List[faiss_rm.FaissRM] = []
@@ -407,6 +407,30 @@ def chat_completions(event, context):
                             searchsubdir=searchsubdir,
                             toolprompts=toolprompts)
 
+from flask import Flask, request, jsonify, send_from_directory
+
+app = Flask(__name__, static_folder="/var/task/html")
+
+@app.route('/rest/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+def api_routes(path):
+    if request.method == 'POST':
+        # Access JSON payload
+        json_data = request.get_json()  # For JSON body
+        if json_data:
+            return jsonify({"message": "Received JSON data", "data": json_data})
+        return jsonify({"message": "No data received"}), 400
+
+    return jsonify({"message": f"Handling {request.method} request for API path: {path}"})
+
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_static(path):
+    if path == '':
+        return send_from_directory(app.static_folder, 'index.html')  # Default file
+    else:
+        return send_from_directory(app.static_folder, path)
+
 #
 # to run this locally:
 # $ cd <yoja>/server/aws
@@ -423,15 +447,22 @@ def chat_completions(event, context):
 # Alt Step 3: In the container, run (192.168.1.100 is the IP where ollama is listening): OLLAMA_HOST='192.168.1.100' python chat.py /host-tmp/index 'how do I descale my coffee maker?'
 #
 if __name__=="__main__":
-    event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
-    if len(sys.argv) < 3:
-        print(f"Usage: chat.py user_email chat_msg")
-        sys.exit(255)
-    if sys.argv[1].find('@') != -1:
+    if len(sys.argv) == 1:
+        app.run()
+    elif len(sys.argv) == 2:
+        event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
+        os.environ['YOJA_USER'] = 'notused'
+        event['body'] = json.dumps({'messages': [{'content': sys.argv[1]}]})
+        res = chat_completions(event, None)
+        sys.exit(0)
+    elif len(sys.argv) == 3:
+        event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
         os.environ['YOJA_USER'] = sys.argv[1]
         event['body'] = json.dumps({'messages': [{'content': sys.argv[2]}]})
+        res = chat_completions(event, None)
+        sys.exit(0)
     else:
-        os.environ['YOJA_USER'] = 'notused'
-        event['body'] = json.dumps({'index_dir': sys.argv[1], 'messages': [{'content': sys.argv[2]}]})
-    res = chat_completions(event, None)
-    sys.exit(0)
+        print(f"Usage 1(start wsgi server): chat.py")
+        print(f"Usage 2(run chat with local index): chat.py chat_msg")
+        print(f"Usage 3(run chat with gdrive index): chat.py user_email chat_msg")
+        sys.exit(255)
