@@ -284,6 +284,8 @@ def main():
     signal.signal(signal.SIGTERM, exit_gracefully)
     if 'LAMBDA_VERSION' not in os.environ:
         os.environ['LAMBDA_VERSION'] = 'local-devel-version'
+    if 'PERIODIC_PROCESS_FILES_TIME_LIMIT' not in os.environ:
+        os.environ['PERIODIC_PROCESS_FILES_TIME_LIMIT'] = '525600' # one year in minutes
 
     if not args.user_email:
         if 'YOJA_USER' in os.environ:
