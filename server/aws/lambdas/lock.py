@@ -17,10 +17,10 @@ def lock_user_local(index_dir):
         # Acquire an exclusive lock on the lockfile
         fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
         print(f"Lock acquired on {lockfile_path}")
-        return 'notused_gdrive_next_token', 'notused_dropbox_next_token', True
+        return True
     except IOError as e:
         print(f"Failed to acquire lock: {e}")
-        return 'notused_gdrive_next_token', 'notused_dropbox_next_token', False
+        return False
 
 def unlock_user_local(index_dir):
     lockfile_path = os.path.join(index_dir, 'lockfile')

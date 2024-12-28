@@ -405,49 +405,53 @@ def set_time_limit(time_limit):
     global g_time_limit
     g_time_limit = time_limit
 
-def extend_ddb_time(email, time_left):
+def extend_lock_time(email, index_dir, time_left):
     if 'AWS_LAMBDA_FUNCTION_NAME' not in os.environ:
         print(f"Not operating in Lambda. Hence, extending ddb time if necessary. email={email}, time_left={time_left}")
         item = get_user_table_entry(email)
         if not item:
-            print(f"extend_ddb_time: Error. Cannot get user entry for {email}")
+            print(f"extend_lock_time: Error. Cannot get user entry for {email}")
             return
-        print(f"extend_ddb_time: user table item={item}")
+        print(f"extend_lock_time: user table item={item}")
         now = time.time()
         now_s = datetime.datetime.fromtimestamp(now).strftime('%Y-%m-%d %I:%M:%S')
         if 'lock_end_time' in item:
-            print(f"extend_ddb_time: lock_end_time={item['lock_end_time']['N']}")
+            print(f"extend_lock_time: lock_end_time={item['lock_end_time']['N']}")
             l_e_t = int(item['lock_end_time']['N'])
             l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
-            print(f"extend_ddb_time: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
+            print(f"extend_lock_time: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
             # if lock_end_time is less than 3 minutes away, push it out by 12 minutes
             if (l_e_t - int(now)) < (3 * 60):
                 time_to_add = (12*60) if time_left > (12*60) else time_left
-                print(f"extend_ddb_time: lock_end_time less than 3 minutes away. Attempting to extend by {time_to_add}")
-                try:
-                    response = boto3.client('dynamodb').update_item(
-                        TableName=os.environ['USERS_TABLE'],
-                        Key={'email': {'S': email}},
-                        UpdateExpression="set #lm = :st",
-                        ConditionExpression=f"#lm = :ev",
-                        ExpressionAttributeNames={'#lm': 'lock_end_time'},
-                        ExpressionAttributeValues={':ev': {'N': item['lock_end_time']['N']}, ':st': {'N': str(int(now)+time_to_add)} },
-                        ReturnValues="ALL_NEW"
-                    )
-                    print(f"extend_ddb_time: ddb response={response}. response attributes={response['Attributes']}")
-                    set_user_table_cache_entry(email, response['Attributes'])
-                except ClientError as e:
-                    if e.response['Error']['Code'] == "ConditionalCheckFailedException":
-                        # This should not happen
-                        print(f"extend_ddb_time: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
-                        g_time_limit = 0
-                    else:
-                        print(f"extend_ddb_time: Exception. Non CCFE. Re-raising {e}")
-                        raise
+                print(f"extend_lock_time: lock_end_time less than 3 minutes away. Attempting to extend by {time_to_add}")
+                if index_dir:
+                    ute = {'email': {'S': email}, 'lock_end_time': {'N': str(int(now)+time_to_add)}}
+                    set_user_table_cache_entry(email, ute)
+                else:
+                    try:
+                        response = boto3.client('dynamodb').update_item(
+                            TableName=os.environ['USERS_TABLE'],
+                            Key={'email': {'S': email}},
+                            UpdateExpression="set #lm = :st",
+                            ConditionExpression=f"#lm = :ev",
+                            ExpressionAttributeNames={'#lm': 'lock_end_time'},
+                            ExpressionAttributeValues={':ev': {'N': item['lock_end_time']['N']}, ':st': {'N': str(int(now)+time_to_add)} },
+                            ReturnValues="ALL_NEW"
+                        )
+                        print(f"extend_lock_time: ddb response={response}. response attributes={response['Attributes']}")
+                        set_user_table_cache_entry(email, response['Attributes'])
+                    except ClientError as e:
+                        if e.response['Error']['Code'] == "ConditionalCheckFailedException":
+                            # This should not happen
+                            print(f"extend_lock_time: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
+                            g_time_limit = 0
+                        else:
+                            print(f"extend_lock_time: Exception. Non CCFE. Re-raising {e}")
+                            raise
             else:
-                print(f"extend_ddb_time: lock_end_time is more than 3 minutes away. Not attempting to extend")
+                print(f"extend_lock_time: lock_end_time is more than 3 minutes away. Not attempting to extend")
         else:
-            print(f"extend_ddb_time: Error. No lock_end_time entry for user {email}")
+            print(f"extend_lock_time: Error. No lock_end_time entry for user {email}")
 
 def lambda_timelimit_exceeded() -> bool:
     global g_start_time, g_time_limit

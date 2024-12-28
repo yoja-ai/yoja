@@ -15,7 +15,7 @@ import boto3
 import sys
 import base64
 from botocore.exceptions import ClientError
-from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_ddb_time, set_user_table_cache_entry, prtime
+from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_lock_time, set_user_table_cache_entry, prtime
 from typing import Dict, List, Tuple, Any, Optional, Union
 from dataclasses import dataclass
 import datetime
@@ -79,13 +79,6 @@ def get_vectorizer(email, tracebuf):
     return vectorizer_cache[email]
 
 def lock_user(email, index_dir, client, takeover_lock_end_time=0):
-    print(f"lock_user: Entered. Trying to lock for email={email}")
-    if index_dir:
-        return lock_user_local(index_dir)
-    else:
-        return lock_user_aws(email, client, takeover_lock_end_time)
-
-def lock_user_aws(email, client, takeover_lock_end_time=0):
     print(f"lock_user_aws: Entered. Trying to lock for email={email}")
     item = get_user_table_entry(email)
     print(f"lock_user_aws: User table entry for {email}={item}")
@@ -114,34 +107,42 @@ def lock_user_aws(email, client, takeover_lock_end_time=0):
                 return gdrive_next_page_token, dropbox_next_page_token, False
         else:
             print(f"lock_user_aws: takeover_lock_end_time is 0. Not attempting to take over existing lock. Proceeding with new lock attempt")
-    try:
-        time_left = int(lambda_time_left_seconds())
-        if time_left > (60 * 15):
-            time_left = 60*15
-        response = client.update_item(
-            TableName=os.environ['USERS_TABLE'],
-            Key={'email': {'S': email}},
-            UpdateExpression="set #lm = :st",
-            ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
-            ExpressionAttributeNames={'#lm': 'lock_end_time'},
-            ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(time_left))} },
-            ReturnValues="ALL_NEW"
-        )
-        set_user_table_cache_entry(email, response['Attributes'])
-        if 'Attributes' in response:
-            if 'gdrive_next_page_token' in response['Attributes']:
-                gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
-            if 'dropbox_next_page_token' in response['Attributes']:
-                dropbox_next_page_token = response['Attributes']['dropbox_next_page_token']['S']
-        print(f"lock_user_aws: conditional check success. No other instance of lambda is active for user {email}. "
-                f"gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
-        return gdrive_next_page_token, dropbox_next_page_token, True
-    except ClientError as e:
-        if e.response['Error']['Code'] == "ConditionalCheckFailedException":
-            print(f"lock_user_aws: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
-            return gdrive_next_page_token, dropbox_next_page_token, False
+    time_left = int(lambda_time_left_seconds())
+    if time_left > (60 * 15):
+        time_left = 60*15
+    if index_dir:
+        if lock_user_local(index_dir):
+            ute = {'email': {'S': email}, 'lock_end_time': {'N': str(int(now)+(time_left))}}
+            set_user_table_cache_entry(email, ute)
+            return 'notused_gdrive_next_token', 'notused_dropbox_next_token', True
         else:
-            raise
+            return 'notused_gdrive_next_token', 'notused_dropbox_next_token', False
+    else:
+        try:
+            response = client.update_item(
+                TableName=os.environ['USERS_TABLE'],
+                Key={'email': {'S': email}},
+                UpdateExpression="set #lm = :st",
+                ConditionExpression=f"attribute_not_exists(#lm) OR #lm < :nw",
+                ExpressionAttributeNames={'#lm': 'lock_end_time'},
+                ExpressionAttributeValues={':nw': {'N': str(int(now))}, ':st': {'N': str(int(now)+(time_left))} },
+                ReturnValues="ALL_NEW"
+            )
+            if 'Attributes' in response:
+                if 'gdrive_next_page_token' in response['Attributes']:
+                    gdrive_next_page_token = response['Attributes']['gdrive_next_page_token']['S']
+                if 'dropbox_next_page_token' in response['Attributes']:
+                    dropbox_next_page_token = response['Attributes']['dropbox_next_page_token']['S']
+                set_user_table_cache_entry(email, response['Attributes'])
+            print(f"lock_user_aws: conditional check success. No other instance of lambda is active for user {email}. "
+                f"gdrive_next_page_token={gdrive_next_page_token}, dropbox_next_page_token={dropbox_next_page_token}")
+            return gdrive_next_page_token, dropbox_next_page_token, True
+        except ClientError as e:
+            if e.response['Error']['Code'] == "ConditionalCheckFailedException":
+                print(f"lock_user_aws: conditional check failed. {e.response['Error']['Message']}. Another instance of lambda is active for {email}")
+                return gdrive_next_page_token, dropbox_next_page_token, False
+            else:
+                raise
 
 def update_next_page_tokens(email, client, gdrive_next_page_token, dropbox_next_page_token):
     print(f"update_next_page_tokens: Entered. email={email}")
@@ -851,7 +852,7 @@ def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path
                     prev_paras.append(para_dct)
                 if lambda_timelimit_exceeded():
                     print(f"process_gh_issues_zip: Processed {issues_processed} issues. Exceeded lambda timelimit. Trying to extend..")
-                    extend_ddb_time(email, lambda_time_left_seconds())
+                    extend_lock_time(email, index_dir, lambda_time_left_seconds())
                     if lambda_timelimit_exceeded():
                         print(f"process_gh_issues_zip: Processed {issues_processed} issues. Extending timelimit appears to not have worked. Breaking..")
                         timelimit_exceeded = True
@@ -1129,7 +1130,7 @@ def process_files(email, storage_reader:StorageReader, unmodified, needs_embeddi
                     prev_paras = []
                     print(f"process_files: fn={filename}. did not find partial")
                 vectorizer = get_vectorizer(email, [])
-                pdf_dict:Dict[str,Any] = read_pdf(email, filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
+                pdf_dict:Dict[str,Any] = read_pdf(email, index_dir, filename, fileid, bio, file_item['mtime'], vectorizer, prev_paras)
                 file_item['paragraphs'] = pdf_dict['paragraphs']
                 file_item['filetype'] = 'pdf'
                 if 'partial' in pdf_dict:
@@ -1388,7 +1389,7 @@ def _build_and_save_faiss_if_needed(email:str, index_dir, s3client, bucket:str, 
     # if faiss index needs to be updated and we have at least 5 minutes
     if index_metadata.is_vdb_index_stale():
         time_left:int = lambda_time_left_seconds()
-        extend_ddb_time(email, time_left)
+        extend_lock_time(email, index_dir, time_left)
         if time_left > 300:
             print(f"updating faiss index for s3://{bucket}/{user_prefix} as time left={time_left} > 300 seconds")
             build_and_save_faiss(email, index_dir, s3client, bucket, prefix, sub_prefix, user_prefix, doc_storage_type)
@@ -1871,7 +1872,7 @@ if __name__=="__main__":
     with open(sys.argv[1], 'rb') as f:
         bio = io.BytesIO(f.read())
     vectorizer = get_vectorizer(email, [])
-    rv = read_pdf(None, sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
+    rv = read_pdf(None, None, sys.argv[1], 'abc', bio, datetime.datetime.now(), vectorizer, [])
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))
     sys.exit(0)

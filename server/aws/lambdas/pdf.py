@@ -6,7 +6,7 @@ import subprocess
 import io
 import datetime
 import os
-from utils import lambda_timelimit_exceeded, lambda_time_left_seconds, extend_ddb_time
+from utils import lambda_timelimit_exceeded, lambda_time_left_seconds, extend_lock_time
 import base64
 import traceback
 import traceback_with_variables
@@ -50,17 +50,17 @@ def _lsdir(ldir):
         print(f"_lsdir: dir={ldir}, Caught {ex}")
         return
 
-def render_png(email, filename, start_page, num_pages_this_time, tmpdir):
-    print(f"render_png: Entered. filename {filename}, start_page {start_page}, num_pages_this_time {num_pages_this_time}, tmpdir {tmpdir}")
+def _render_png(email, index_dir, filename, start_page, num_pages_this_time, tmpdir):
+    print(f"_render_png: Entered. filename {filename}, start_page {start_page}, num_pages_this_time {num_pages_this_time}, tmpdir {tmpdir}")
     try:
         renv=os.environ.copy()
         renv['OMP_THREAD_LIMIT']='1'
         fnx_start = datetime.datetime.now()
         outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
-        print(f"render_png: outer_loop_max={outer_loop_max}")
+        print(f"_render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
-            print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
-            extend_ddb_time(email, lambda_time_left_seconds())
+            print(f"_render_png: outer loop begin: outer_loop_count={outer_loop_count}")
+            extend_lock_time(email, index_dir, lambda_time_left_seconds())
             processes=[]
             fd_to_process={}
             poller=select.poll()
@@ -73,7 +73,7 @@ def render_png(email, filename, start_page, num_pages_this_time, tmpdir):
                             str(page), '-l', str(page), filename, 'out']
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=renv)
-                print(f"render_png: start process. inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}, pid={process.pid}")
+                print(f"_render_png: start process. inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
@@ -102,10 +102,10 @@ def render_png(email, filename, start_page, num_pages_this_time, tmpdir):
                 if rc:
                     print(f"[{process.pid}] Process error. returncode {rc}")
         fnx_end = datetime.datetime.now()
-        print(f"render_png: time taken {fnx_end - fnx_start}")
+        print(f"_render_png: time taken {fnx_end - fnx_start}")
         return True
     except Exception as ex:
-        print(f"render_png: Caught {ex}")
+        print(f"_render_png: Caught {ex}")
         return False
 
 class ProcessInfo:
@@ -121,8 +121,8 @@ class ProcessInfo:
     def __str__(self):
         return f"page={self.page}, pid={self.process.pid}, outfn={self.outfn}"
 
-def tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
-    print(f"tesseract_pages: Entered. filename {filename}, start_page {start_page}, num_pages_this_time={num_pages_this_time}, pages_in_pdf={pages_in_pdf}, tmpdir {tmpdir}")
+def _tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
+    print(f"_tesseract_pages: Entered. filename {filename}, start_page {start_page}, num_pages_this_time={num_pages_this_time}, pages_in_pdf={pages_in_pdf}, tmpdir {tmpdir}")
     rv = ['' for ind in range(num_pages_this_time)]
     try:
         fnx_start = datetime.datetime.now()
@@ -131,10 +131,10 @@ def tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_p
         tenv['OMP_THREAD_LIMIT']='1'
 
         outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
-        print(f"render_png: outer_loop_max={outer_loop_max}")
+        print(f"_render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
-            print(f"render_png: outer loop begin: outer_loop_count={outer_loop_count}")
-            extend_ddb_time(email, lambda_time_left_seconds())
+            print(f"_render_png: outer loop begin: outer_loop_count={outer_loop_count}")
+            extend_lock_time(email, index_dir, lambda_time_left_seconds())
             fd_to_processinfo = {}
             poller=select.poll()
             items_in_poll=0
@@ -151,14 +151,14 @@ def tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_p
                 cmd = ['tesseract', os.path.join(tmpdir, inputfn), os.path.join(tmpdir, outputfn), '-l', 'eng', 'hocr']
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=tenv)
-                print(f"tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}, pid={process.pid}")
+                print(f"_tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
                 poller.register(fd, select.POLLIN|select.POLLPRI|select.POLLHUP|select.POLLERR)
                 items_in_poll += 1
                 fd_to_processinfo[fd] = ProcessInfo(process, outputfn1, page)
-            print(f"tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
+            print(f"_tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
             print(f"Entering poll loop items in poll={items_in_poll} ..")
             while items_in_poll > 0:
                 events = poller.poll(1000)
@@ -192,20 +192,20 @@ def tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_p
                         chunk += f"{nonl_ss}\n"
                     rv[processinfo.page-start_page] = chunk
         fnx_end = datetime.datetime.now()
-        print(f"tesseract_pages: time taken {fnx_end - fnx_start}")
+        print(f"_tesseract_pages: time taken {fnx_end - fnx_start}")
     except Exception as ex:
-        print(f"tesseract_pages: Caught {ex}")
+        print(f"_tesseract_pages: Caught {ex}")
         traceback.print_exc()
     return rv
 
-def read_pdf(email, filename, fileid, bio, mtime, vectorizer, prev_paras):
-    print(f"read_pdf: Entered. filename={filename}, fileid={fileid}, len(prev_paras)={len(prev_paras)}")
+def read_pdf(email, index_dir, filename, fileid, bio, mtime, vectorizer, prev_paras):
+    print(f"read_pdf: Entered. index_dir={index_dir}, filename={filename}, fileid={fileid}, len(prev_paras)={len(prev_paras)}")
     doc_dct={"filename": filename, "fileid": fileid, "mtime": mtime, "paragraphs": prev_paras}
     tmpdir = None
     tmpfp = None
     try:
         time_left = lambda_time_left_seconds()
-        extend_ddb_time(email, time_left)
+        extend_lock_time(email, index_dir, time_left)
         time_for_this_pdf = int(time_left) - 180
         max_pages_this_time = int(time_for_this_pdf/5)
         print(f"read_pdf: time_left={time_left}, time_for_this_pdf={time_for_this_pdf}, max_pages_this_time={max_pages_this_time}")
@@ -228,12 +228,12 @@ def read_pdf(email, filename, fileid, bio, mtime, vectorizer, prev_paras):
             is_partial = True
 
         print(f"read_pdf: pages_in_pdf={pages_in_pdf}, pdfsize={pdfsize}, start_page={start_page}, num_pages_this_time={num_pages_this_time}")
-        if not render_png(email, tmpfp.name, start_page, num_pages_this_time, tmpdir):
+        if not _render_png(email, index_dir, tmpfp.name, start_page, num_pages_this_time, tmpdir):
             return doc_dct # Error occurred. we don't set partial in the response because we dont want to retry this
-        chunks:List[str] = tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
+        chunks:List[str] = _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir)
         for ind in range(len(chunks)):
             if ind % 100 == 0:
-                extend_ddb_time(email, lambda_time_left_seconds())
+                extend_lock_time(email, index_dir, lambda_time_left_seconds())
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             try:
