@@ -407,7 +407,7 @@ def set_time_limit(time_limit):
 
 def extend_lock_time(email, index_dir, time_left):
     if 'AWS_LAMBDA_FUNCTION_NAME' not in os.environ:
-        print(f"Not operating in Lambda. Hence, extending ddb time if necessary. email={email}, time_left={time_left}")
+        print(f"Not operating in Lambda. Hence, extending lock time if necessary. email={email}, time_left={time_left}")
         item = get_user_table_entry(email)
         if not item:
             print(f"extend_lock_time: Error. Cannot get user entry for {email}")
