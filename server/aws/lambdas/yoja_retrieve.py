@@ -357,3 +357,22 @@ def get_context(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,s
     
     return new_context
 
+def get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
+                                         index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                         chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10, searchsubdir:str=None):
+    cross_sorted_scores:List[DocumentChunkDetails]
+    status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                            filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)
+    if not status:
+        print(f"get_filelist_using_retr_and_rerank: no context from _retrieve_rerank")
+        return "No context files found"
+    files_dict:Dict[str,DocumentChunkDetails] = {}
+    for chunk_det in cross_sorted_scores:
+        if not files_dict.get(chunk_det._get_file_key()):
+            files_dict[chunk_det._get_file_key()] = chunk_det
+            msg = f"{prtime()}: adding {chunk_det.file_path}{chunk_det.file_name} to listing"
+            print(msg)
+            tracebuf.append(msg)
+        if len(files_dict) >= number_of_files: break
+    return ",".join([  f"[{val.file_path}/{val.file_name}]({val.file_path}/{val.file_name})" for key, val in files_dict.items() ])
+

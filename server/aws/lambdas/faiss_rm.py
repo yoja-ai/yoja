@@ -365,6 +365,8 @@ class FaissRM():
                         modified_index_rv.append(np.array(modified_indices))
                         modified_distances_rv.append(np.array(modified_distances))
                     return np.array(modified_distances_rv), np.array(modified_index_rv)
+            else:
+                return distance_list, index_list
         else:
             return distance_list, index_list
 

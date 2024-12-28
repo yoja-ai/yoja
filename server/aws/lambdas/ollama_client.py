@@ -10,7 +10,7 @@ from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 import tiktoken
 import ollama
 from ollama import chat
-from yoja_retrieve import get_context
+from yoja_retrieve import get_context, get_filelist_using_retr_and_rerank
 
 ASSISTANTS_MODEL="llama3.2"
 
@@ -120,6 +120,14 @@ def _process_tool_call(supplied_tools, tool,
                 print(f"{prtime()}: Tool output: context={context}")
                 tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
                 tool_outputs += context
+            elif tool.function.name == 'list_of_files_for_given_question':
+                tool_arg_question = args_dict.get('question')
+                num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
+                tool_output = get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                            filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
+                print(f"{prtime()}: Tool output: tool_output={tool_output}")
+                tracebuf.append(f"{prtime()}: Tool output: tool_output={tool_output[:64]}...")
+                tool_outputs += tool_output
     return tool_outputs
 
 class ollama_run_usage:
@@ -144,9 +152,12 @@ def retrieve_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     else:
         tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE, TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION]
         print(f"retrieve_using_ollama_assistant: toolprompts not specified. Using default of {tools}")
-    messages = [{'role': 'user', 'content': last_msg}]
+    ollama_messages = []
+    for msg in messages:
+        ollama_messages.append({'role': msg['role'], 'content': msg['content']})
+    print(f"AAAAAAAAAAAAAAAAAAAAA {ollama_messages}")
     response = ollama.chat(model=ASSISTANTS_MODEL,
-            messages = messages,
+            messages = ollama_messages,
             tools = tools
             )
     #print(response)
@@ -157,9 +168,9 @@ def retrieve_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
                                 faiss_rms, documents_list, index_map_list, index_type,
                                 tracebuf, filekey_to_file_chunks_dict, chat_config,
                                 searchsubdir)
-            messages.append({'role': 'tool', 'content': to})
+            ollama_messages.append({'role': 'tool', 'content': to})
     response = ollama.chat(model=ASSISTANTS_MODEL,
-            messages = messages,
+            messages = ollama_messages,
             tools = tools
             )
     print(response)
