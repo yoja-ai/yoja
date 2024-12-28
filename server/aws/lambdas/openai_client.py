@@ -154,13 +154,14 @@ def _get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], docume
 def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
-                                    assistants_thread_id:str, chat_config:ChatConfiguration, last_msg:str,
+                                    assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                                     searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
     Returns the tuple (output, thread_id).  REturns (None, NOne) on failure.
     """
+    last_msg:str = messages[-1]['content']
     client = OpenAI()
  
     if toolprompts:

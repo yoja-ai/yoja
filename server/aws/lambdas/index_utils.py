@@ -394,7 +394,7 @@ def init_vdb(email, index_dir, s3client, bucket, prefix, doc_storage_type:DocSto
     """
     print(f"init_vdb: Entered. email={email}, index_dir={index_dir}, bucket={bucket}, prefix={prefix}, sub_prefix={sub_prefix}")
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
-    tracebuf.append(f"{prtime()} init_vdb: Entered. s3://{bucket}/{user_prefix}")
+    tracebuf.append(f"{prtime()} init_vdb: Entered. index_dir={index_dir}, bucket={bucket}, prefix={user_prefix}")
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)

@@ -127,7 +127,7 @@ class FaissRM():
             print(f"Reading ivfadc index from file {ivfadc_index_fname}.  Note that this can be flat index due to not enough embeddings.")
             self._faiss_index_ivf_adc = faiss.read_index(ivfadc_index_fname)
             self._faiss_index_ivf_adc.nprobe = 16
-            tracebuf.append(f"{prtime()} FaissRM: ivfadc index loaded file file")
+            tracebuf.append(f"{prtime()} FaissRM: ivfadc index loaded from {ivfadc_index_fname}")
         print(f"faiss_index_ivfadc:  total vectors={self._faiss_index_ivf_adc.ntotal}; index_memory={self._get_memory(self._faiss_index_ivf_adc)}")
 
     def get_doc_storage_type(self) -> DocStorageType:

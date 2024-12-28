@@ -46,7 +46,14 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
             return thread_id
     return None
 
-def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
+def _get_retriever_function():
+    if 'OLLAMA_HOST' in os.environ:
+        return retrieve_using_ollama_assistant
+    if 'OPENAI_API_KEY' in os.environ:
+        return retrieve_using_openai_assistant
+    return None
+
+def ongoing_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
                     index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat',
                     searchsubdir=None, toolprompts=None):
     """
@@ -62,8 +69,8 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
         return respond({"error_msg": emsg}, status=500)
 
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {};
-    srp, thread_id, run_usage = retrieve_using_ollama_assistant(faiss_rms,documents_list, index_map_list, index_type,
-                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, last_msg, toolprompts)
+    srp, thread_id, run_usage = _get_retriever_function()(faiss_rms,documents_list, index_map_list, index_type,
+                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, body['messages'], toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -107,33 +114,32 @@ def ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[fa
         },
     }
 
-def _debug_flags(query:str, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
-    print_trace, use_ivfadc, file_details, retriever_stratgey = \
-                (False, False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
+    print_trace, use_ivfadc, retriever_stratgey = \
+                (False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+    last_msg:str = messages[-1]['content']
     idx = 0
-    for idx in range(len(query)):
+    for idx in range(len(messages[-1]['content'])):
         # '+': print_trace
         # '@': use ivfadc index
         # '^': print_trace with info about choice of context
-        # '!': print details of file
-        c = query[idx]
+        c = messages[-1]['content'][idx]
         if c not in ['+','@','#','$', '^', '!', '/', '~']: break
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = not use_ivfadc
-        if c == '!': file_details = True
         if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
     
     # strip the debug flags from the question
-    if idx == len(query) - 1:
-        last_msg = ""
+    if idx == len(messages[-1]['content']) - 1:
+        messages[-1]['content'] = ""
     else:
-        last_msg = query[idx:]
-    chat_config = ChatConfiguration(print_trace, use_ivfadc, file_details, retriever_stratgey)
-    logmsg = f"**{prtime()}: Debug Flags**: chat_config={chat_config}, last_={last_msg}"
+        messages[-1]['content'] = messages[-1]['content'][idx:]
+    chat_config = ChatConfiguration(print_trace, use_ivfadc, retriever_stratgey)
+    logmsg = f"**{prtime()}: Debug Flags**: chat_config={chat_config}, last_={messages[-1]['content']}"
     print(logmsg)
 
-    return (chat_config, last_msg)
+    return chat_config
 
 @dataclasses.dataclass
 class ContextSource:
@@ -162,70 +168,7 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
                                             chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
     return context_srcs_links
 
-def print_file_details(event, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]], last_msg:str, use_ivfadc:bool):
-    """ Returns the details of the filename specified in the query.  The format of the query is <filename>|<query>.  Looks up the query in the vector db, and only returns matches from the specified file, including details of the file and the matches in the file (paragraph_num and distance)    """
-    last_msg = last_msg.strip()
-    fnend = last_msg.find('|')
-    if fnend == -1:
-        fn = last_msg
-        chat_msg = None
-    else:
-        fn = last_msg[:fnend]
-        chat_msg = last_msg[fnend:]
-
-    srp:str = ""
-    for i in range(len(documents_list)):
-        documents = documents_list[i]
-        faiss_rm_vdb = faiss_rms[i]
-        finfo = None
-        for fi in documents.values():
-            if fi['filename'] == fn:
-                finfo = fi
-                break
-        if finfo:
-            srp += f"{finfo['filename']}: fileid={finfo['fileid']}, path={finfo['path']}, mtime={finfo['mtime']}, mimetype={finfo['mimetype']}, num_paragraphs={len(finfo['paragraphs'])}"
-            if chat_msg:
-                index_map = faiss_rm_vdb.get_index_map()
-                distances, indices = faiss_rm_vdb(chat_msg, k=len(index_map), index_type='ivfadc' if use_ivfadc else 'flat' )
-                for itr in range(len(indices[0])):
-                    ind = indices[0][itr]
-                    # documents is {fileid: finfo}; index_map is [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
-                    im = index_map[ind] 
-                    if im[0] != finfo['fileid']:
-                        continue
-                    else:
-                        fmtxt = format_paragraph(finfo['paragraphs'][im[1]])
-                        srp += f"\n\ndistance={distances[0][itr]}, paragraph_num={im[1]}, paragraph={fmtxt}"
-            srp += "\n"
-    if not srp: srp = "File not found in index"
-
-    res = {}
-    res['id'] = event['requestContext']['requestId']
-    res['object'] = 'chat.completion.chunk'
-    res['created'] = int(time.time_ns()/1000000)
-    res['model'] = 'gpt-3.5-turbo-0125'
-    res['choices'] = [
-        {
-            "index": 0,
-            "delta": {
-                "role": "assistant",
-                "content": f"\n\n{srp}"
-                }
-        }
-    ]
-    res_str = json.dumps(res)
-    return {
-        'statusCode': 200,
-        'body': f"data:{res_str}",
-        'headers': {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
-            'Pragma': 'no-cache',
-            'Expires': '0'
-        },
-    }
-
-def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
+def new_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
                 index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat',
                 searchsubdir=None, toolprompts=None):
     """
@@ -235,13 +178,10 @@ def new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms:List[faiss_
     print(f"new_chat: entered")
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {}
 
-    if chat_config.file_details:
-        return print_file_details(event, faiss_rms, documents_list, last_msg, chat_config.use_ivfadc)
-
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id, run_usage = retrieve_using_ollama_assistant(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    filekey_to_file_chunks_dict, None, chat_config, last_msg, searchsubdir, toolprompts)
+    srp, thread_id, run_usage = _get_retriever_function()(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                                    filekey_to_file_chunks_dict, None, chat_config, body['messages'], searchsubdir, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -310,19 +250,27 @@ def chat_completions(event, context):
     body = json.loads(event['body'])
     print(f"body={body}")
 
-    index_dir = None
     bucket = None
     prefix = None
-    if 'index_dir' in body:
-        index_dir = body['index_dir']
+    index_dir = None
+    docs_dir = None
+    if 'INDEX_DIR' in os.environ:
+        index_dir = os.environ['INDEX_DIR']
+    if 'DOCS_DIR' in os.environ:
+        docs_dir = os.environ['DOCS_DIR']
+    if index_dir:
+        print(f"Index Location: Local directory {index_dir}")
+        os.environ['YOJA_USER'] = 'notused'
+        s3client = None
     else:
         if 'bucket' not in service_conf or 'prefix' not in service_conf:
-            print(f"Error. index_dir not specified in body, and bucket/prefix not specified in service conf")
-            return respond({"error_msg": "Error. index_dir not specified in body, and bucket/prefix not specified in service_conf"}, status=403)
+            print(f"Error. index_dir not specified in env, and bucket/prefix not specified in service conf")
+            return respond({"error_msg": "Error. index_dir not specified in env, and bucket/prefix not specified in service_conf"}, status=403)
         else:
             bucket = service_conf['bucket']['S']
             prefix = service_conf['prefix']['S'].strip().strip('/')
             print(f"Index Location: s3://{bucket}/{prefix}")
+        s3client = boto3.client('s3')
 
     start_time:datetime.datetime = datetime.datetime.now()
     set_start_time(start_time)
@@ -338,18 +286,8 @@ def chat_completions(event, context):
             print(f"chat_completions: check_cookie did not return email. Sending 403")
             return respond({"status": "Unauthorized: please login to google auth"}, 403, None)
 
-    s3client = boto3.client('s3')
-
-    last_msg:str = body['messages'][-1]['content']
     tracebuf = [f"{prtime()} Begin Trace"];
-    chat_config, last_msg = _debug_flags(last_msg, tracebuf)
-
-    index_dir = None
-    docs_dir = None
-    if 'INDEX_DIR' in os.environ:
-        index_dir = os.environ['INDEX_DIR']
-    if 'DOCS_DIR' in os.environ:
-        docs_dir = os.environ['DOCS_DIR']
+    chat_config = _debug_flags(body['messages'], tracebuf)
 
     searchsubdir = None
     faiss_rms:List[faiss_rm.FaissRM] = []
@@ -399,37 +337,11 @@ def chat_completions(event, context):
     body['messages'] = msgs
     print(f"chat_completions: finished pre-processing. messages={body['messages']}")
     if len(body['messages']) == 1:
-        return new_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms, documents_list, index_map_list,
-                        searchsubdir=searchsubdir,
-                        toolprompts=toolprompts)
+        return new_chat(event, body, chat_config, tracebuf, faiss_rms, documents_list, index_map_list,
+                        searchsubdir=searchsubdir, toolprompts=toolprompts)
     else:
-        return ongoing_chat(event, body, chat_config, tracebuf, last_msg, faiss_rms, documents_list, index_map_list,
-                            searchsubdir=searchsubdir,
-                            toolprompts=toolprompts)
-
-from flask import Flask, request, jsonify, send_from_directory
-
-app = Flask(__name__, static_folder="/var/task/html")
-
-@app.route('/rest/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def api_routes(path):
-    if request.method == 'POST':
-        # Access JSON payload
-        json_data = request.get_json()  # For JSON body
-        if json_data:
-            return jsonify({"message": "Received JSON data", "data": json_data})
-        return jsonify({"message": "No data received"}), 400
-
-    return jsonify({"message": f"Handling {request.method} request for API path: {path}"})
-
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_static(path):
-    if path == '':
-        return send_from_directory(app.static_folder, 'index.html')  # Default file
-    else:
-        return send_from_directory(app.static_folder, path)
+        return ongoing_chat(event, body, chat_config, tracebuf, faiss_rms, documents_list, index_map_list,
+                            searchsubdir=searchsubdir, toolprompts=toolprompts)
 
 #
 # to run this locally:
@@ -447,9 +359,7 @@ def serve_static(path):
 # Alt Step 3: In the container, run (192.168.1.100 is the IP where ollama is listening): OLLAMA_HOST='192.168.1.100' python chat.py /host-tmp/index 'how do I descale my coffee maker?'
 #
 if __name__=="__main__":
-    if len(sys.argv) == 1:
-        app.run()
-    elif len(sys.argv) == 2:
+    if len(sys.argv) == 2:
         event = {'requestContext': {'requestId': 'abc', 'http': {'method': 'POST', 'path': '/rest/v1/chat/completions'}}}
         os.environ['YOJA_USER'] = 'notused'
         event['body'] = json.dumps({'messages': [{'content': sys.argv[1]}]})
@@ -462,7 +372,6 @@ if __name__=="__main__":
         res = chat_completions(event, None)
         sys.exit(0)
     else:
-        print(f"Usage 1(start wsgi server): chat.py")
-        print(f"Usage 2(run chat with local index): chat.py chat_msg")
-        print(f"Usage 3(run chat with gdrive index): chat.py user_email chat_msg")
+        print(f"Usage 1(run chat with local index): chat.py chat_msg")
+        print(f"Usage 2(run chat with gdrive index): chat.py user_email chat_msg")
         sys.exit(255)

@@ -10,6 +10,8 @@ def directory_browser(event, context):
     if (operation != 'POST'):
         print(f"Error: unsupported method: operation={operation}")
         return respond({"error_msg": str(ValueError('Unsupported method ' + str(operation)))}, status=400)
+    if 'INDEX_DIR' in os.environ:
+        return respond(None, res={'directories': [], 'files': []})
     rv = check_cookie(event, False)
     email = rv['google']
     if not email:
