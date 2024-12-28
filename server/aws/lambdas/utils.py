@@ -422,7 +422,7 @@ def extend_lock_time(email, index_dir, time_left):
             print(f"extend_lock_time: lock_end_time in ddb={l_e_t}/{l_e_t_s}, now={now}/{now_s}")
             # if lock_end_time is less than 3 minutes away, push it out by 12 minutes
             if (l_e_t - int(now)) < (3 * 60):
-                time_to_add = (12*60) if time_left > (12*60) else time_left
+                time_to_add = (12*60) if time_left < (12*60) else time_left
                 print(f"extend_lock_time: lock_end_time less than 3 minutes away. Attempting to extend by {time_to_add}")
                 if index_dir:
                     ute = {'email': {'S': email}, 'lock_end_time': {'N': str(int(now)+time_to_add)}}

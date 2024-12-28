@@ -73,7 +73,6 @@ def _render_png(email, index_dir, filename, start_page, num_pages_this_time, tmp
                             str(page), '-l', str(page), filename, 'out']
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=renv)
-                print(f"_render_png: start process. inner_loop_count={inner_loop_count}, page={page}, cmd={cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
@@ -81,7 +80,6 @@ def _render_png(email, index_dir, filename, start_page, num_pages_this_time, tmp
                 fd_to_process[fd]=process
                 poller.register(fd, select.POLLIN|select.POLLPRI|select.POLLHUP|select.POLLERR)
                 num_in_poller += 1
-            print(f"Entering poll loop. num_in_poller={num_in_poller}")
             while num_in_poller:
                 events = poller.poll(1000)
                 for fd, flag in events:
@@ -89,14 +87,12 @@ def _render_png(email, index_dir, filename, start_page, num_pages_this_time, tmp
                         bts=os.read(fd, 10248)
                         print(f"[{fd_to_process[fd].pid}] {bts.decode('utf-8').rstrip()}")
                     elif flag & select.POLLHUP:
-                        print(f"[{fd_to_process[fd].pid}] Received HUP. Child finished")
                         poller.unregister(fd)
                         num_in_poller -= 1
                     elif flag & select.POLLERR:
                         print(f"[{fd_to_process[fd].pid}] Received ERR. Child error")
                         poller.unregister(fd)
                         num_in_poller -= 1
-            print(f"Exited poll loop ..")
             for process in processes:
                 rc = process.returncode
                 if rc:
@@ -131,9 +127,7 @@ def _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time
         tenv['OMP_THREAD_LIMIT']='1'
 
         outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
-        print(f"_render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
-            print(f"_render_png: outer loop begin: outer_loop_count={outer_loop_count}")
             extend_lock_time(email, index_dir, lambda_time_left_seconds())
             fd_to_processinfo = {}
             poller=select.poll()
@@ -151,15 +145,12 @@ def _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time
                 cmd = ['tesseract', os.path.join(tmpdir, inputfn), os.path.join(tmpdir, outputfn), '-l', 'eng', 'hocr']
                 process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=tmpdir, close_fds=True, env=tenv)
-                print(f"_tesseract_pages: inner loop count={inner_loop_count}, page={page}, cmd: {cmd}, pid={process.pid}")
                 fd=process.stdout.fileno()
                 flags=fcntl.fcntl(fd, fcntl.F_GETFL)
                 fcntl.fcntl(fd, fcntl.F_SETFL, flags|os.O_NONBLOCK)
                 poller.register(fd, select.POLLIN|select.POLLPRI|select.POLLHUP|select.POLLERR)
                 items_in_poll += 1
                 fd_to_processinfo[fd] = ProcessInfo(process, outputfn1, page)
-            print(f"_tesseract_pages: inner loop complete. Spawned {len(fd_to_processinfo.items())} processes")
-            print(f"Entering poll loop items in poll={items_in_poll} ..")
             while items_in_poll > 0:
                 events = poller.poll(1000)
                 for fd, flag in events:
@@ -167,14 +158,12 @@ def _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time
                         bts=os.read(fd, 10248)
                         print(f"[{fd_to_processinfo[fd].process.pid}] {bts.decode('utf-8').rstrip()}")
                     elif flag & select.POLLHUP:
-                        print(f"[{fd_to_processinfo[fd].process.pid}] Received HUP. Child finished")
                         poller.unregister(fd)
                         items_in_poll -= 1
                     elif flag & select.POLLERR:
                         print(f"[{fd_to_processinfo[fd].process.pid}] Received ERR. Child error")
                         poller.unregister(fd)
                         items_in_poll -= 1
-            print(f"Exited poll loop ..")
             for fd, processinfo in fd_to_processinfo.items():
                 rc = processinfo.process.returncode
                 if rc:

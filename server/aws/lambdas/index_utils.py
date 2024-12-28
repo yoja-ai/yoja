@@ -108,8 +108,8 @@ def lock_user(email, index_dir, client, takeover_lock_end_time=0):
         else:
             print(f"lock_user_aws: takeover_lock_end_time is 0. Not attempting to take over existing lock. Proceeding with new lock attempt")
     time_left = int(lambda_time_left_seconds())
-    if time_left > (60 * 15):
-        time_left = 60*15
+    if time_left > (60 * 12):
+        time_left = 60*12
     if index_dir:
         if lock_user_local(index_dir):
             ute = {'email': {'S': email}, 'lock_end_time': {'N': str(int(now)+(time_left))}}
