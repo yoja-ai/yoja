@@ -121,7 +121,7 @@ class ProcessInfo:
     def __str__(self):
         return f"page={self.page}, pid={self.process.pid}, outfn={self.outfn}"
 
-def _tesseract_pages(email, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
+def _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time, pages_in_pdf, tmpdir):
     print(f"_tesseract_pages: Entered. filename {filename}, start_page {start_page}, num_pages_this_time={num_pages_this_time}, pages_in_pdf={pages_in_pdf}, tmpdir {tmpdir}")
     rv = ['' for ind in range(num_pages_this_time)]
     try:
