@@ -21,8 +21,14 @@ SEMANTIC_HITS_PER_QUERY=20
 class DocStorageType(enum.Enum):
     GoogleDrive = 1
     DropBox = 2
-    Sample = 3
-    Local = 4
+    Local = 3
+
+    def __str__(self):
+        return f"DocStorageType({self.name})"
+
+    def __repr__(self):
+        return f"DocStorageType({self.name})"
+
 
 def extract_tar_file(tar_file_path, extract_to_directory):
     with tarfile.open(tar_file_path, "r") as tar:
@@ -233,6 +239,12 @@ class FaissRM():
                     print(f"_faiss_search: index_type={index_type}: Found ind > len(index_map) at {trunc_point}. Truncating results to {trunc_point} entries")
                     return np.array([distance_list[0][:trunc_point]]), np.array([index_list[0][:trunc_point]])
             return distance_list, index_list
+
+    def __str__(self):
+        return f"FaissRM({self.doc_storage_type})"
+
+    def __repr__(self):
+        return f"FaissRM(storage={self.doc_storage_type!r})"
 
     def _lg(self, lgstr):
         print(lgstr)

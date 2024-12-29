@@ -41,24 +41,8 @@ class DocumentType(enum.Enum):
             raise Exception(f"file_ext(): Unknown document type:  self={self}")
         return doc_type_to_ext[self]
 
-    def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_id:str, para_dict=None) -> str:
+    def generate_link(self, doc_storage_type:faiss_rm.DocStorageType, file_path, file_name, file_id:str, para_dict=None) -> str:
         if doc_storage_type == faiss_rm.DocStorageType.GoogleDrive:
-            # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
-            # if a pdf file (ends with pdf), use the link https://drive.google.com/file/d/<file_id>
-            # if pptx file (ends with ppt or pptx) https://docs.google.com/presentation/d/<file_id>
-            doc_type_to_link:Dict[Self, str] = {
-                self.__class__.DOCX:'https://docs.google.com/document/d/{file_id}',
-                self.__class__.PPTX:'https://docs.google.com/presentation/d/{file_id}',
-                self.__class__.XLSX:'https://docs.google.com/spreadsheets/d/{file_id}',
-                self.__class__.PDF:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.TXT:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.HTML:'https://drive.google.com/file/d/{file_id}',
-                self.__class__.GH_ISSUES_ZIP:para_dict['html_url'] if para_dict and 'html_url' in para_dict else 'https://drive.google.com/file/d/{file_id}'
-            }
-            if not doc_type_to_link.get(self):
-                raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
-            return doc_type_to_link[self].format(file_id=file_id)
-        elif doc_storage_type == faiss_rm.DocStorageType.Sample:
             # If word document (ends with doc or docx), use the link  https://docs.google.com/document/d/<file_id>
             # if a pdf file (ends with pdf), use the link https://drive.google.com/file/d/<file_id>
             # if pptx file (ends with ppt or pptx) https://docs.google.com/presentation/d/<file_id>
@@ -87,6 +71,11 @@ class DocumentType(enum.Enum):
             if not doc_type_to_link.get(self):
                 raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
             return doc_type_to_link[self].format(file_id=file_id)
+        elif doc_storage_type == faiss_rm.DocStorageType.Local:
+            if file_path:
+                return f"file://{file_path}{file_name}"
+            else:
+                return f"file://{file_name}"
         else:
             raise Exception(f"generate_link(): Unknown document type:  self={self}; doc_storage_type={doc_storage_type}; file_id={file_id}")
     

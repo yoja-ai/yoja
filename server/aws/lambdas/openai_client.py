@@ -135,7 +135,7 @@ def _extract_main_theme(text):
     print(f"_extract_main_theme: chatgpt returned {retval}")
     return retval
 
-def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
+def chat_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     assistants_thread_id:str, chat_config:ChatConfiguration, messages,
@@ -150,10 +150,10 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
  
     if toolprompts:
         tools = toolprompts
-        print(f"retrieve_using_openai_assistant: toolprompts specified as {tools}")
+        print(f"chat_using_openai_assistant: toolprompts specified as {tools}")
     else:
         tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE, TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION]
-        print(f"retrieve_using_openai_assistant: toolprompts not specified. Using default of {tools}")
+        print(f"chat_using_openai_assistant: toolprompts not specified. Using default of {tools}")
     assistant = client.beta.assistants.create(
         # Added 'or provide details of the mentioned subject." since openai was not
         # calling our function for a bare chat line such as 'android crypto policy' instead
@@ -203,7 +203,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             seconds = 2**retries
-            logmsg = f"{prtime()}: retrieve_using_openai_assistant: run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
+            logmsg = f"{prtime()}: chat_using_openai_assistant: run.status failed. last_error={run.last_error}. sleeping {seconds} seconds and retrying"
             print(logmsg); tracebuf.append(logmsg)
             time.sleep(seconds)
             retries += 1
@@ -241,7 +241,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             return message.content[0].text.value, assistants_thread_id, run.usage
         elif run.status == 'failed':
             seconds = 2**loopcnt
-            logmsg = f"{prtime()}: retrieve_using_openai_assistant: tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
+            logmsg = f"{prtime()}: chat_using_openai_assistant: tool processing. run.status failed. last_error={run.last_error}. sleeping {seconds} seconds"
             print(logmsg); tracebuf.append(logmsg)
             continue
         else: # run is incomplete
@@ -309,7 +309,7 @@ def retrieve_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
             else:
                 logmsg = "{prtime()}: No tool outputs to submit."
                 print(logmsg); tracebuf.append(logmsg)
-    logmsg = f"{prtime()}: retrieve_using_openai_assistant: tool processing exited loop without reaching complete. returning None"
+    logmsg = f"{prtime()}: chat_using_openai_assistant: tool processing exited loop without reaching complete. returning None"
     print(logmsg); tracebuf.append(logmsg)
     return None, None, None
 

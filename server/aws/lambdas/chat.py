@@ -29,8 +29,8 @@ from fetch_tool_prompts import fetch_tool_prompts
 from text_utils import format_paragraph
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
-from openai_client import retrieve_using_openai_assistant
-from ollama_client import retrieve_using_ollama_assistant
+from openai_client import chat_using_openai_assistant
+from ollama_client import chat_using_ollama_assistant
 from yoja_retrieve import get_max_token_limit
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
@@ -48,9 +48,9 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
 
 def _get_retriever_function():
     if 'OLLAMA_HOST' in os.environ:
-        return retrieve_using_ollama_assistant
+        return chat_using_ollama_assistant
     if 'OPENAI_API_KEY' in os.environ:
-        return retrieve_using_openai_assistant
+        return chat_using_openai_assistant
     return None
 
 def ongoing_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
@@ -160,12 +160,12 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
                 para_dict = chunk_det.para_dict
                 if chunk_det.file_path:
                     context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
-                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id, para_dict),
-                                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
+                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_path, chunk_det.file_name, chunk_det.file_id, para_dict),
+                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
                 else:
                     context_srcs_links.append(ContextSource("", chunk_det.file_name,
-                                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_id, para_dict),
-                                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
+                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, None, chunk_det.file_name, chunk_det.file_id, para_dict),
+                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
     return context_srcs_links
 
 def new_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
@@ -307,10 +307,19 @@ def chat_completions(event, context):
                                                     chat_config=chat_config, tracebuf=tracebuf,
                                                     build_faiss_indexes=False, sub_prefix='dropbox')
             if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
+        elif ss1.startswith('[local]'):
+            searchsubdir = ss1[7:].lstrip('/').rstrip('/')
+            faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, index_dir, s3client, bucket, prefix,
+                                                    faiss_rm.DocStorageType.Local,
+                                                    chat_config=chat_config, tracebuf=tracebuf,
+                                                    build_faiss_indexes=False, sub_prefix=None)
+            if faiss_rm_vdb: faiss_rms.append(faiss_rm_vdb)
         else:
-            print(f"Error. searchsubdir does not start with [gdrive] or [dropbox]. Ignoring")
+            print(f"Error. searchsubdir does not start with [gdrive], [dropbox] or [local]. Ignoring")
     else:
-        for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive], ['dropbox', faiss_rm.DocStorageType.DropBox] ):
+        for index,doc_storage_type in ( [None, faiss_rm.DocStorageType.GoogleDrive],
+                                        ['dropbox', faiss_rm.DocStorageType.DropBox],
+                                        [None, faiss_rm.DocStorageType.Local] ):
             faiss_rm_vdb:faiss_rm.FaissRM = init_vdb(email, index_dir, s3client, bucket, prefix,
                                                     doc_storage_type,
                                                     chat_config=chat_config, tracebuf=tracebuf,

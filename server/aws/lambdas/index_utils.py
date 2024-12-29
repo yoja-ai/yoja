@@ -393,6 +393,12 @@ def init_vdb(email, index_dir, s3client, bucket, prefix, doc_storage_type:DocSto
     sub_prefix: specify subfolder under which index must be downloaded from.  If not specified, ignored.
     """
     print(f"init_vdb: Entered. email={email}, index_dir={index_dir}, bucket={bucket}, prefix={prefix}, sub_prefix={sub_prefix}")
+    if doc_storage_type == DocStorageType.GoogleDrive and not s3client:
+        return None
+    if doc_storage_type == DocStorageType.DropBox and not s3client:
+        return None
+    if doc_storage_type == DocStorageType.Local and not index_dir:
+        return None
     user_prefix = f"{prefix}/{email}" + f"{'/' + sub_prefix if sub_prefix else ''}"
     tracebuf.append(f"{prtime()} init_vdb: Entered. index_dir={index_dir}, bucket={bucket}, prefix={user_prefix}")
     fls = {}

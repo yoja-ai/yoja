@@ -36,23 +36,6 @@ TOOL_SEARCH_QUESTION_IN_DB = {
         }
     }
 }
-TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE = {
-    "type": "function",
-    "function": {
-        "name": "search_question_in_db_return_more",
-        "description": "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject. Use this tool only if you want additional results than those returned by the tool search_question_in_db",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The question for which passages need to be searched"
-                },
-            },
-            "required": ["question"]
-        }
-    }
-}
 TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION = {
     "type": "function",
     "function": {
@@ -135,7 +118,7 @@ class ollama_run_usage:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
 
-def retrieve_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
+def chat_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     assistants_thread_id:str, chat_config:ChatConfiguration, messages,
@@ -143,15 +126,15 @@ def retrieve_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
-    Returns the tuple (output, thread_id).  REturns (None, NOne) on failure.
+    Returns the tuple (output, thread_id).  Returns (None, None) on failure.
     """
-    last_msg:str = messages[-1]['content']
+    print(f"chat_using_ollama_assistant: Entered. faiss_rms={faiss_rms}")
     if toolprompts:
         tools = toolprompts
-        print(f"retrieve_using_ollama_assistant: toolprompts specified as {tools}")
+        print(f"chat_using_ollama_assistant: toolprompts specified as {tools}")
     else:
-        tools = [TOOL_SEARCH_QUESTION_IN_DB, TOOL_SEARCH_QUESTION_IN_DB_RETURN_MORE, TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION]
-        print(f"retrieve_using_ollama_assistant: toolprompts not specified. Using default of {tools}")
+        tools = [TOOL_SEARCH_QUESTION_IN_DB] #, TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION]
+        print(f"chat_using_ollama_assistant: toolprompts not specified. Using default of {tools}")
     ollama_messages = []
     for msg in messages:
         ollama_messages.append({'role': msg['role'], 'content': msg['content']})
