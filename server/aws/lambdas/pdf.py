@@ -17,7 +17,6 @@ import select
 import shutil
 
 PARALLEL_PROCESSES=os.cpu_count()-1 if os.cpu_count() > 1 else 1
-print(f"pdf: using {PARALLEL_PROCESSES} cpus for processing pdfs")
 
 def get_pdf_info(pdf_file_name):
     try:
@@ -156,7 +155,7 @@ def _tesseract_pages(email, index_dir, filename, start_page, num_pages_this_time
                 for fd, flag in events:
                     if flag & (select.POLLIN | select.POLLPRI):
                         bts=os.read(fd, 10248)
-                        print(f"[{fd_to_processinfo[fd].process.pid}] {bts.decode('utf-8').rstrip()}")
+                        # print(f"[{fd_to_processinfo[fd].process.pid}] {bts.decode('utf-8').rstrip()}") # stdout from tesseract
                     elif flag & select.POLLHUP:
                         poller.unregister(fd)
                         items_in_poll -= 1

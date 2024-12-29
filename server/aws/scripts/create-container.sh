@@ -12,9 +12,8 @@ else
     fi
 fi
 
-/bin/rm -rf ./lambdas/www >& /dev/null
-/bin/mkdir -p lambdas/www >& /dev/null
-(cd ../../html_new; ./scripts/copy-to-local.sh `pwd`/lambdas/www) >& /tmp/t.log
+HERE=`pwd`
+(cd ../../html_new; ./scripts/copy-to-local.sh ${HERE}/lambdas/www) >& /tmp/t.log
 
 (cd lambdas; docker build -t yoja-img .) >& /dev/null
 

@@ -61,7 +61,6 @@ vectorizer_cache = {}
 def get_vectorizer(email, tracebuf):
     global vectorizer_cache
     if email in vectorizer_cache:
-        print(f"get_vectorizer: Returning {type(vectorizer_cache[email])} object from cache for {email}")
         return vectorizer_cache[email]
     item = get_user_table_entry(email)
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
@@ -907,7 +906,6 @@ class LocalFileReader(StorageReader):
         self._dir_details = dir_details
 
     def read(self, fileid, filename, mimetype):
-        print(f"LocalFileReader.read: Entered. fileid={fileid}, filename={filename}, mimetype={mimetype}")
         finfo = self._file_details[fileid]
         path = ""
         while True:
@@ -918,7 +916,6 @@ class LocalFileReader(StorageReader):
             path = os.path.join(dirinfo['filename'], path)
             finfo = dirinfo
         full_fn = os.path.join(self._docs_dir, path, filename)
-        print(f"LocalFileReader._read: full_fn={full_fn}")
         with open(full_fn, 'rb') as rfp:
             return io.BytesIO(rfp.read())
 
