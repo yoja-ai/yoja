@@ -155,7 +155,6 @@ def retrieve_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_
     ollama_messages = []
     for msg in messages:
         ollama_messages.append({'role': msg['role'], 'content': msg['content']})
-    print(f"AAAAAAAAAAAAAAAAAAAAA {ollama_messages}")
     response = ollama.chat(model=ASSISTANTS_MODEL,
             messages = ollama_messages,
             tools = tools

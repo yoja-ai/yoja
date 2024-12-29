@@ -56,9 +56,7 @@ def _render_png(email, index_dir, filename, start_page, num_pages_this_time, tmp
         renv['OMP_THREAD_LIMIT']='1'
         fnx_start = datetime.datetime.now()
         outer_loop_max=int((num_pages_this_time+(PARALLEL_PROCESSES-1))/PARALLEL_PROCESSES)
-        print(f"_render_png: outer_loop_max={outer_loop_max}")
         for outer_loop_count in range(outer_loop_max):
-            print(f"_render_png: outer loop begin: outer_loop_count={outer_loop_count}")
             extend_lock_time(email, index_dir, lambda_time_left_seconds())
             processes=[]
             fd_to_process={}
