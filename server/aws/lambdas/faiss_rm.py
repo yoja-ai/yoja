@@ -275,6 +275,9 @@ class FaissRM():
         if self._bm25s_retriever:
             if named_entities:
                 self._lg(f"{prtime()}: named_entities present = {named_entities}")
+                if main_theme:
+                    self._lg(f"{prtime()}: main theme also present = {main_theme}. Searching for both")
+                    named_entities.append(main_theme)
                 named_entity_tokens = bm25s.tokenize(named_entities, stopwords="en", stemmer=self._stemmer)
                 #results = self._bm25s_retriever.retrieve(named_entity_tokens, self._index_map, k=BM25_NUM_HITS)
                 results = self._bm25s_retriever.retrieve(named_entity_tokens, k=BM25_NUM_HITS)

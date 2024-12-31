@@ -68,17 +68,24 @@ def _extract_json(text):
 
 def _extract_named_entities(text):
     model = genai.GenerativeModel(ASSISTANTS_MODEL)
-    gemini_messages = [{'role': 'user', 'parts': [f"Extract any named entities present in the sentence. Return a JSON object in this format: {{ 'entities': ['entity1', 'entity2'] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}"]}]
+    gemini_messages = [{'role': 'user', 'parts': [f'Extract any named entities present in the sentence. Return a parseable JSON object in this format: {{ "entities": ["entity1", "entity2"] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}']}]
     response = model.generate_content(gemini_messages)
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                         and response.candidates[0].content.parts[0].text:
+        print(f"_extract_name_entities: response={response}")
         content = response.candidates[0].content.parts[0].text.strip()
-        jss = _extract_json(content)
+        print(f"_extract_name_entities: content={content}")
         try:
-            js = json.loads(jss)
+            js = json.loads(content)
         except Exception as ex:
-            print(f"gemini_client._extract_named_entities: caught {ex}")
-            return None
+            print(f"gemini_client._extract_named_entities: caught {ex} decoding content {content}")
+            jss = _extract_json(content)
+            print(f"_extract_name_entities: jss={jss}")
+            try:
+                js = json.loads(jss)
+            except Exception as ex:
+                print(f"gemini_client._extract_named_entities: caught {ex}")
+                return None
         if 'entities' in js and js['entities']:
             return js['entities']
     return None
@@ -107,7 +114,7 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
     Returns the tuple (output, thread_id).  Returns (None, None) on failure.
     """
-    print(f"chat_using_gemini_assistant: Entered. faiss_rms={faiss_rms}. yoja_retrieve={yoja_retrieve}")
+    print(f"chat_using_gemini_assistant: Entered. faiss_rms={faiss_rms}. yoja_retrieve={yoja_retrieve}, messages={messages}")
     model = genai.GenerativeModel(ASSISTANTS_MODEL, tools=yoja_retrieve, tool_config=tool_config)
     print(f"model={model}")
     gemini_messages = []
