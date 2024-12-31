@@ -1,4 +1,5 @@
 import google.generativeai as genai
+from google.api_core.exceptions import InternalServerError
 import os
 from typing import Tuple, List, Dict, Any, Self
 import faiss_rm
@@ -6,6 +7,8 @@ from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 import json
 from utils import prtime, llm_run_usage
+from yoja_retrieve import get_context
+import time
 
 #ASSISTANTS_MODEL="gemini-1.5-flash"
 ASSISTANTS_MODEL="gemini-pro"
@@ -82,7 +85,17 @@ def _extract_named_entities(text):
 
 def _calc_tokens(prompt):
     model = genai.GenerativeModel(ASSISTANTS_MODEL)
-    return model.count_tokens(prompt)
+    return model.count_tokens(prompt).total_tokens
+
+def _generate_with_retry(model, gemini_messages):
+    for attempt in range(1, 4):
+        try:
+            return model.generate_content(gemini_messages)
+        except InternalServerError as ise:
+            print(f"_generate_with_retry: Caught InternalServerError. attempt {attempt}")
+            time.sleep(attempt*5)
+    print(f"_generate_with_retry: Failed")
+    return None
 
 def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
@@ -98,35 +111,41 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     model = genai.GenerativeModel(ASSISTANTS_MODEL, tools=yoja_retrieve, tool_config=tool_config)
     print(f"model={model}")
     gemini_messages = []
-    gemini_messages.append({'role': 'user', 'parts': [messages[-1]['content']]})
+    user_chat_msg = messages[-1]['content']
+    gemini_messages.append({'role': 'user', 'parts': [user_chat_msg]})
     print(f"gemini_messages={gemini_messages}")
-    response = model.generate_content(gemini_messages)
+    response = _generate_with_retry(model, gemini_messages)
     print(response)
 
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                         and response.candidates[0].content.parts[0].function_call:
         fc = response.candidates[0].content.parts[0].function_call
-        if fc.name == 'info_for_any_question_I_may_have':
+        #if fc.name == 'info_for_any_question_I_may_have' or fc.name == 'run_extension':
+        if 'question' in fc.args:
             tool_arg_question = fc.args['question']
-            context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                        filekey_to_file_chunks_dict, chat_config, tool_arg_question,
-                                        True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
-                                        extract_main_theme=_extract_main_theme,
-                                        extract_named_entities=_extract_named_entities)
-            print(f"{prtime()}: Tool output: context={context}")
-            tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
-            gemini_messages.append({'role': 'user', 'parts': [
-                    genai.protos.Part(function_response = genai.protos.FunctionResponse(name='info_for_any_question_I_may_have', response={'result': context}))
-                ]})
-            response = model.generate_content(gemini_messages)
-            print(response)
-            if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
-                                                and response.candidates[0].content.parts[0].text:
-                if response.usage_metadata:
-                    return response.candidates[0].content.parts[0].text.strip(), "notused", \
-                        llm_run_usage(response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count)
-                else:
-                    return response.candidates[0].content.parts[0].text.strip(), "notused", llm_run_usage(0, 0)
+        elif 'prompt' in fc.args:
+            tool_arg_question = fc.args['prompt']
+        else:
+            tool_arg_question = user_chat_msg
+        context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                            filekey_to_file_chunks_dict, chat_config, tool_arg_question,
+                            True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
+                            extract_main_theme=_extract_main_theme,
+                            extract_named_entities=_extract_named_entities)
+        print(f"{prtime()}: Tool output: context={context}")
+        tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
+        gemini_messages.append({'role': 'user', 'parts': [
+                genai.protos.Part(function_response = genai.protos.FunctionResponse(name='info_for_any_question_I_may_have', response={'result': context}))
+            ]})
+        response = _generate_with_retry(model, gemini_messages)
+        print(response)
+        if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
+                                            and response.candidates[0].content.parts[0].text:
+            if response.usage_metadata:
+                return response.candidates[0].content.parts[0].text.strip(), "notused", \
+                    llm_run_usage(response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count)
+            else:
+                return response.candidates[0].content.parts[0].text.strip(), "notused", llm_run_usage(0, 0)
 
     return None, None, None
 
