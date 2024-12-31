@@ -31,6 +31,7 @@ from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from openai_client import chat_using_openai_assistant
 from ollama_client import chat_using_ollama_assistant
+from gemini_client import chat_using_gemini_assistant
 from yoja_retrieve import get_max_token_limit
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
@@ -49,6 +50,8 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
 def _get_retriever_function():
     if 'OLLAMA_HOST' in os.environ:
         return chat_using_ollama_assistant
+    if 'GEMINI_API_KEY' in os.environ:
+        return chat_using_gemini_assistant
     if 'OPENAI_API_KEY' in os.environ:
         return chat_using_openai_assistant
     return None

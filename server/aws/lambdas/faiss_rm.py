@@ -127,10 +127,10 @@ class FaissRM():
                 tracebuf.append(f"{prtime()} FaissRM: faiss_index_ivf_adc created")
             # if size not met, then just use the flat index.
             else:
-                print(f"Not computing IVFADC since not enough embedding vectors: vector count={xb.shape[0]}.  Reusing flat index instead")
+                print(f"Not computing IVFADC since insufficient embedding vectors: vector count={xb.shape[0]}.  Reusing flat index instead")
                 self._faiss_index_ivf_adc = self._faiss_index
         else:
-            print(f"Reading ivfadc index from file {ivfadc_index_fname}.  Note that this can be flat index due to not enough embeddings.")
+            print(f"Reading ivfadc index from file {ivfadc_index_fname}.  Note that this can be flat index due to insufficient embeddings.")
             self._faiss_index_ivf_adc = faiss.read_index(ivfadc_index_fname)
             self._faiss_index_ivf_adc.nprobe = 16
             tracebuf.append(f"{prtime()} FaissRM: ivfadc index loaded from {ivfadc_index_fname}")

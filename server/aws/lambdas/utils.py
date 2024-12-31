@@ -460,3 +460,8 @@ def prtime():
     nw=datetime.datetime.now()
     return f"{nw.hour}:{nw.minute}:{nw.second}"
 
+class llm_run_usage:
+    def __init__(self, prompt_tokens, completion_tokens):
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+

@@ -123,6 +123,7 @@ RUN pip3 install jax[cpu]
 RUN pip3 install ollama
 RUN pip3 install gunicorn
 RUN pip3 install flask
+RUN pip3 install google-generativeai
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}
@@ -153,6 +154,7 @@ COPY documentchunk.py ${LAMBDA_TASK_ROOT}
 COPY chatconfig.py ${LAMBDA_TASK_ROOT}
 COPY yoja_retrieve.py ${LAMBDA_TASK_ROOT}
 COPY ollama_client.py ${LAMBDA_TASK_ROOT}
+COPY gemini_client.py ${LAMBDA_TASK_ROOT}
 COPY www ${LAMBDA_TASK_ROOT}/
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

@@ -3,7 +3,7 @@ import sys
 import io
 import json
 from typing import Tuple, List, Dict, Any, Self
-from utils import prtime
+from utils import prtime, llm_run_usage
 import faiss_rm
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
@@ -113,11 +113,6 @@ def _process_tool_call(supplied_tools, tool,
                 tool_outputs += tool_output
     return tool_outputs
 
-class ollama_run_usage:
-    def __init__(self, prompt_tokens, completion_tokens):
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
-
 def chat_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
                                     index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
@@ -157,6 +152,6 @@ def chat_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
             )
     print(response)
     if response.message and response.message.content:
-        return response.message.content, "notused", ollama_run_usage(response.prompt_eval_count, response.eval_count)
+        return response.message.content, "notused", llm_run_usage(response.prompt_eval_count, response.eval_count)
     else:
         return None, None, None
