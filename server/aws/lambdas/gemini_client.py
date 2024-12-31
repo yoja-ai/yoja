@@ -118,41 +118,43 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     model = genai.GenerativeModel(ASSISTANTS_MODEL, tools=yoja_retrieve, tool_config=tool_config)
     print(f"model={model}")
     gemini_messages = []
-    user_chat_msg = messages[-1]['content']
-    gemini_messages.append({'role': 'user', 'parts': [user_chat_msg]})
+    for msg in messages:
+        if msg['role'] != 'user':
+            msg['role'] = 'model'
+        gemini_messages.append({'role': msg['role'], 'parts': [msg['content']]})
     print(f"gemini_messages={gemini_messages}")
     response = _generate_with_retry(model, gemini_messages)
     print(response)
 
-    if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
-                                        and response.candidates[0].content.parts[0].function_call:
-        fc = response.candidates[0].content.parts[0].function_call
-        #if fc.name == 'info_for_any_question_I_may_have' or fc.name == 'run_extension':
-        if 'question' in fc.args:
-            tool_arg_question = fc.args['question']
-        elif 'prompt' in fc.args:
-            tool_arg_question = fc.args['prompt']
-        else:
-            tool_arg_question = user_chat_msg
-        context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0:
+        if response.candidates[0].content.parts[0].function_call:
+            fc = response.candidates[0].content.parts[0].function_call
+            if 'question' in fc.args:
+                tool_arg_question = fc.args['question']
+            elif 'prompt' in fc.args:
+                tool_arg_question = fc.args['prompt']
+            else:
+                tool_arg_question = gemini_messages[-1]['parts'][0]
+            context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                             True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                             extract_main_theme=_extract_main_theme,
                             extract_named_entities=_extract_named_entities)
-        print(f"{prtime()}: Tool output: context={context}")
-        tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
-        gemini_messages.append({'role': 'user', 'parts': [
+            print(f"{prtime()}: Tool output: context={context}")
+            tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
+            gemini_messages.append({'role': 'user', 'parts': [
                 genai.protos.Part(function_response = genai.protos.FunctionResponse(name='info_for_any_question_I_may_have', response={'result': context}))
-            ]})
-        response = _generate_with_retry(model, gemini_messages)
-        print(response)
-        if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
+                ]})
+            print(f"gemini_messages after get_context={gemini_messages}")
+            response = _generate_with_retry(model, gemini_messages)
+            print(response)
+            if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                             and response.candidates[0].content.parts[0].text:
-            if response.usage_metadata:
                 return response.candidates[0].content.parts[0].text.strip(), "notused", \
                     llm_run_usage(response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count)
-            else:
-                return response.candidates[0].content.parts[0].text.strip(), "notused", llm_run_usage(0, 0)
+        elif response.candidates[0].content.parts[0].text:
+            return response.candidates[0].content.parts[0].text, "notused", \
+                        llm_run_usage(response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count)
 
     return None, None, None
 
