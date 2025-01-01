@@ -481,7 +481,11 @@ def get_s3_index(index_dir, s3client, bucket, prefix) -> Dict[str, dict]:
     rv = {}
     if index_dir:
         files_index_jsonl_gz = os.path.join(index_dir, os.path.basename(FILES_INDEX_JSONL_GZ))
-        sts = True
+        try:
+            with gzip.open(files_index_jsonl_gz, "rb") as rfp:
+                sts = True
+        except Exception as ex:
+            sts = False
     else:
         files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
         sts = download_files_index(s3client, bucket, prefix, False)
