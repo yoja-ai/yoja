@@ -281,45 +281,6 @@ FAISS_INDEX_IVFADC = "/tmp/faiss_index_ivfadc"
 BM25S_INDEX = "/tmp/bm25s_index"
 BM25S_INDEX_TAR = "/tmp/bm25s_index.tar"
 
-def make_temp_copy(index_dir, copy_faiss_index):
-    src = os.path.join(index_dir, os.path.basename(FILES_INDEX_JSONL_GZ))
-    dst = FILES_INDEX_JSONL_GZ
-    try:
-        shutil.copy2(src, dst)
-    except Exception as ex:
-        print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
-        return False
-    src = os.path.join(index_dir, os.path.basename(INDEX_METADATA_JSON))
-    dst = INDEX_METADATA_JSON
-    try:
-        shutil.copy2(src, dst)
-    except Exception as ex:
-        print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
-        return False
-    if copy_faiss_index:
-        src = os.path.join(index_dir, os.path.basename(FAISS_INDEX_FLAT))
-        dst = FAISS_INDEX_FLAT
-        try:
-            shutil.copy2(src, dst)
-        except Exception as ex:
-            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
-            return False
-        src = os.path.join(index_dir, os.path.basename(FAISS_INDEX_IVFADC))
-        dst = FAISS_INDEX_IVFADC
-        try:
-            shutil.copy2(src, dst)
-        except Exception as ex:
-            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
-            return False
-        src = os.path.join(index_dir, os.path.basename(BM25S_INDEX_TAR))
-        dst = BM25S_INDEX_TAR
-        try:
-            shutil.copy2(src, dst)
-        except Exception as ex:
-            print(f"make_temp_copy: Caught {ex} copying {src} to {dst}")
-            return False
-    return True
-
 def download_files_index(s3client, bucket, prefix, download_faiss_index) -> bool:
     """ download the jsonl file that has a line for each file in the google drive; download it to /tmp/files_index.jsonl   
         download_faiss_index:  download the built faiss indexes to local storage (in addition to above jsonl file)
@@ -404,15 +365,25 @@ def init_vdb(email, index_dir, s3client, bucket, prefix, doc_storage_type:DocSto
     fls = {}
     embeddings = []
     index_map = [] # list of (fileid, paragraph_index)
-    flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
-    ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
-    bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX_TAR
     if index_dir:
-        sts = make_temp_copy(index_dir, not build_faiss_indexes)
+        files_index_jsonl_gz = os.path.join(index_dir, os.path.basename(FILES_INDEX_JSONL_GZ))
+        if build_faiss_indexes:
+            flat_index_fname=None
+            ivfadc_index_fname=None
+            bm25s_index_fname=None
+        else:
+            flat_index_fname=os.path.join(index_dir, os.path.basename(FAISS_INDEX_FLAT))
+            ivfadc_index_fname=os.path.join(index_dir, os.path.basename(FAISS_INDEX_IVFADC))
+            bm25s_index_fname=os.path.join(index_dir, os.path.basename(BM25S_INDEX_TAR))
+        sts = True
     else:
+        files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
+        flat_index_fname=None if build_faiss_indexes else FAISS_INDEX_FLAT
+        ivfadc_index_fname=None if build_faiss_indexes else FAISS_INDEX_IVFADC
+        bm25s_index_fname=None if build_faiss_indexes else BM25S_INDEX_TAR
         sts = download_files_index(s3client, bucket, user_prefix, not build_faiss_indexes)
     if sts:
-        with gzip.open(FILES_INDEX_JSONL_GZ, "r") as rfp:
+        with gzip.open(files_index_jsonl_gz, "r") as rfp:
             for line in rfp:
                 finfo = json.loads(line)
                 finfo['mtime'] = from_rfc3339(finfo['mtime'])
@@ -509,11 +480,13 @@ def calc_file_lists(service, s3_index, gdrive_listing, folder_details) -> Tuple[
 def get_s3_index(index_dir, s3client, bucket, prefix) -> Dict[str, dict]:
     rv = {}
     if index_dir:
-        sts = make_temp_copy(index_dir, False)
+        files_index_jsonl_gz = os.path.join(index_dir, os.path.basename(FILES_INDEX_JSONL_GZ))
+        sts = True
     else:
+        files_index_jsonl_gz = FILES_INDEX_JSONL_GZ
         sts = download_files_index(s3client, bucket, prefix, False)
     if sts:
-        with gzip.open(FILES_INDEX_JSONL_GZ, "rb") as rfp:
+        with gzip.open(files_index_jsonl_gz, "rb") as rfp:
             for line in rfp:
                 ff = json.loads(line)
                 ff['mtime'] = from_rfc3339(ff['mtime'])
@@ -1258,7 +1231,7 @@ def _read_index_metadata_json_local() -> IndexMetadata:
     return index_metadata
     
 def update_files_index_jsonl(done_embedding, unmodified, index_dir, bucket, user_prefix, s3client):
-    print(f"update_files_index_jsonl: Entered index_dir={index_dir}, bucket={bucket}, use_prefilx={user_prefix} . num new embeddings={len(done_embedding.items())}, num unmodified={len(unmodified.items())}")
+    print(f"update_files_index_jsonl: Entered index_dir={index_dir}, bucket={bucket}, use_prefix={user_prefix} . num new embeddings={len(done_embedding.items())}, num unmodified={len(unmodified.items())}")
     # consolidate unmodified and done_embedding
     for fileid, file_item in done_embedding.items():
         unmodified[fileid] = file_item
@@ -1740,6 +1713,10 @@ def _get_details_recursively(path, parent_fileid, file_details, dir_details):
         except Exception as e:
             print(f"Error reading entry: {entry_path} - {e}")
 
+def _print_s3_index(s3_index):
+    for ky, vl in s3_index.items():
+        print(f"s3_index {ky}={vl['path']}{vl['filename']} partial={vl['partial'] if 'partial' in vl else 'Not present'} size={vl['size']}, mtime={vl['mtime']}, num paras={str(len(vl['paragraphs'])) if 'paragraphs' in vl else 'not present'}")
+
 def update_index_for_user_local(email, index_dir, docs_dir):
     print(f'update_index_for_user_local: Entered. email={email}, index_dir={index_dir}, docs_dir={docs_dir}')
     docs_dir_stat = os.stat(docs_dir)
@@ -1747,9 +1724,8 @@ def update_index_for_user_local(email, index_dir, docs_dir):
     file_details = {}
     dir_details = {docs_dir_fileid: {"filename": docs_dir, "fileid": docs_dir_fileid}} # we use 1 as the dummy fileid for the docs_dir
     _get_details_recursively(docs_dir, docs_dir_fileid, file_details, dir_details)
-    print(f"update_index_for_user_local: dir_details={dir_details}, file_details={file_details}")
     s3_index:Dict[str, dict] = get_s3_index(index_dir, None, None, None)
-    print(f"update_index_for_user_local: s3_index={s3_index}")
+    _print_s3_index(s3_index)
     unmodified, needs_embedding, deleted_files = calc_file_lists(None, s3_index, file_details, dir_details)
     # remove deleted files from the index
     for fileid in deleted_files:
