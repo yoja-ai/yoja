@@ -264,7 +264,7 @@ class FaissRM():
         """
         queries = [query]
         queries = [q for q in queries if q]  # Filter empty queries
-        embeddings = self._vectorizer(queries)
+        embeddings = self._vectorizer.encode(queries)
         emb_npa = np.array(embeddings, dtype=np.float32)
         faiss.normalize_L2(emb_npa)
 

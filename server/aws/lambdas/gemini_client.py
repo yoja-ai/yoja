@@ -1,4 +1,13 @@
-import google.generativeai as genai
+import vertexai
+from vertexai.generative_models import (
+    Content,
+    FunctionDeclaration,
+    GenerationConfig,
+    GenerativeModel,
+    Part,
+    Tool,
+    ToolConfig,
+)
 from google.api_core.exceptions import InternalServerError
 import os
 from typing import Tuple, List, Dict, Any, Self
@@ -9,46 +18,48 @@ import json
 from utils import prtime, llm_run_usage
 from yoja_retrieve import get_context
 import time
+import base64
 
-#ASSISTANTS_MODEL="gemini-1.5-flash"
-ASSISTANTS_MODEL="gemini-pro"
+ASSISTANTS_MODEL="gemini-1.5-flash"
+#ASSISTANTS_MODEL="gemini-pro"
 
-genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+crs = base64.b64decode(os.environ['GCLOUD_CREDENTIALS']).decode('utf-8')
+with open('/tmp/creds.json', 'w') as wfp:
+    wfp.write(crs)
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/tmp/creds.json'
+vertexai.init(project=os.environ['GCLOUD_PROJECTID'], location="us-central1")
 
-yoja_retrieve = genai.protos.Tool(
-    function_declarations = [
-        genai.protos.FunctionDeclaration(
-            name = "info_for_any_question_I_may_have",
-            #description = "Search confidential and private information and return relevant passages for the given question or search and return relevant passages that provide details of the mentioned subject",
-            #description = "Search user's personal documents collection and provide relevant passages to answer the given question",
-            #description = "Search and retrieve relevant documents from the my personal document collection",
-            #description = "Access my relevant personal documents from my personal document collection",
-            description = "Get information for any question I may have",
-            parameters = genai.protos.Schema(
-                type=genai.protos.Type.OBJECT,
-                properties={
-                    'question': genai.protos.Schema(type=genai.protos.Type.STRING)
-                },
-                required=['question']
-            )
-        )
-    ])
-
-tool_config = genai.protos.ToolConfig(
-    function_calling_config=genai.protos.FunctionCallingConfig(
-        mode=genai.protos.FunctionCallingConfig.Mode.ANY,
-        allowed_function_names=["info_for_any_question_I_may_have"],
-    )
+yoja_retrieve_function = FunctionDeclaration(
+    name="info_for_any_question_I_may_have",
+    description = "Get information for any question I may have",
+    parameters={
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "My question, for which this function will look up information"},
+        },
+        "required": ["question"],
+    },
 )
 
+tool = Tool(function_declarations=[yoja_retrieve_function])
+
 def _extract_main_theme(text):
-    model = genai.GenerativeModel(ASSISTANTS_MODEL)
-    gemini_messages = [{'role': 'user', 'parts': [f"Extract the main topic as a single word in the following sentence and return the result as a single word: {text}"]}]
-    response = model.generate_content(gemini_messages)
+    model = GenerativeModel(model_name=ASSISTANTS_MODEL)
+    user_prompt_content = Content(
+        role="user",
+        parts=[
+            Part.from_text(f"Extract the main topic as a single word in the following sentence and return the result as a single word: {text}"),
+        ],
+    )
+    response = model.generate_content(
+        user_prompt_content,
+        generation_config=GenerationConfig(temperature=0)
+    )
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                         and response.candidates[0].content.parts[0].text:
         return response.candidates[0].content.parts[0].text.strip()
     return None
+    
 
 def _extract_json(text):
     lines = text.splitlines()
@@ -67,9 +78,18 @@ def _extract_json(text):
     return '\n'.join(code_array)
 
 def _extract_named_entities(text):
-    model = genai.GenerativeModel(ASSISTANTS_MODEL)
-    gemini_messages = [{'role': 'user', 'parts': [f'Extract any named entities present in the sentence. Return a parseable JSON object in this format: {{ "entities": ["entity1", "entity2"] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}']}]
-    response = model.generate_content(gemini_messages)
+    model = GenerativeModel(model_name=ASSISTANTS_MODEL)
+    user_prompt_content = Content(
+        role="user",
+        parts=[
+            Part.from_text(
+f'Extract any named entities present in the sentence. Return a parseable JSON object in this format: {{ "entities": ["entity1", "entity2"] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}'),
+        ],
+    )
+    response = model.generate_content(
+        user_prompt_content,
+        generation_config=GenerationConfig(temperature=0)
+    )
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                         and response.candidates[0].content.parts[0].text:
         print(f"_extract_name_entities: response={response}")
@@ -91,13 +111,16 @@ def _extract_named_entities(text):
     return None
 
 def _calc_tokens(prompt):
-    model = genai.GenerativeModel(ASSISTANTS_MODEL)
+    model = GenerativeModel(ASSISTANTS_MODEL)
     return model.count_tokens(prompt).total_tokens
 
-def _generate_with_retry(model, gemini_messages):
+def _generate_with_retry(model, vertex_messages, tools=None, tool_config=None):
     for attempt in range(1, 4):
         try:
-            return model.generate_content(gemini_messages)
+            if tools and tool_config:
+                return model.generate_content(vertex_messages, tools=tools, tool_config=tool_config)
+            else:
+                return model.generate_content(vertex_messages)
         except InternalServerError as ise:
             print(f"_generate_with_retry: Caught InternalServerError. attempt {attempt}")
             time.sleep(attempt*5)
@@ -114,16 +137,31 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
     Returns the tuple (output, thread_id).  Returns (None, None) on failure.
     """
-    print(f"chat_using_gemini_assistant: Entered. faiss_rms={faiss_rms}. yoja_retrieve={yoja_retrieve}, messages={messages}")
-    model = genai.GenerativeModel(ASSISTANTS_MODEL, tools=yoja_retrieve, tool_config=tool_config)
+    print(f"chat_using_gemini_assistant: Entered. faiss_rms={faiss_rms}. tool={tool}, messages={messages}")
+    tools=[tool]
+    tool_config=ToolConfig(
+        function_calling_config=ToolConfig.FunctionCallingConfig(
+            # ANY mode forces the model to predict only function calls
+            mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+            # Allowed function calls to predict when the mode is ANY. If empty, any  of
+            # the provided function calls will be predicted.
+            allowed_function_names=["info_for_any_question_I_may_have"],
+        )
+    )
+    model = GenerativeModel(
+                model_name=ASSISTANTS_MODEL,
+                system_instruction="You are a helpful assistant. Help me using knowledge from the provided tool only. Do not use your own knowledge to fullfil my requests"
+                )
     print(f"model={model}")
-    gemini_messages = []
+    vertex_messages = []
     for msg in messages:
-        if msg['role'] != 'user':
-            msg['role'] = 'model'
-        gemini_messages.append({'role': msg['role'], 'parts': [msg['content']]})
-    print(f"gemini_messages={gemini_messages}")
-    response = _generate_with_retry(model, gemini_messages)
+        if msg['role'] == 'user':
+            role = 'user'
+        else:
+            role = 'model'
+        vertex_messages.append(Content(role=role, parts=[Part.from_text(msg['content'])]))
+    print(f"vertex_messages={vertex_messages}")
+    response = _generate_with_retry(model, vertex_messages, tools, tool_config)
     print(response)
 
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0:
@@ -134,7 +172,7 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
             elif 'prompt' in fc.args:
                 tool_arg_question = fc.args['prompt']
             else:
-                tool_arg_question = gemini_messages[-1]['parts'][0]
+                tool_arg_question = vertex_messages[-1]['parts'][0]
             context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                             True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
@@ -142,11 +180,10 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
                             extract_named_entities=_extract_named_entities)
             print(f"{prtime()}: Tool output: context={context}")
             tracebuf.append(f"{prtime()}: Tool output: context={context[:64]}...")
-            gemini_messages.append({'role': 'user', 'parts': [
-                genai.protos.Part(function_response = genai.protos.FunctionResponse(name='info_for_any_question_I_may_have', response={'result': context}))
-                ]})
-            print(f"gemini_messages after get_context={gemini_messages}")
-            response = _generate_with_retry(model, gemini_messages)
+            vertex_messages.append(response.candidates[0].content)
+            vertex_messages.append(Content(parts=[Part.from_function_response(name='info_for_any_question_I_may_have', response={'content': context})]))
+            print(f"vertex_messages after get_context={vertex_messages}")
+            response = _generate_with_retry(model, vertex_messages)
             print(response)
             if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                             and response.candidates[0].content.parts[0].text:

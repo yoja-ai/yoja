@@ -223,7 +223,7 @@ def read_pdf(email, index_dir, filename, fileid, bio, mtime, vectorizer, prev_pa
             chunk = chunks[ind]
             para_dct = {'paragraph_text':chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             try:
-                embedding = vectorizer([f"The name of the file is {filename} and the paragraph is {chunk}"])
+                embedding = vectorizer.encode([f"The name of the file is {filename} and the paragraph is {chunk}"])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem
                 doc_dct['paragraphs'].append(para_dct)

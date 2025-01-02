@@ -84,21 +84,40 @@ RUN pip3 install einops
 RUN pip3 install python-docx
 RUN pip3 install reportlab 
 
+#RUN python3 -c "\
+#from huggingface_hub import hf_hub_download;\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#from transformers import AutoModel, AutoTokenizer;\
+#model = AutoModel.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#tokenizer = AutoTokenizer.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+#model.half();\
+#model.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3');\
+#tokenizer.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3')" && \
+#    /bin/rm -rf ${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full
+
 RUN python3 -c "\
 from huggingface_hub import hf_hub_download;\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='vocab.txt', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-hf_hub_download(repo_id='sentence-transformers/msmarco-distilbert-base-dot-prod-v3', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='config.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='modules.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='sentence_bert_config.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='model.safetensors', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='tokenizer_config.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='vocab.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='tokenizer.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='special_tokens_map.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+hf_hub_download(repo_id='ibm-granite/granite-embedding-125m-english', filename='1_Pooling/config.json', local_dir='${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full/1_Pooling');\
 from transformers import AutoModel, AutoTokenizer;\
-model = AutoModel.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
-tokenizer = AutoTokenizer.from_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full');\
+model = AutoModel.from_pretrained('${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
+tokenizer = AutoTokenizer.from_pretrained('${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full');\
 model.half();\
-model.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3');\
-tokenizer.save_pretrained('${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3')" && \
-    /bin/rm -rf ${LAMBDA_TASK_ROOT}/sentence-transformers/msmarco-distilbert-base-dot-prod-v3-full
+model.save_pretrained('${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english');\
+tokenizer.save_pretrained('${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english')" && \
+    /bin/rm -rf ${LAMBDA_TASK_ROOT}/ibm-granite/granite-embedding-125m-english-full
 
 RUN python3 -c "\
 from huggingface_hub import hf_hub_download;\
@@ -123,7 +142,8 @@ RUN pip3 install jax[cpu]
 RUN pip3 install ollama
 RUN pip3 install gunicorn
 RUN pip3 install flask
-RUN pip3 install google-generativeai
+#RUN pip3 install google-generativeai
+RUN pip3 install --upgrade google-cloud-aiplatform
 
 COPY entrypoint.py ${LAMBDA_TASK_ROOT}
 COPY getversion.py ${LAMBDA_TASK_ROOT}

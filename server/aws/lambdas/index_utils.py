@@ -66,14 +66,11 @@ def get_vectorizer(email, tracebuf):
     if 'CustomModelBucket' in item and 'CustomModelObjectKey' in item:
         vectorizer_cache[email] = CustomModel(item['CustomModelBucket']['S'], item['CustomModelObjectKey']['S'], tracebuf)
         print(f"get_vectorizer: CustomModelBucket {item['CustomModelBucket']['S']} CustomModelObjectKey {item['CustomModelObjectKey']['S']}. Returning {type(vectorizer_cache[email])} object from cache for {email}")
-    elif os.path.isdir('/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'):
-        vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3(
-                tokenizer_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3',
-                model_name_or_path='/var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3'
-            )
-        print(f"get_vectorizer: isdir /var/task/sentence-transformers/msmarco-distilbert-base-dot-prod-v3. Returning {type(vectorizer_cache[email])} object from cache for {email}")
+    elif os.path.isdir('/var/task/ibm-granite/granite-embedding-125m-english'):
+        vectorizer_cache[email] = SentenceTransformer('/var/task/ibm-granite/granite-embedding-125m-english')
+        print(f"get_vectorizer: isdir /var/task/ibm-granite/granite-embedding-125m-english Returning {type(vectorizer_cache[email])} object from cache for {email}")
     else:
-        vectorizer_cache[email] = MsmarcoDistilbertBaseDotProdV3()
+        vectorizer_cache[email] = SentenceTransformer("ibm-granite/granite-embedding-125m-english")
         print(f"get_vectorizer: No custom model and no model in /var. Returning {type(vectorizer_cache[email])} object from cache for {email}")
     return vectorizer_cache[email]
 
@@ -505,13 +502,13 @@ def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
     doc = docx.Document(file_io)
     vectorizer = get_vectorizer(email, [])
     prelude = f"The filename is {filename} and the paragraphs are:"
-    prelude_token_len = vectorizer.get_token_count(prelude)
+    prelude_token_len = len(vectorizer.tokenizer(prelude, max_length=512, padding=True, truncation=True)['input_ids'])
     chunk_len = prelude_token_len
     chunk_paras = []
     for parag in doc.paragraphs:
         para = parag.text
         if para:
-            para_len = vectorizer.get_token_count(para)
+            para_len = len(vectorizer.tokenizer(para, max_length=512, padding=True, truncation=True)['input_ids'])
             if para_len + chunk_len >= 512:
                 if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
                     chunk_len = prelude_token_len
@@ -520,7 +517,7 @@ def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
                 chunk = '.'.join(chunk_paras)
                 para_dct = {'paragraph_text': chunk} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
                 try:
-                    embedding = vectorizer([f"{prelude}{chunk}"])
+                    embedding = vectorizer.encode([f"{prelude}{chunk}"])
                     eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                     para_dct['embedding'] = eem
                 except Exception as ex:
@@ -541,7 +538,7 @@ def read_docx(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
             para_dct = {} # {'paragraph_text': 'Module 2: How To Manage Change', 'embedding': 'gASVCBsAAAAAAA...GVhLg=='}
             para_dct['paragraph_text'] = chunk
             try:
-                embedding = vectorizer([f"{prelude}{chunk}"])
+                embedding = vectorizer.encode([f"{prelude}{chunk}"])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem
             except Exception as ex:
@@ -569,7 +566,7 @@ def read_xlsx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_ro
                         row_dct = {'text': rowstrings, 'row_number': row}
                         chu = f"The file is named '{filename}', the sheet in the file is named '{sn}' and the row contains '{rowstrings}'"
                         try:
-                            row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer([chu]))).decode('ascii')
+                            row_dct['embedding'] = base64.b64encode(pickle.dumps(vectorizer.encode([chu]))).decode('ascii')
                         except Exception as ex:
                             print(f"Exception {ex} while creating embedding for row")
                         workbook['rows'].append(row_dct)
@@ -605,7 +602,7 @@ def read_pptx(email, filename, fileid, file_io, mtime:datetime.datetime, prev_sl
             slide_dct = {"text": slide_text}
             chu = f"The content of the slide is {slide_text}"
         if ind >= len(prev_slides): # skip past prev_slides
-            embedding = vectorizer([chu])
+            embedding = vectorizer.encode([chu])
             try:
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 slide_dct['embedding'] = eem
@@ -626,12 +623,12 @@ def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime
     fulltxt = file_io.getvalue().decode('utf-8')
     sentences = fulltxt.split('.')
     prelude = f"The filename is {filename} and the paragraphs are:"
-    prelude_token_len = vectorizer.get_token_count(prelude)
+    prelude_token_len = len(vectorizer.tokenizer(prelude, max_length=512, padding=True, truncation=True)['input_ids'])
     chunk_len = prelude_token_len
     chunk_paras = []
     for para in sentences:
         if para:
-            para_len = vectorizer.get_token_count(para)
+            para_len = len(vectorizer.tokenizer(para, max_length=512, padding=True, truncation=True)['input_ids'])
             if para_len + chunk_len >= 512:
                 if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
                     chunk_len = prelude_token_len
@@ -640,7 +637,7 @@ def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime
                 chunk = '.'.join(chunk_paras)
                 para_dct = {'paragraph_text': chunk}
                 try:
-                    embedding = vectorizer([f"{prelude}{chunk}"])
+                    embedding = vectorizer.encode([f"{prelude}{chunk}"])
                     eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                     para_dct['embedding'] = eem
                 except Exception as ex:
@@ -661,7 +658,7 @@ def read_txt(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetime
             para_dct = {}
             para_dct['paragraph_text'] = chunk
             try:
-                embedding = vectorizer([f"{prelude}{chunk}"])
+                embedding = vectorizer.encode([f"{prelude}{chunk}"])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem
             except Exception as ex:
@@ -683,12 +680,12 @@ def read_html(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
         nonl_ss = re.sub(' +', ' ', nonl_text)
         text_paragraphs.append(nonl_ss)
     prelude = f"The filename is {filename} and the paragraphs are:"
-    prelude_token_len = vectorizer.get_token_count(prelude)
+    prelude_token_len = len(vectorizer.tokenizer(prelude, max_length=512, padding=True, truncation=True)['input_ids'])
     chunk_len = prelude_token_len
     chunk_paras = []
     for para in text_paragraphs:
         if para:
-            para_len = vectorizer.get_token_count(para)
+            para_len = len(vectorizer.tokenizer(para, max_length=512, padding=True, truncation=True)['input_ids'])
             if para_len + chunk_len >= 512:
                 if prev_len > len(doc_dct['paragraphs']): # skip previously processed chunks
                     chunk_len = prelude_token_len
@@ -697,7 +694,7 @@ def read_html(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
                 chunk = '.'.join(chunk_paras)
                 para_dct = {'paragraph_text': chunk}
                 try:
-                    embedding = vectorizer([f"{prelude}{chunk}"])
+                    embedding = vectorizer.encode([f"{prelude}{chunk}"])
                     eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                     para_dct['embedding'] = eem
                 except Exception as ex:
@@ -718,7 +715,7 @@ def read_html(email, filename:str, fileid:str, file_io:io.BytesIO, mtime:datetim
             para_dct = {}
             para_dct['paragraph_text'] = chunk
             try:
-                embedding = vectorizer([f"{prelude}{chunk}"])
+                embedding = vectorizer.encode([f"{prelude}{chunk}"])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem
             except Exception as ex:
@@ -813,7 +810,7 @@ def process_gh_issues_zip(email, file_item, filename, fileid, mimetype, zip_path
                 para_dct = {}
                 para_dct['paragraph_text'] = txt
                 para_dct['html_url'] = js['html_url']
-                embedding = vectorizer([txt])
+                embedding = vectorizer.encode([txt])
                 eem = base64.b64encode(pickle.dumps(embedding)).decode('ascii')
                 para_dct['embedding'] = eem
                 para_num = js['number'] -1 # github issues are 1 based while paragraphs are 0 based

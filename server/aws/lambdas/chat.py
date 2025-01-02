@@ -50,7 +50,7 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
 def _get_retriever_function():
     if 'OLLAMA_HOST' in os.environ:
         return chat_using_ollama_assistant
-    if 'GEMINI_API_KEY' in os.environ:
+    if 'GCLOUD_PROJECTID' in os.environ:
         return chat_using_gemini_assistant
     if 'OPENAI_API_KEY' in os.environ:
         return chat_using_openai_assistant
