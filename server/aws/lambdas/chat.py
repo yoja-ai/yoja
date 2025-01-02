@@ -119,7 +119,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.Fai
 
 def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     print_trace, use_ivfadc, retriever_stratgey = \
-                (False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
+                (False, False, RetrieverStrategyEnum.FullDocStrategy)
     last_msg:str = messages[-1]['content']
     idx = 0
     for idx in range(len(messages[-1]['content'])):
@@ -131,7 +131,7 @@ def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
         
         if c == '+': print_trace = True
         if c == '@': use_ivfadc = not use_ivfadc
-        if c == '/': retriever_stratgey = RetrieverStrategyEnum.FullDocStrategy
+        if c == '/': retriever_stratgey = RetrieverStrategyEnum.PreAndPostChunkStrategy
     
     # strip the debug flags from the question
     if idx == len(messages[-1]['content']) - 1:
