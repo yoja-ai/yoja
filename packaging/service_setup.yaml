@@ -37,6 +37,16 @@ Parameters:
     Description:  similar to https://chat.xxxxxxx/rest/entrypoint/oauth2cb
   OpenaiApiKey:
     Type: String
+    Default: ''
+    Description:  'Leave empty if using another LLM'
+  GcloudProjectId:
+    Type: String
+    Default: ''
+    Description:  'Leave empty if using another LLM'
+  GcloudCredentials:
+    Type: String
+    Default: ''
+    Description:  'service account key. Use base64 -w 0 account_key.json to create the string. Leave empty if using another LLM'
   CspNonce:
     Type: String
 Mappings:
@@ -44,6 +54,9 @@ Mappings:
     us-east-1:
       SARYojaApiService: arn:aws:serverlessrepo:us-east-1:058264066930:applications/YojaApi
       SARYojaWebhookService: arn:aws:serverlessrepo:us-east-1:058264066930:applications/YojaWebhookApi
+Conditions:
+  HasOpenai: !Not [!Equals [!Ref OpenaiApiKey, '']]
+  HasGcloud: !Not [!Equals [!Ref GcloudProjectId, '']]
 Resources:
   CustomLambdasRole:
     Type: AWS::IAM::Role
@@ -267,7 +280,18 @@ Resources:
         UsersTable: !Ref YojaUsersTable
         ServiceconfTable: !Ref YojaServiceConfTable
         CookieDomain: !Ref yojaServiceDnsName
-        OpenaiApiKey: !Ref OpenaiApiKey
+        OpenaiApiKey: !If
+          - HasOpenai
+          - !Ref OpenaiApiKey
+          - !Ref AWS::NoValue
+        GcloudProjectId: !If
+          - HasGcloud
+          - !Ref GcloudProjectId
+          - !Ref AWS::NoValue
+        GcloudCredentials: !If
+          - HasGcloud
+          - !Ref GcloudCredentials
+          - !Ref AWS::NoValue
         MainLambdasSarSemanticVersion: !Ref YojaApiServiceSemanticVersionParameter
         WebhookLambdasSarSemanticVersion: !Ref YojaWebhookServiceSemanticVersionParameter
         UiSemanticVersion: !Ref cftVersion

@@ -37,6 +37,19 @@ Parameters:
     Type: String
   OpenaiApiKey:
     Type: String
+    Default: ''
+    Description:  'Leave empty if using another LLM'
+  GcloudProjectId:
+    Type: String
+    Default: ''
+    Description:  'Leave empty if using another LLM'
+  GcloudCredentials:
+    Type: String
+    Default: ''
+    Description:  'service account key. Use base64 -w 0 account_key.json to create the string. Leave empty if using another LLM'
+Conditions:
+  HasOpenai: !Not [!Equals [!Ref OpenaiApiKey, '']]
+  HasGcloud: !Not [!Equals [!Ref GcloudProjectId, '']]
 Globals:
   Function:
     Environment:
@@ -56,7 +69,18 @@ Globals:
         HF_HUB_OFFLINE: '1'
         HF_HOME: '/tmp'
         TRANSFORMERS_OFFLINE: '1'
-        OPENAI_API_KEY: !Ref OpenaiApiKey
+        OPENAI_API_KEY: !If
+          - HasOpenai
+          - !Ref OpenaiApiKey
+          - !Ref AWS::NoValue
+        GCLOUD_PROJECTID: !If
+          - HasGcloud
+          - !Ref GcloudProjectId
+          - !Ref AWS::NoValue
+        GCLOUD_CREDENTIALS: !If
+          - HasGcloud
+          - !Ref GcloudCredentials
+          - !Ref AWS::NoValue
         PYTHONUNBUFFERED: 'True'
 Metadata:
   AWS::ServerlessRepo::Application:
