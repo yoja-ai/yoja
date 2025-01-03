@@ -224,17 +224,28 @@ def _gen_context(context_chunk_range_list:List[DocumentChunkRange], handle_overl
         
     return None, new_context
 
-def get_context(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
-                                    chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool,
-                                    least_relevant_only:bool, searchsubdir:str=None, calc_tokens=None,
-                                    extract_main_theme=None, extract_named_entities=None):
+class YojaIndex:
+    def __init__(self, faiss_rms, documents_list, index_map_list, index_type):
+        self.faiss_rms = faiss_rms
+        self.documents_list = documents_list
+        self.index_map_list = index_map_list
+        self.index_type = index_type
+
+def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool,
+                least_relevant_only:bool, searchsubdir:str=None, calc_tokens=None,
+                extract_main_theme=None, extract_named_entities=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
     
     the context to be sent to the LLM.  Does a similarity search in faiss to fetch the context
     """
+    faiss_rms = yoja_index.faiss_rms
+    documents_list = yoja_index.documents_list
+    index_map_list = yoja_index.index_map_list
+    index_type = yoja_index.index_type
+
     cross_sorted_scores:List[DocumentChunkDetails]
     status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir, extract_main_theme, extract_named_entities)
@@ -357,9 +368,13 @@ def get_context(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,s
     
     return new_context
 
-def get_filelist_using_retr_and_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                         index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+def get_filelist_using_retr_and_rerank(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                          chat_config:ChatConfiguration, last_msg:str, number_of_files:int = 10, searchsubdir:str=None):
+    faiss_rms = yoja_index.faiss_rms
+    documents_list = yoja_index.documents_list
+    index_map_list = yoja_index.index_map_list
+    index_type = yoja_index.index_type
+
     cross_sorted_scores:List[DocumentChunkDetails]
     status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir)

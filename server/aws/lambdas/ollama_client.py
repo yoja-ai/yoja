@@ -81,8 +81,7 @@ def _calc_tokens(context):
     global encoding_model
     return len(encoding_model.encode(context))
 
-def _process_tool_call(supplied_tools, tool,
-                        faiss_rms, documents_list, index_map_list, index_type,
+def _process_tool_call(supplied_tools, tool, yoja_index,
                         tracebuf, filekey_to_file_chunks_dict, chat_config,
                         searchsubdir):
     tool_outputs = ""
@@ -95,7 +94,7 @@ def _process_tool_call(supplied_tools, tool,
             print(f"function={func.name}, arguments={args_dict}")
             if tool.function.name == "search_question_in_db":
                 tool_arg_question = args_dict.get('question')
-                context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                context:str = get_context(yoja_index, tracebuf,
                                             filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                                             True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                                             extract_main_theme=_extract_main_theme,
@@ -106,24 +105,22 @@ def _process_tool_call(supplied_tools, tool,
             elif tool.function.name == 'list_of_files_for_given_question':
                 tool_arg_question = args_dict.get('question')
                 num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
-                tool_output = get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                            filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
+                tool_output = get_filelist_using_retr_and_rerank(yoja_index, tracebuf, filekey_to_file_chunks_dict,
+                                                chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
                 print(f"{prtime()}: Tool output: tool_output={tool_output}")
                 tracebuf.append(f"{prtime()}: Tool output: tool_output={tool_output[:64]}...")
                 tool_outputs += tool_output
     return tool_outputs
 
-def chat_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
-                                    index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
-                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
-                                    assistants_thread_id:str, chat_config:ChatConfiguration, messages,
-                                    searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
+def chat_using_ollama_assistant(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str,
+                            List[DocumentChunkDetails]], assistants_thread_id:str, chat_config:ChatConfiguration,
+                            messages, searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
     Returns the tuple (output, thread_id).  Returns (None, None) on failure.
     """
-    print(f"chat_using_ollama_assistant: Entered. faiss_rms={faiss_rms}")
+    print(f"chat_using_ollama_assistant: Entered")
     if toolprompts:
         tools = toolprompts
         print(f"chat_using_ollama_assistant: toolprompts specified as {tools}")
@@ -141,8 +138,7 @@ def chat_using_ollama_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     if response.message and response.message.tool_calls:
         tool_calls = response.message.tool_calls
         for tool in tool_calls:
-            to = _process_tool_call(tools, tool,
-                                faiss_rms, documents_list, index_map_list, index_type,
+            to = _process_tool_call(tools, tool, yoja_index,
                                 tracebuf, filekey_to_file_chunks_dict, chat_config,
                                 searchsubdir)
             ollama_messages.append({'role': 'tool', 'content': to})

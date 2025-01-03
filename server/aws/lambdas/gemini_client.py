@@ -154,8 +154,7 @@ def _generate_with_retry(model, vertex_messages, tools=None, tool_config=None):
     print(f"_generate_with_retry: Failed")
     return None
 
-def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
-                                    index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
+def chat_using_gemini_assistant(yoja_index, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                                     searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
@@ -164,7 +163,7 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
     Returns the tuple (output, thread_id).  Returns (None, None) on failure.
     """
-    print(f"chat_using_gemini_assistant: Entered. faiss_rms={faiss_rms}. tool={tool}, messages={messages}")
+    print(f"chat_using_gemini_assistant: Entered. tool={tool}, messages={messages}")
     tools=[tool]
     if len(messages) == 1:
         system_instruction="You are a helpful assistant. Help me using knowledge from the provided tool only. Do not use your own knowledge to fullfil my requests"
@@ -219,13 +218,13 @@ def chat_using_gemini_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
             else:
                 tool_arg_question = vertex_messages[-1]['parts'][0]
             if fc.name == 'additional_info_for_any_question_I_may_have':
-                context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                context:str = get_context(yoja_index, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                             False, True, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                             extract_main_theme=_extract_main_theme,
                             extract_named_entities=_extract_named_entities)
             else: # all other functions, including info_for_any_question_I_may_have
-                context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                context:str = get_context(yoja_index, tracebuf,
                             filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                             True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                             extract_main_theme=_extract_main_theme,

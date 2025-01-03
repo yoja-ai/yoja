@@ -32,7 +32,7 @@ from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from openai_client import chat_using_openai_assistant
 from ollama_client import chat_using_ollama_assistant
 from gemini_client import chat_using_gemini_assistant
-from yoja_retrieve import get_max_token_limit
+from yoja_retrieve import YojaIndex, get_max_token_limit
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
     for msg in messages:
@@ -47,7 +47,7 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
             return thread_id
     return None
 
-def _get_retriever_function():
+def _get_llm_chat_function():
     if 'OLLAMA_HOST' in os.environ:
         return chat_using_ollama_assistant
     if 'GCLOUD_PROJECTID' in os.environ:
@@ -56,9 +56,7 @@ def _get_retriever_function():
         return chat_using_openai_assistant
     return None
 
-def ongoing_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                    index_map_list:List[List[Tuple[str, str]]], index_type:str = 'flat',
-                    searchsubdir=None, toolprompts=None):
+def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)]; the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -72,8 +70,9 @@ def ongoing_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.Fai
         return respond({"error_msg": emsg}, status=500)
 
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {};
-    srp, thread_id, run_usage = _get_retriever_function()(faiss_rms,documents_list, index_map_list, index_type,
-                        tracebuf, filekey_to_file_chunks_dict, thread_id, chat_config, body['messages'], toolprompts)
+    srp, thread_id, run_usage = _get_llm_chat_function()(yoja_index, tracebuf,
+                                                        filekey_to_file_chunks_dict, thread_id,
+                                                        chat_config, body['messages'], toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -171,9 +170,7 @@ def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[Documen
                             chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
     return context_srcs_links
 
-def new_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str, dict]],
-                index_map_list:List[List[Tuple[str,str]]], index_type:str = 'flat',
-                searchsubdir=None, toolprompts=None):
+def new_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -183,10 +180,10 @@ def new_chat(event, body, chat_config, tracebuf, faiss_rms:List[faiss_rm.FaissRM
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id, run_usage = _get_retriever_function()(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                                    filekey_to_file_chunks_dict, None, chat_config, body['messages'], searchsubdir, toolprompts)
+    srp, thread_id, run_usage = _get_llm_chat_function()(yoja_index, tracebuf, filekey_to_file_chunks_dict,
+                                            None, chat_config, body['messages'], searchsubdir, toolprompts)
     if not srp:
-        return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
+        return respond({"error_msg": "Error. chat using llm chat function failed"}, status=500)
     if run_usage:
         pct=int((float(run_usage.prompt_tokens)/float(get_max_token_limit()))*100.0)
         srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_max_token_limit()}), completion={run_usage.completion_tokens}"
@@ -348,11 +345,13 @@ def chat_completions(event, context):
             msgs.append(msg)
     body['messages'] = msgs
     print(f"chat_completions: finished pre-processing. messages={body['messages']}")
+    index_type:str = 'flat'
+    yoja_index = YojaIndex(faiss_rms, documents_list, index_map_list, index_type)
     if len(body['messages']) == 1:
-        return new_chat(event, body, chat_config, tracebuf, faiss_rms, documents_list, index_map_list,
+        return new_chat(event, body, chat_config, tracebuf, yoja_index,
                         searchsubdir=searchsubdir, toolprompts=toolprompts)
     else:
-        return ongoing_chat(event, body, chat_config, tracebuf, faiss_rms, documents_list, index_map_list,
+        return ongoing_chat(event, body, chat_config, tracebuf, yoja_index,
                             searchsubdir=searchsubdir, toolprompts=toolprompts)
 
 #

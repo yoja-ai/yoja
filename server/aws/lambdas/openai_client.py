@@ -135,8 +135,7 @@ def _extract_main_theme(text):
     print(f"_extract_main_theme: chatgpt returned {retval}")
     return retval
 
-def chat_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]],
-                                    index_map_list:List[Tuple[str,str]], index_type, tracebuf:List[str],
+def chat_using_openai_assistant(yoja_index, tracebuf:List[str],
                                     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                                     assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                                     searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
@@ -257,7 +256,7 @@ def chat_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
                 print(f"{prtime()}: Running tool {tool}")
                 if tool.function.name == "search_question_in_db" or tool.function.name == 'search_question_in_db.controls':
                     tool_arg_question = args_dict.get('question')
-                    context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                    context:str = get_context(yoja_index, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                                                 True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                                                 extract_main_theme=_extract_main_theme, extract_named_entities=_extract_named_entities)
@@ -269,7 +268,7 @@ def chat_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
                     })
                 elif tool.function.name == "search_question_in_db_return_more" or tool.function.name == 'search_question_in_db_return_more.controls':
                     tool_arg_question = args_dict.get('question')
-                    context:str = get_context(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                    context:str = get_context(yoja_index, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                                                 False, True, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                                                 extract_main_theme=_extract_main_theme, extract_named_entities=_extract_named_entities)
@@ -283,7 +282,7 @@ def chat_using_openai_assistant(faiss_rms:List[faiss_rm.FaissRM], documents_list
                     args_dict:dict = json.loads(tool.function.arguments)
                     tool_arg_question = args_dict.get('question')
                     num_files = int(args_dict.get('number_of_files')) if args_dict.get('number_of_files') else 10
-                    tool_output = get_filelist_using_retr_and_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
+                    tool_output = get_filelist_using_retr_and_rerank(yoja_index, tracebuf,
                                                 filekey_to_file_chunks_dict, chat_config, tool_arg_question, num_files, searchsubdir=searchsubdir)
                     print(f"{prtime()}: Tool output: tool_output={tool_output}")
                     tracebuf.append(f"{prtime()}: Tool output: tool_output={tool_output[:64]}...")
