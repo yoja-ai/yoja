@@ -418,7 +418,7 @@ def extend_lock_time(email, index_dir, time_left):
             l_e_t_s = datetime.datetime.fromtimestamp(l_e_t).strftime('%Y-%m-%d %I:%M:%S')
             # if lock_end_time is less than 3 minutes away, push it out by 12 minutes
             if (l_e_t - int(now)) < (3 * 60):
-                time_to_add = (12*60) if time_left < (12*60) else time_left
+                time_to_add = 12*60
                 if index_dir:
                     ute = {'email': {'S': email}, 'lock_end_time': {'N': str(int(now)+time_to_add)}}
                     set_user_table_cache_entry(email, ute)

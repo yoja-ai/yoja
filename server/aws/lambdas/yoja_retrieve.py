@@ -21,9 +21,9 @@ from utils import prtime
 from text_utils import format_paragraph
 from sentence_transformers.cross_encoder import CrossEncoder
 
-MAX_TOKEN_LIMIT=2048
+MAX_TOKEN_LIMIT=4096
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
-MAX_VDB_RESULTS=1024
+MAX_VDB_RESULTS=128
 
 g_cross_encoder = None
 

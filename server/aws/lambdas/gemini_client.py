@@ -7,6 +7,9 @@ from vertexai.generative_models import (
     Part,
     Tool,
     ToolConfig,
+    SafetySetting,
+    HarmCategory,
+    HarmBlockThreshold
 )
 from google.api_core.exceptions import InternalServerError, ResourceExhausted
 import os
@@ -52,12 +55,16 @@ yoja_retrieve_additional_function = FunctionDeclaration(
     },
 )
 
-tool = Tool(function_declarations=[yoja_retrieve_function, yoja_retrieve_additional_function])
+tool = Tool(function_declarations=[yoja_retrieve_function]) # , yoja_retrieve_additional_function])
 
-def _generate_with_conf_and_retry(model, user_prompt_content, generation_config):
+def _generate_with_conf_and_retry(model, user_prompt_content, generation_config, tools=None, tool_config=None):
     for attempt in range(1, 4):
         try:
-            return model.generate_content(user_prompt_content, generation_config=generation_config)
+            if tools:
+                return model.generate_content(user_prompt_content, generation_config=generation_config,
+                                            tools=tools, tool_config=tool_config)
+            else:
+                return model.generate_content(user_prompt_content, generation_config=generation_config)
         except InternalServerError as ise:
             print(f"_generate_with_conf_and_retry: Caught InternalServerError. attempt {attempt}")
             time.sleep(attempt*5)
@@ -66,6 +73,112 @@ def _generate_with_conf_and_retry(model, user_prompt_content, generation_config)
             time.sleep(attempt*10)
     print(f"_generate_with_conf_and_retry: Failed")
     return None
+
+def generate_using_gemini_assistant(system_instruction, user_prompt, use_tools):
+    print(f"generate_using_gemini_assistant: Entered")
+    model = GenerativeModel(
+                model_name=ASSISTANTS_MODEL,
+                system_instruction=system_instruction
+                )
+    user_prompt_content = Content(
+        role="user",
+        parts=[
+            Part.from_text(user_prompt),
+        ],
+    )
+    if use_tools:
+        response = _generate_with_conf_and_retry(model, user_prompt_content,
+                        generation_config=GenerationConfig(temperature=0), tools=[tool],
+                        tool_config=ToolConfig(
+                            function_calling_config=ToolConfig.FunctionCallingConfig(
+                                # ANY mode forces the model to predict only function calls
+                                mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+                                # Allowed function calls to predict when the mode is ANY. If empty, any  of
+                                # the provided function calls will be predicted.
+                                allowed_function_names=["info_for_any_question_I_may_have"],
+                            )
+                        )
+                    )
+    else:
+        response = _generate_with_conf_and_retry(model,
+            user_prompt_content,
+            generation_config=GenerationConfig(temperature=0)
+        )
+    print(f"generate_using_gemini_assistant: response={response}")
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts):
+        return response.candidates[0].content.parts[0]
+    return None
+
+def _generate_with_retry(model, vertex_messages, tools=None, tool_config=None, temperature=0):
+    for attempt in range(1, 4):
+        try:
+            if tools and tool_config:
+                return model.generate_content(vertex_messages,
+                                generation_config=GenerationConfig(temperature=temperature),
+                                tools=tools, tool_config=tool_config)
+            else:
+                return model.generate_content(vertex_messages,
+                                generation_config=GenerationConfig(temperature=temperature))
+        except InternalServerError as ise:
+            print(f"_generate_with_retry: Caught InternalServerError. attempt {attempt}")
+            time.sleep(attempt*5)
+        except ResourceExhausted as re:
+            print(f"_generate_with_retry: Caught ResourceExhausted. attempt {attempt}")
+            time.sleep(attempt*10)
+    print(f"_generate_with_retry: Failed")
+    return None
+
+def generate(system_instruction, messages, use_tools, temperature=0):
+    print(f"generate: Entered. use_tools={use_tools}, system_instruction={system_instruction}, messages={messages}")
+    vertex_messages = []
+    for msg in messages:
+        if msg['role'] == 'user':
+            role = 'user'
+        else:
+            role = 'model'
+        msgtext = msg['content']
+        if 'source' in msg:
+            for src in msg['source']:
+                msgtext += f"\nsource is {src['name']}"
+        vertex_messages.append(Content(role=role, parts=[Part.from_text(msgtext)]))
+
+    model = GenerativeModel(
+                model_name=ASSISTANTS_MODEL,
+                system_instruction=system_instruction,
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH
+                }
+            )
+    if use_tools:
+        tools=[tool]
+        tool_config=ToolConfig(
+            function_calling_config=ToolConfig.FunctionCallingConfig(
+                # ANY mode forces the model to predict only function calls
+                mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+                # Allowed function calls to predict when the mode is ANY. If empty, any  of
+                # the provided function calls will be predicted.
+                allowed_function_names=["info_for_any_question_I_may_have"],
+            )
+        )
+    else:
+        tools=None
+        tool_config=None
+    response = _generate_with_retry(model, vertex_messages, tools, tool_config, temperature=temperature)
+    print(f"AAAAAAAAAAAAAAAAAAAAAAAAAAaa response={response}")
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts):
+        return response.candidates[0].content.parts[0]
+    return None
+
+def retrieve(yoja_index, tracebuf, filekey_to_file_chunks_dict,
+                                    chat_config, tool_arg_question, searchsubdir):
+        return get_context(yoja_index, tracebuf,
+                    filekey_to_file_chunks_dict, chat_config, tool_arg_question,
+                    True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
+                    extract_main_theme=_extract_main_theme,
+                    extract_named_entities=_extract_named_entities)
 
 def _extract_main_theme(text):
     model = GenerativeModel(model_name=ASSISTANTS_MODEL)
@@ -138,7 +251,7 @@ def _calc_tokens(prompt):
     model = GenerativeModel(ASSISTANTS_MODEL)
     return model.count_tokens(prompt).total_tokens
 
-def _generate_with_retry(model, vertex_messages, tools=None, tool_config=None):
+def _generate_with_retry_old(model, vertex_messages, tools=None, tool_config=None):
     for attempt in range(1, 4):
         try:
             if tools and tool_config:
@@ -146,12 +259,12 @@ def _generate_with_retry(model, vertex_messages, tools=None, tool_config=None):
             else:
                 return model.generate_content(vertex_messages)
         except InternalServerError as ise:
-            print(f"_generate_with_retry: Caught InternalServerError. attempt {attempt}")
+            print(f"_generate_with_retry_old: Caught InternalServerError. attempt {attempt}")
             time.sleep(attempt*5)
         except ResourceExhausted as re:
-            print(f"_generate_with_retry: Caught ResourceExhausted. attempt {attempt}")
+            print(f"_generate_with_retry_old: Caught ResourceExhausted. attempt {attempt}")
             time.sleep(attempt*10)
-    print(f"_generate_with_retry: Failed")
+    print(f"_generate_with_retry_old: Failed")
     return None
 
 def chat_using_gemini_assistant(yoja_index, tracebuf:List[str],
@@ -205,7 +318,148 @@ def chat_using_gemini_assistant(yoja_index, tracebuf:List[str],
                 msgtext += f"\nsource is {src['name']}"
         vertex_messages.append(Content(role=role, parts=[Part.from_text(msgtext)]))
     print(f"vertex_messages={vertex_messages}")
-    response = _generate_with_retry(model, vertex_messages, tools, tool_config)
+    response = _generate_with_retry_old(model, vertex_messages, tools, tool_config)
+    print(response)
+
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0:
+        if response.candidates[0].content.parts[0].function_call:
+            fc = response.candidates[0].content.parts[0].function_call
+            if 'question' in fc.args:
+                tool_arg_question = fc.args['question']
+            elif 'prompt' in fc.args:
+                tool_arg_question = fc.args['prompt']
+            else:
+                tool_arg_question = vertex_messages[-1]['parts'][0]
+            if fc.name == 'additional_info_for_any_question_I_may_have':
+                context:str = get_context(yoja_index, tracebuf,
+                    filekey_to_file_chunks_dict, chat_config, tool_arg_question,
+                    True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
+                    extract_main_theme=_extract_main_theme,
+                    extract_named_entities=_extract_named_entities)
+
+def _extract_main_theme(text):
+    model = GenerativeModel(model_name=ASSISTANTS_MODEL)
+    user_prompt_content = Content(
+        role="user",
+        parts=[
+            Part.from_text(f"Extract the main topic as a single word in the following sentence and return the result as a single word: {text}"),
+        ],
+    )
+    response = _generate_with_conf_and_retry(model,
+        user_prompt_content,
+        generation_config=GenerationConfig(temperature=0)
+    )
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
+                                        and response.candidates[0].content.parts[0].text:
+        return response.candidates[0].content.parts[0].text.strip()
+    return None
+    
+
+def _extract_json(text):
+    lines = text.splitlines()
+    code_array = []
+    in_code = False
+    for line in lines:
+        if in_code:
+            if line.strip() == '```':
+                code_array.append("\n\n")
+                in_code = False
+            else:
+                code_array.append(line)
+        else:
+            if line.strip() == '```json':
+                in_code = True
+    return '\n'.join(code_array)
+
+def _extract_named_entities(text):
+    model = GenerativeModel(model_name=ASSISTANTS_MODEL)
+    user_prompt_content = Content(
+        role="user",
+        parts=[
+            Part.from_text(
+f'Extract any named entities present in the sentence. Return a parseable JSON object in this format: {{ "entities": ["entity1", "entity2"] }}, without any additional text or explanation. Particularly, do not include text before or after the parseable JSON: {text}'),
+        ],
+    )
+    response = _generate_with_conf_and_retry(model,
+        user_prompt_content,
+        generation_config=GenerationConfig(temperature=0)
+    )
+    if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
+                                        and response.candidates[0].content.parts[0].text:
+        print(f"_extract_name_entities: response={response}")
+        content = response.candidates[0].content.parts[0].text.strip()
+        print(f"_extract_name_entities: content={content}")
+        try:
+            js = json.loads(content)
+        except Exception as ex:
+            print(f"gemini_client._extract_named_entities: caught {ex} decoding content {content}")
+            jss = _extract_json(content)
+            print(f"_extract_name_entities: jss={jss}")
+            try:
+                js = json.loads(jss)
+            except Exception as ex:
+                print(f"gemini_client._extract_named_entities: caught {ex}")
+                return None
+        if 'entities' in js and js['entities']:
+            return js['entities']
+    return None
+
+def _calc_tokens(prompt):
+    model = GenerativeModel(ASSISTANTS_MODEL)
+    return model.count_tokens(prompt).total_tokens
+
+def chat_using_gemini_assistant(yoja_index, tracebuf:List[str],
+                                    filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                                    assistants_thread_id:str, chat_config:ChatConfiguration, messages,
+                                    searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
+    """
+    documents is a dict like {fileid: finfo}; 
+    index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index 
+    Returns the tuple (output, thread_id).  Returns (None, None) on failure.
+    """
+    print(f"chat_using_gemini_assistant: Entered. tool={tool}, messages={messages}")
+    tools=[tool]
+    if len(messages) == 1:
+        system_instruction="You are a helpful assistant. Help me using knowledge from the provided tool only. Do not use your own knowledge to fullfil my requests"
+        tool_config=ToolConfig(
+            function_calling_config=ToolConfig.FunctionCallingConfig(
+                # ANY mode forces the model to predict only function calls
+                mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+                # Allowed function calls to predict when the mode is ANY. If empty, any  of
+                # the provided function calls will be predicted.
+                allowed_function_names=["info_for_any_question_I_may_have"],
+            )
+        )
+    else:
+        system_instruction="You are a helpful assistant. Help me using the context provided here. Do not use the provided tool if you can answer using the context provided. Do not use your own knowledge to fulfill my requests"
+        tool_config=ToolConfig(
+            function_calling_config=ToolConfig.FunctionCallingConfig(
+                # ANY mode forces the model to predict only function calls
+                mode=ToolConfig.FunctionCallingConfig.Mode.ANY,
+                # Allowed function calls to predict when the mode is ANY. If empty, any  of
+                # the provided function calls will be predicted.
+                allowed_function_names=["additional_info_for_any_question_I_may_have"],
+            )
+        )
+    print(f"chat_using_gemini_assistant: system_instruction={system_instruction}")
+    model = GenerativeModel(
+                model_name=ASSISTANTS_MODEL,
+                system_instruction=system_instruction
+                )
+    print(f"model={model}")
+    vertex_messages = []
+    for msg in messages:
+        if msg['role'] == 'user':
+            role = 'user'
+        else:
+            role = 'model'
+        msgtext = msg['content']
+        if 'source' in msg:
+            for src in msg['source']:
+                msgtext += f"\nsource is {src['name']}"
+        vertex_messages.append(Content(role=role, parts=[Part.from_text(msgtext)]))
+    print(f"vertex_messages={vertex_messages}")
+    response = _generate_with_retry_old(model, vertex_messages, tools, tool_config)
     print(response)
 
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0:
@@ -234,7 +488,7 @@ def chat_using_gemini_assistant(yoja_index, tracebuf:List[str],
             vertex_messages.append(response.candidates[0].content)
             vertex_messages.append(Content(parts=[Part.from_function_response(name=fc.name, response={'content': context})]))
             print(f"vertex_messages after get_context={vertex_messages}")
-            response = _generate_with_retry(model, vertex_messages)
+            response = _generate_with_retry_old(model, vertex_messages)
             print(response)
             if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                             and response.candidates[0].content.parts[0].text:

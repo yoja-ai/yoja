@@ -33,6 +33,7 @@ from openai_client import chat_using_openai_assistant
 from ollama_client import chat_using_ollama_assistant
 from gemini_client import chat_using_gemini_assistant
 from yoja_retrieve import YojaIndex, get_max_token_limit
+from agentic import agentic_chat
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
     for msg in messages:
@@ -118,7 +119,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=No
 
 def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
     print_trace, use_ivfadc, retriever_stratgey = \
-                (False, False, RetrieverStrategyEnum.FullDocStrategy)
+                (False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
     last_msg:str = messages[-1]['content']
     idx = 0
     for idx in range(len(messages[-1]['content'])):
@@ -180,7 +181,7 @@ def new_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, 
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id, run_usage = _get_llm_chat_function()(yoja_index, tracebuf, filekey_to_file_chunks_dict,
+    srp, thread_id, run_usage = agentic_chat(yoja_index, tracebuf, filekey_to_file_chunks_dict,
                                             None, chat_config, body['messages'], searchsubdir, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. chat using llm chat function failed"}, status=500)

@@ -175,6 +175,7 @@ COPY chatconfig.py ${LAMBDA_TASK_ROOT}
 COPY yoja_retrieve.py ${LAMBDA_TASK_ROOT}
 COPY ollama_client.py ${LAMBDA_TASK_ROOT}
 COPY gemini_client.py ${LAMBDA_TASK_ROOT}
+COPY agentic.py ${LAMBDA_TASK_ROOT}
 COPY www ${LAMBDA_TASK_ROOT}/
 RUN yum clean all
 RUN /bin/rm -rf /var/cache/yum

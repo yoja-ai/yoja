@@ -13,7 +13,7 @@ import Stemmer
 import bm25s
 import tarfile
 
-BM25_NUM_HITS=8
+BM25_NUM_HITS=16
 DEFAULT_SEMANTIC_NUM_HITS=1024
 COMMON_HITS_PER_QUERY=4
 SEMANTIC_HITS_PER_QUERY=20
@@ -283,14 +283,18 @@ class FaissRM():
                 results = self._bm25s_retriever.retrieve(named_entity_tokens, k=BM25_NUM_HITS)
                 named_entity_hits = {}
                 for named_entity_ind in range(np.shape(results)[1]):
+                    print(f"XXXXXXXXXXXXXXXXX outer named_entity_ind={named_entity_ind}, range={np.shape(results)[1]}")
                     for hit_ind in range(np.shape(results)[2]):
+                        print(f"YYYYYYYYYYYYYYYYY outer hit_ind={hit_ind}, named_entity_ind={named_entity_ind}, range={np.shape(results)[2]}")
                         index_in_faiss = results[0][named_entity_ind][hit_ind]
                         fileid = self._index_map[index_in_faiss][0]
                         para = self._index_map[index_in_faiss][1]
                         score = results[1][named_entity_ind][hit_ind]
                         if not (fileid, para) in named_entity_hits:
+                            self._lg(f"  bm25s result(first):  {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
                             named_entity_hits[index_in_faiss] = (index_in_faiss, score)
                         else:
+                            self._lg(f"  bm25s result(adding):  {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
                             named_entity_hits[index_in_faiss][1] += score
                 print(f"named_entry_hits={named_entity_hits}")
                 if named_entity_hits.values():
