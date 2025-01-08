@@ -6,7 +6,7 @@ from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from typing import Tuple, List, Dict, Any, Self
 from utils import prtime, llm_run_usage
 
-MAX_PLAN_STEPS=1
+MAX_PLAN_STEPS=2
 
 if 'OLLAMA_HOST' in os.environ:
     print(f"ollama_not supported")
@@ -80,7 +80,8 @@ CRITIC_PROMPT = (
     """
 )
 
-def _process_function_call(function_call, yoja_index, tracebuf, filekey_to_file_chunks_dict, chat_config, searchsubdir):
+def _process_function_call(function_call, yoja_index, tracebuf,
+                filekey_to_file_chunks_dict, chat_config, searchsubdir, attempt):
     if function_call.name == 'info_for_any_question_I_may_have':
         if 'question' in function_call.args:
             tool_arg_question = function_call.args['question']
@@ -91,7 +92,8 @@ def _process_function_call(function_call, yoja_index, tracebuf, filekey_to_file_
             return None
         context:str = retrieve(yoja_index, tracebuf,
                                 filekey_to_file_chunks_dict, chat_config,
-                                tool_arg_question, searchsubdir=searchsubdir)
+                                tool_arg_question, searchsubdir=searchsubdir,
+                                num_hits_multiplier=attempt)
         return context
     return None
 
@@ -128,10 +130,15 @@ def agentic_chat(yoja_index, tracebuf:List[str],
                 assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                 searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
     print(f"agentic_chat: Entered")
+    prompt_tokens = 0
+    completion_tokens = 0
+
     user_msg = messages[-1]['content']
-    content = generate(PLANNER_MESSAGE,
+    content, prtokens, cmptokens = generate(PLANNER_MESSAGE,
                         [{'role': 'user', 'content': user_msg}],
                         False)
+    prompt_tokens += prtokens
+    completion_tokens += cmptokens
 
     if content:
         if hasattr(content, 'text'):
@@ -142,11 +149,14 @@ def agentic_chat(yoja_index, tracebuf:List[str],
             return None, None, None
 
     for attempt in range(MAX_PLAN_STEPS):
+        print(f"Begin agentic loop. Attempt {attempt}")
         plan_step = plan_dict['plan'][0]
         user_message = messages[-1]['content']
-        content1 = generate(ASSISTANT_PROMPT_WITH_TOOL,
+        content1, prtokens, cmptokens = generate(ASSISTANT_PROMPT_WITH_TOOL,
                     [{'role': 'user', 'content': f"Perform this step '{plan_step}' for this user message '{user_message}'"}],
                     True, temperature=1.5)
+        prompt_tokens += prtokens
+        completion_tokens += cmptokens
         if content1:
             if hasattr(content1, 'text'):
                 assistant_response = _get_json(content1.text)
@@ -154,25 +164,29 @@ def agentic_chat(yoja_index, tracebuf:List[str],
             elif hasattr(content1, "function_call"):
                 function_call = content1.function_call
                 print(f"agentic_chat: function_call={function_call}")
-                context_str = _process_function_call(function_call, yoja_index, tracebuf, filekey_to_file_chunks_dict, chat_config, searchsubdir)
+                context_str = _process_function_call(function_call, yoja_index, tracebuf,
+                                                filekey_to_file_chunks_dict, chat_config, searchsubdir, attempt)
                 if len(plan_dict['plan']) > 1:
                     plan_step = plan_dict['plan'][1]
                 else:
                     plan_step = user_msg
-                content2 = generate(ASSISTANT_PROMPT_NO_TOOL,
+                content2, prtokens, cmptokens = generate(ASSISTANT_PROMPT_NO_TOOL,
                     [{'role': 'user', 'content': f"Perform this step '{plan_step}' for this user message '{user_message}'. ## Context: {context_str}"}],
                     False)
+                prompt_tokens += prtokens
+                completion_tokens += cmptokens
                 if content2 and hasattr(content2, 'text'):
                     c2 = content2.text.strip()
                     if c2.startswith("##SUMMARY##"):
                         c2 = c2[11:].strip()
-                    content3 = generate(CRITIC_SYSTEM_PROMPT,
+                    content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
                         [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
                         False)
+                    prompt_tokens += prtokens
+                    completion_tokens += cmptokens
                     print(f"!!!!!!!!!!!!!!!!!!! {content3}")
                     if content3.text.find("##NO##") == -1:
-                        return c2, "notused", llm_run_usage(1024, 128)
+                        return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                     else:
-                        print(f"User question not answered. Attempt {attempt}. Retrying...")
-
+                        print(f"User question not answered")
     return None, None, None

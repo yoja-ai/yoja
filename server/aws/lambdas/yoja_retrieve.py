@@ -24,6 +24,7 @@ from sentence_transformers.cross_encoder import CrossEncoder
 MAX_TOKEN_LIMIT=4096
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
 MAX_VDB_RESULTS=128
+BM25_NUM_HITS=8
 
 g_cross_encoder = None
 
@@ -57,9 +58,9 @@ def _calc_cross_sorted_diffs(cross_sorted_scores):
     return rv
 
 def _retrieve_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[str,str]], index_map_list:List[Tuple[str,str]],
-                                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
-                                    chat_config:ChatConfiguration, last_msg:str, searchsubdir:str=None,
-                                    extract_main_theme=None, extract_named_entities=None) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
+                    index_type, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
+                    chat_config:ChatConfiguration, last_msg:str, searchsubdir:str=None, extract_main_theme=None,
+                    extract_named_entities=None, num_hits_multiplier=0) -> Tuple[np.ndarray, List[DocumentChunkDetails]]:
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -88,8 +89,9 @@ def _retrieve_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[
         passage_scores_dict:Dict[int, List] = {}
         for qind in range(len(queries)):
             qr = queries[qind]
-            distances, indices_in_faiss = faiss_rm_vdb(qr, k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat',
-                                                    named_entities=named_entities, main_theme=main_theme)
+            distances, indices_in_faiss = faiss_rm_vdb(qr, BM25_NUM_HITS * (num_hits_multiplier+1),
+                                    k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat',
+                                    named_entities=named_entities, main_theme=main_theme)
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
@@ -234,7 +236,8 @@ class YojaIndex:
 def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                 chat_config:ChatConfiguration, last_msg:str, most_relevant_only:bool,
                 least_relevant_only:bool, searchsubdir:str=None, calc_tokens=None,
-                extract_main_theme=None, extract_named_entities=None):
+                extract_main_theme=None, extract_named_entities=None,
+                num_hits_multiplier=0):
     """
     documents is a dict like {fileid: finfo}; 
     index_map is a list of tuples: [(fileid, paragraph_index)];  the index into this list corresponds to the index of the embedding vector in the faiss index
@@ -247,8 +250,11 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
     index_type = yoja_index.index_type
 
     cross_sorted_scores:List[DocumentChunkDetails]
-    status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list, index_type, tracebuf,
-                            filekey_to_file_chunks_dict, chat_config, last_msg, searchsubdir, extract_main_theme, extract_named_entities)
+    status, cross_sorted_scores = _retrieve_rerank(faiss_rms, documents_list, index_map_list,
+                                                index_type, tracebuf, filekey_to_file_chunks_dict,
+                                                chat_config, last_msg, searchsubdir,
+                                                extract_main_theme, extract_named_entities,
+                                                num_hits_multiplier=num_hits_multiplier)
     if not status:
         print(f"get_context: no context from _retrieve_rerank")
         return "No context found"

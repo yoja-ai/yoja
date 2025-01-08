@@ -167,18 +167,18 @@ def generate(system_instruction, messages, use_tools, temperature=0):
         tools=None
         tool_config=None
     response = _generate_with_retry(model, vertex_messages, tools, tool_config, temperature=temperature)
-    print(f"AAAAAAAAAAAAAAAAAAAAAAAAAAaa response={response}")
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts):
-        return response.candidates[0].content.parts[0]
-    return None
+        return response.candidates[0].content.parts[0], response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count
+    return None, 0, 0
 
 def retrieve(yoja_index, tracebuf, filekey_to_file_chunks_dict,
-                                    chat_config, tool_arg_question, searchsubdir):
+                chat_config, tool_arg_question, searchsubdir, num_hits_multiplier=0):
         return get_context(yoja_index, tracebuf,
                     filekey_to_file_chunks_dict, chat_config, tool_arg_question,
                     True, False, searchsubdir=searchsubdir, calc_tokens=_calc_tokens,
                     extract_main_theme=_extract_main_theme,
-                    extract_named_entities=_extract_named_entities)
+                    extract_named_entities=_extract_named_entities,
+                    num_hits_multiplier=num_hits_multiplier)
 
 def _extract_main_theme(text):
     model = GenerativeModel(model_name=ASSISTANTS_MODEL)
@@ -229,9 +229,7 @@ f'Extract any named entities present in the sentence. Return a parseable JSON ob
     )
     if response.candidates[0].content.parts and len(response.candidates[0].content.parts) > 0 \
                                         and response.candidates[0].content.parts[0].text:
-        print(f"_extract_name_entities: response={response}")
         content = response.candidates[0].content.parts[0].text.strip()
-        print(f"_extract_name_entities: content={content}")
         try:
             js = json.loads(content)
         except Exception as ex:

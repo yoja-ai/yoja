@@ -13,7 +13,6 @@ import Stemmer
 import bm25s
 import tarfile
 
-BM25_NUM_HITS=16
 DEFAULT_SEMANTIC_NUM_HITS=1024
 COMMON_HITS_PER_QUERY=4
 SEMANTIC_HITS_PER_QUERY=20
@@ -260,8 +259,8 @@ class FaissRM():
         print(lgstr)
         if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(lgstr)
 
-    def __call__(self, query: str, k: Optional[int] = None, index_type:str = 'flat',
-                                named_entities=None, main_theme=None):
+    def __call__(self, query: str, bm25_num_hits: int, k: Optional[int] = None, index_type:str = 'flat',
+                named_entities=None, main_theme=None):
         """Search the faiss index for k or self.k top passages for query.
 
         Args:
@@ -272,6 +271,7 @@ class FaissRM():
         Returns:
             dspy.Prediction: An object containing the retrieved passages.
         """
+        print(f"faiss_rm: Entered. query={query}, bm25_num_hits={bm25_num_hits}, k={k}, index_type={index_type}, named_entities={named_entities}, main_theme={main_theme}")
         queries = [query]
         queries = [q for q in queries if q]  # Filter empty queries
         embeddings = self._vectorizer.encode(queries)
@@ -289,13 +289,10 @@ class FaissRM():
                     self._lg(f"{prtime()}: main theme also present = {main_theme}. Searching for both")
                     named_entities.append(main_theme)
                 named_entity_tokens = bm25s.tokenize(named_entities, stopwords="en", stemmer=self._stemmer)
-                #results = self._bm25s_retriever.retrieve(named_entity_tokens, self._index_map, k=BM25_NUM_HITS)
-                results = self._bm25s_retriever.retrieve(named_entity_tokens, k=BM25_NUM_HITS)
+                results = self._bm25s_retriever.retrieve(named_entity_tokens, k=bm25_num_hits)
                 named_entity_hits = {}
                 for named_entity_ind in range(np.shape(results)[1]):
-                    print(f"XXXXXXXXXXXXXXXXX outer named_entity_ind={named_entity_ind}, range={np.shape(results)[1]}")
                     for hit_ind in range(np.shape(results)[2]):
-                        print(f"YYYYYYYYYYYYYYYYY outer hit_ind={hit_ind}, named_entity_ind={named_entity_ind}, range={np.shape(results)[2]}")
                         index_in_faiss = results[0][named_entity_ind][hit_ind]
                         fileid = self._index_map[index_in_faiss][0]
                         para = self._index_map[index_in_faiss][1]
@@ -306,8 +303,12 @@ class FaissRM():
                         else:
                             self._lg(f"  bm25s result(adding):  {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
                             named_entity_hits[index_in_faiss][1] += score
-                print(f"named_entry_hits={named_entity_hits}")
+                print(f"named_entity_hits={named_entity_hits}")
                 if named_entity_hits.values():
+                    for ky in named_entity_hits.keys():
+                        if ky in index_list:
+                            self._lg(f"  bm25s res also in semantic seach:  {self._documents[self._index_map[ky][0]]['path']}{self._documents[self._index_map[ky][0]]['filename']},para={self._index_map[ky][1]}")
+                            named_entity_hits[ky] = (ky, named_entity_hits[ky][1] + 10.0)
                     sorted_named_entity_hits = sorted(list(named_entity_hits.values()), key=lambda x: x[1], reverse=True)
                     sorted_truncated_named_entity_hits = sorted_named_entity_hits[:4]
                     print(f"sorted_truncated_named_entry_hits={sorted_truncated_named_entity_hits}")
@@ -336,7 +337,7 @@ class FaissRM():
                 if self._bm25s_retriever and bm25terms:
                     # first create one dict of hits per bm25term. Each dict has {'fileid1': {'para1': num_hits, 'para2':num_hits}, 'fileid2': {'para1': num_hits}}
                     query_tokens = bm25s.tokenize(bm25terms, stopwords="en", stemmer=self._stemmer)
-                    results = self._bm25s_retriever.retrieve(query_tokens, k=BM25_NUM_HITS)
+                    results = self._bm25s_retriever.retrieve(query_tokens, k=bm25_num_hits)
                     bm25terms_hits = []
                     for bm25_query_ind in range(np.shape(results)[1]):
                         bm25_hits = {}
