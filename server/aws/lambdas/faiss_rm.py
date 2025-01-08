@@ -43,14 +43,21 @@ class FaissRM():
                     bm25s_index_fname=None):
         """ documents is a dict like {fileid: finfo}; index_map is a list of tuples: [(fileid, paragraph_index)]; 
         
-        The two lists are aligned: index_map, pre_calc_embeddings.  For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].  index_map[i] is the tuple (document_id, paragraph_number).  'document_id' can be used to index into 'documents'
+        The two lists are aligned: index_map, pre_calc_embeddings.
+        For example, for the 'i'th position, we have the embedding at pre_calc_embeddings[i] and the document chunk for the embedding at index_map[i].
+        index_map[i] is the tuple (document_id, paragraph_number).
+        'document_id' can be used to index into 'documents'
         
         documents: each item in this dict is similar to below 
-        {'1S8cnV...': {'filename': 'Multimodal', 'fileid': '1S8cnV....', 'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc), 'index_bucket':'yoja-index-2', 'index_object':'index1/raj@.../data/embeddings-1712657862202462825.jsonl'}, ... }
+        {'1S8cnV...': {'filename': 'Multimodal', 'fileid': '1S8cnV....',
+                        'mtime': datetime.datetime(2024, 3, 4, 16, 27, 1, 169000, tzinfo=datetime.timezone.utc),
+                        'index_bucket':'yoja-index-2', 'index_object':'index1/raj@.../data/embeddings-1712657862202462825.jsonl'},
+        ... }
         
         pre_calc_embeddings: list of embeddings.
         
-        index_map: the corresponding text chunk for each embedding in 'pre_calc_embeddings' above.  each element is the tuple (fileid, paragraph_index).  This is used to locate te text chunk in 'documents'
+        index_map: the corresponding text chunk for each embedding in 'pre_calc_embeddings' above.  each element is the tuple (fileid, paragraph_index).
+        This is used to locate te text chunk in 'documents'
         """
         self._documents = documents
         self.k = k
@@ -105,7 +112,9 @@ class FaissRM():
         print(f"faiss_index_flat:  total vectors={self._faiss_index.ntotal}; index_memory={self._get_memory(self._faiss_index)}")
         
         if not ivfadc_index_fname:
-            # at least 256*40 == 10240, then setup ivfdac. Note that it seems nlist=256 is the minimum for IVF.  If nlist < 256 is provided, it still uses 256 it seems (based on error thrown).  Note that, from the warning below, we'll need 40 times the number of centroids for training..
+            # at least 256*40 == 10240, then setup ivfdac. Note that it seems nlist=256 is the minimum for IVF.
+            # If nlist < 256 is provided, it still uses 256 it seems (based on error thrown).
+            # Note that, from the warning below, we'll need 40 times the number of centroids for training..
             if xb.shape[0] >= 256*40:
                 print(f"Computing IVFADC using embedding vectors")
                 # for IVF: nlist=256
@@ -119,7 +128,8 @@ class FaissRM():
                 print(f"creating IVFADC index using factory={factory}; ivf_nlist={ivf_nlist}, pq_m={pq_m}, pq_nbits={pq_nbits}")
                 self._faiss_index_ivf_adc:faiss.IndexIVFPQ = faiss.index_factory(d, factory, faiss.METRIC_INNER_PRODUCT)
                 # WARNING clustering 38 points to 32 centroids: please provide at least 1248 training points
-                # builtins.RuntimeError: Error in void faiss::Clustering::train_encoded(faiss::idx_t, const uint8_t*, const faiss::Index*, faiss::Index&, const float*) at /project/faiss/faiss/Clustering.cpp:275: Error: 'nx >= k' failed: Number of training points (38) should be at least as large as number of clusters (256)
+                # builtins.RuntimeError: Error in void faiss::Clustering::train_encoded(faiss::idx_t, const uint8_t*, const faiss::Index*, faiss::Index&, const float*)
+                # at /project/faiss/faiss/Clustering.cpp:275: Error: 'nx >= k' failed: Number of training points (38) should be at least as large as number of clusters (256)
                 self._faiss_index_ivf_adc.train(xb)
                 self._faiss_index_ivf_adc.add(xb)
                 self._faiss_index_ivf_adc.nprobe = 16
