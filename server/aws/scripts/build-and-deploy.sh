@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ x"${13}" == "x" ] ; then
+if [ x"${14}" == "x" ] ; then
   echo "Usage: $0"
   echo "  oauth_client_id"
   echo "  oauth_client_secret"
@@ -11,7 +11,8 @@ if [ x"${13}" == "x" ] ; then
   echo "  serviceconf_table_name"
   echo "  cookie_domain"
   echo "  scratch_bucket"
-  echo "  openai_api_key"
+  echo "  gcloud_project_id"
+  echo "  gcloud_credentials"
   echo "  aws_creds_profile"
   echo "  aws_region"
   echo "  image_name"
@@ -27,10 +28,11 @@ users_table_name=$6
 serviceconf_table_name=$7
 cookie_domain=$8
 scratch_bucket=$9
-openai_api_key=${10}
-AWS_CREDS="${11}"
-AWS_REGN="${12}"
-image_name=${13}
+gcloud_project_id=${10}
+gcloud_credentials=${11}
+AWS_CREDS="${12}"
+AWS_REGN="${13}"
+image_name=${14}
 
 echo "Using AWS Credentials Profile $AWS_CREDS"
 echo "Using AWS Region $AWS_REGN"
@@ -98,7 +100,8 @@ sam deploy --profile ${AWS_CREDS} --region ${AWS_REGN} --template template.yaml 
       ParameterKey=UsersTable,ParameterValue=${users_table_name} \
       ParameterKey=ServiceconfTable,ParameterValue=${serviceconf_table_name} \
       ParameterKey=CookieDomain,ParameterValue=${cookie_domain} \
-      ParameterKey=OpenaiApiKey,ParameterValue=${openai_api_key}
+      ParameterKey=GcloudProjectId,ParameterValue=${gcloud_project_id} \
+      ParameterKey=GcloudCredentials,ParameterValue=${gcloud_credentials}
 retval=$?
 
 exit $retval

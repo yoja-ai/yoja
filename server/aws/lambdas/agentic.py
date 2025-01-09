@@ -8,13 +8,17 @@ from utils import prtime, llm_run_usage
 
 MAX_PLAN_STEPS=2
 
-if 'OLLAMA_HOST' in os.environ:
-    print(f"ollama_not supported")
-    sys.exit(255)
 if 'GCLOUD_PROJECTID' in os.environ:
     from gemini_client import generate, retrieve
-if 'OPENAI_API_KEY' in os.environ:
+    print(f"Gemini LLM configured")
+elif 'OLLAMA_HOST' in os.environ:
+    print(f"ollama_not supported")
+    sys.exit(255)
+elif 'OPENAI_API_KEY' in os.environ:
     print(f"openai not supported")
+    sys.exit(255)
+else:
+    print(f"No LLM configured")
     sys.exit(255)
 
 PLANNER_MESSAGE = (
@@ -67,7 +71,7 @@ ASSISTANT_PROMPT_NO_TOOL = (
     """
 )
 
-CRITIC_SYSTEM_PROMPT = "You are a critic of responses from a language model. Your job is to evaluate the response from a language model against the task given to the language model and determine if the response satisfies the task."
+CRITIC_SYSTEM_PROMPT = "You are a critic of responses from a language model. Your job is to evaluate the response from a language model against the task given to the language model and determine if the response satisfies the task. The language model is supplied with context from the user's personal and confidential documents. Brief answers with no explanation from the language model as acceptable and considered satisfactory."
 
 CRITIC_PROMPT = (
     """The user message was {user_message} \nThe following is the response of the model. '{last_output}\n'
@@ -181,12 +185,16 @@ def agentic_chat(yoja_index, tracebuf:List[str],
                         c2 = c2[11:].strip()
                     content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
                         [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
-                        False)
+                        False, temperature=1.0)
                     prompt_tokens += prtokens
                     completion_tokens += cmptokens
                     print(f"!!!!!!!!!!!!!!!!!!! {content3}")
                     if content3.text.find("##NO##") == -1:
                         return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                     else:
-                        print(f"User question not answered")
+                        if attempt == (MAX_PLAN_STEPS - 1):
+                            print(f"User question not answered. Returning the answer nonetheless..")
+                            return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
+                        else:
+                            print(f"User question not answered. Retrying..")
     return None, None, None

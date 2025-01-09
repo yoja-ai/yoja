@@ -24,7 +24,7 @@ from sentence_transformers.cross_encoder import CrossEncoder
 MAX_TOKEN_LIMIT=4096
 MAX_PRE_AND_POST_TOKEN_LIMIT=256
 MAX_VDB_RESULTS=128
-BM25_NUM_HITS=8
+BM25_NUM_HITS=128
 
 g_cross_encoder = None
 

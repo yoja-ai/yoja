@@ -285,37 +285,43 @@ class FaissRM():
         if self._bm25s_retriever:
             if named_entities:
                 self._lg(f"{prtime()}: named_entities present = {named_entities}")
-                if main_theme:
-                    self._lg(f"{prtime()}: main theme also present = {main_theme}. Searching for both")
-                    named_entities.append(main_theme)
-                named_entity_tokens = bm25s.tokenize(named_entities, stopwords="en", stemmer=self._stemmer)
-                results = self._bm25s_retriever.retrieve(named_entity_tokens, k=bm25_num_hits)
-                named_entity_hits = {}
-                for named_entity_ind in range(np.shape(results)[1]):
+                search_entities = named_entities
+            else:
+                search_entities = []
+            if main_theme:
+                self._lg(f"{prtime()}: main theme present = {main_theme}")
+                search_entities.append(main_theme)
+            print(f"search_entities={search_entities}")
+            if not search_entities:
+                return distance_list, index_list # No search_entities. Just return the semantic search results
+            else:
+                search_entity_tokens = bm25s.tokenize(search_entities, stopwords="en", stemmer=self._stemmer)
+                results = self._bm25s_retriever.retrieve(search_entity_tokens, k=bm25_num_hits)
+                search_entity_hits = {}
+                for search_entity_ind in range(np.shape(results)[1]):
                     for hit_ind in range(np.shape(results)[2]):
-                        index_in_faiss = results[0][named_entity_ind][hit_ind]
+                        index_in_faiss = results[0][search_entity_ind][hit_ind]
                         fileid = self._index_map[index_in_faiss][0]
                         para = self._index_map[index_in_faiss][1]
-                        score = results[1][named_entity_ind][hit_ind]
-                        if not (fileid, para) in named_entity_hits:
-                            self._lg(f"  bm25s result(first):  {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
-                            named_entity_hits[index_in_faiss] = (index_in_faiss, score)
+                        score = results[1][search_entity_ind][hit_ind]
+                        if not index_in_faiss in search_entity_hits:
+                            self._lg(f"  bm25s result({search_entities[search_entity_ind]}): first {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
+                            search_entity_hits[index_in_faiss] = (index_in_faiss, score)
                         else:
-                            self._lg(f"  bm25s result(adding):  {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
-                            named_entity_hits[index_in_faiss][1] += score
-                print(f"named_entity_hits={named_entity_hits}")
-                if named_entity_hits.values():
-                    for ky in named_entity_hits.keys():
+                            self._lg(f"  bm25s result({search_entities[search_entity_ind]}): add {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
+                            search_entity_hits[index_in_faiss] = (index_in_faiss, search_entity_hits[index_in_faiss][1] + score)
+                if search_entity_hits.values():
+                    for ky in search_entity_hits.keys():
                         if ky in index_list:
                             self._lg(f"  bm25s res also in semantic seach:  {self._documents[self._index_map[ky][0]]['path']}{self._documents[self._index_map[ky][0]]['filename']},para={self._index_map[ky][1]}")
-                            named_entity_hits[ky] = (ky, named_entity_hits[ky][1] + 10.0)
-                    sorted_named_entity_hits = sorted(list(named_entity_hits.values()), key=lambda x: x[1], reverse=True)
-                    sorted_truncated_named_entity_hits = sorted_named_entity_hits[:4]
-                    print(f"sorted_truncated_named_entry_hits={sorted_truncated_named_entity_hits}")
+                            search_entity_hits[ky] = (ky, search_entity_hits[ky][1] + 10.0)
+                    sorted_search_entity_hits = sorted(list(search_entity_hits.values()), key=lambda x: x[1], reverse=True)
+                    sorted_truncated_search_entity_hits = sorted_search_entity_hits[:4]
+                    print(f"sorted_truncated_search_entity_hits={sorted_truncated_search_entity_hits}")
                     indices = []
                     distances = []
-                    self._lg(f"{prtime()}: sorted_named_entity_hits:")
-                    for vl in sorted_named_entity_hits:
+                    self._lg(f"{prtime()}: sorted_truncated_search_entity_hits:")
+                    for vl in sorted_truncated_search_entity_hits:
                         indices.append(vl[0])
                         distances.append(vl[1])
                         self._lg(f"  {self._documents[self._index_map[vl[0]][0]]['path']}{self._documents[self._index_map[vl[0]][0]]['filename']},para={self._index_map[vl[0]][1]}: {vl[1]}")
@@ -331,74 +337,8 @@ class FaissRM():
                         modified_index_rv.append(np.array(index_list[semantic_query_ind][:per_sem_query_hits]))
                         modified_distances_rv.append(np.array(distance_list[semantic_query_ind][:per_sem_query_hits]))
                     return np.array(modified_distances_rv), np.array(modified_index_rv)
-            elif main_theme:
-                self._lg(f"{prtime()}: no named_entities present, but main_theme = {main_theme}")
-                bm25terms = [main_theme]
-                if self._bm25s_retriever and bm25terms:
-                    # first create one dict of hits per bm25term. Each dict has {'fileid1': {'para1': num_hits, 'para2':num_hits}, 'fileid2': {'para1': num_hits}}
-                    query_tokens = bm25s.tokenize(bm25terms, stopwords="en", stemmer=self._stemmer)
-                    results = self._bm25s_retriever.retrieve(query_tokens, k=bm25_num_hits)
-                    bm25terms_hits = []
-                    for bm25_query_ind in range(np.shape(results)[1]):
-                        bm25_hits = {}
-                        for hit_ind in range(np.shape(results)[2]):
-                            index_in_faiss = results[0][bm25_query_ind][hit_ind]
-                            fileid = self._index_map[index_in_faiss][0]
-                            para = self._index_map[index_in_faiss][1]
-                            score = results[1][bm25_query_ind][hit_ind]
-                            if not fileid in bm25_hits:
-                                bm25_hits[fileid] = {}
-                            bm25_hits[fileid][para] = score
-                        self._lg(f"{prtime()}: bm25_hits({bm25terms[bm25_query_ind]}):")
-                        for ky, vl in bm25_hits.items():
-                            self._lg(f"  {self._documents[ky]['path']}{self._documents[ky]['filename']}: {vl}")
-                        bm25terms_hits.append(bm25_hits)
-                    # next, for each term in the semantic search, filter semantic search results by presence in any of the bm25terms_hits
-                    common_hits_found = 0
-                    modified_index_rv = []
-                    modified_distances_rv = []
-                    for semantic_query_ind in range(len(index_list)):
-                        print(f"{prtime()}: begin filtering results of semantic query for {queries[semantic_query_ind]} by results of all bm25 search terms")
-                        indices = index_list[semantic_query_ind]
-                        distances = distance_list[semantic_query_ind]
-                        modified_indices = []
-                        modified_distances = []
-                        common_hits_found = 0
-                        for sem_ind in range(len(indices)):
-                            index = indices[sem_ind]
-                            distance = distances[sem_ind]
-                            fileid, para_index = self._index_map[index]
-                            finfo = self._documents[fileid]
-                            for bm25_ind in range(len(bm25terms_hits)):
-                                bm25_hits = bm25terms_hits[bm25_ind]
-                                if fileid in bm25_hits and para_index in bm25_hits[fileid]:
-                                    self._lg(f"{finfo['filename']}, para {para_index} is in both search results. Including")
-                                    modified_indices.append(index)
-                                    modified_distances.append(distance)
-                                    common_hits_found += 1
-                                    break
-                                else:
-                                    print(f"{finfo['filename']}, para {para_index} is in semantic search, but not bm25 term {bm25terms[bm25_ind]}. Excluding")
-                            if common_hits_found >= COMMON_HITS_PER_QUERY:
-                                break
-                        semantic_hits = 0
-                        for sem_ind in range(len(indices)):
-                            index = indices[sem_ind]
-                            distance = distances[sem_ind]
-                            if index in modified_indices:
-                                continue
-                            modified_indices.append(index)
-                            modified_distances.append(distance)
-                            semantic_hits += 1
-                            if semantic_hits > SEMANTIC_HITS_PER_QUERY:
-                                break
-                        modified_index_rv.append(np.array(modified_indices))
-                        modified_distances_rv.append(np.array(modified_distances))
-                    return np.array(modified_distances_rv), np.array(modified_index_rv)
-            else:
-                return distance_list, index_list
         else:
-            return distance_list, index_list
+            return distance_list, index_list # No _bm25s_retriever. Just return the semantic search results
 
 if __name__ == '__main__':
     input("Enter the location of the jsonl file: ")
