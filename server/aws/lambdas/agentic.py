@@ -6,7 +6,7 @@ from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from typing import Tuple, List, Dict, Any, Self
 from utils import prtime, llm_run_usage
 
-MAX_PLAN_STEPS=2
+MAX_RETRIEVE_ATTEMPTS=2
 
 if 'GCLOUD_PROJECTID' in os.environ:
     from gemini_client import generate, retrieve
@@ -71,35 +71,32 @@ ASSISTANT_PROMPT_NO_TOOL = (
     """
 )
 
-CRITIC_SYSTEM_PROMPT = "You are a critic of responses from a language model. Your job is to evaluate the response from a language model against the task given to the language model and determine if the response satisfies the task. The language model is supplied with context from the user's personal and confidential documents. Brief answers with no explanation from the language model as acceptable and considered satisfactory."
+CRITIC_SYSTEM_PROMPT = "You are a critic of responses from a language model. Your job is to evaluate the response from a language model against the task given to the language model and determine if the response satisfies the task. The language model is supplied with context from the user's personal and confidential documents. Brief answers with no explanation from the language model are acceptable and considered satisfactory."
 
 CRITIC_PROMPT = (
     """The user message was {user_message} \nThe following is the response of the model. '{last_output}\n'
-    If the output of the instruction completely satisfies the instruction, then reply with ##YES##.
+    If the output of the model completely satisfies the instruction, then reply with ##YES##.
     For example, if the instruction is to list companies that use AI, then the output contains a list of companies that use AI.
     If the output contains the phrase 'I'm sorry but...' then it is likely not fulfilling the instruction. \n
-    If the output of the instruction does not properly satisfy the instruction, then reply with ##NO## and the reason why.
+    If the output of the model does not properly satisfy the instruction, then reply with ##NO## and the reason why.
     For example, if the instruction was to list companies that use AI but the output does not contain a list of companies, or states that a list of companies is not available, then the output did not properly satisfy the instruction.
     If it does not satisfy the instruction, please think about what went wrong with the previous instruction and give me an explanation along with the text ##NO##.
     """
 )
 
-def _process_function_call(function_call, yoja_index, tracebuf,
-                filekey_to_file_chunks_dict, chat_config, searchsubdir, attempt):
-    if function_call.name == 'info_for_any_question_I_may_have':
-        if 'question' in function_call.args:
-            tool_arg_question = function_call.args['question']
-        elif 'prompt' in function_call.args:
-            tool_arg_question = function_call.args['prompt']
-        else:
-            print(f"_process_function_call: Error. No question or prompt in args")
-            return None
-        context:str = retrieve(yoja_index, tracebuf,
-                                filekey_to_file_chunks_dict, chat_config,
-                                tool_arg_question, searchsubdir=searchsubdir,
-                                num_hits_multiplier=attempt)
-        return context
-    return None
+CHECK_CONTEXT_SYSTEM_PROMPT = "You are a critic of responses from a language model that is supplied with selected context from a users personal document collection. Your job is to evaluate the response from a language model against the task given to the language model and determine if the context selected for the question is relevant to the question."
+CHECK_CONTEXT_PROMPT = (
+    """The user message was {user_message} \nThe search query performed on the users personal document collection was as follows: '{search_query}'\n.
+    The following was the context produced as a result of the search query '{context_str}'\n'
+    The following was the response of the model. '{last_output}\n'
+    If the output of the model indicates that the context provided is corret, then reply with ##CORRECT##.
+    For example, if the instruction is to determine the frequency of oil changes for the user's car, and the context consists of passages from the car's user manual, then the output context is correct.
+    If the output contains the phrase 'I'm sorry but...' then it is likely that the context is not correct. \n
+    If the context is not correct, then reply with ##WRONG##
+    For example, if the instruction is to determine the frequency of oil changes for the user's car, and the context consists of passages from a garage door opener manual, then the output context is wrong.
+    If the context is wrong, please think and give me a new search query for searching the user's document collection along with the text ##WRONG##.
+    """
+)
 
 def _extract_json(text):
     lines = text.splitlines()
@@ -152,24 +149,35 @@ def agentic_chat(yoja_index, tracebuf:List[str],
             print(f"agentic_chat: No text and hence no plan. Fail")
             return None, None, None
 
-    for attempt in range(MAX_PLAN_STEPS):
-        print(f"Begin agentic loop. Attempt {attempt}")
-        plan_step = plan_dict['plan'][0]
-        user_message = messages[-1]['content']
-        content1, prtokens, cmptokens = generate(ASSISTANT_PROMPT_WITH_TOOL,
-                    [{'role': 'user', 'content': f"Perform this step '{plan_step}' for this user message '{user_message}'"}],
-                    True, temperature=1.5)
-        prompt_tokens += prtokens
-        completion_tokens += cmptokens
-        if content1:
-            if hasattr(content1, 'text'):
-                assistant_response = _get_json(content1.text)
-                print(f"agentic_chat: assistant_response={assistant_response}")
-            elif hasattr(content1, "function_call"):
-                function_call = content1.function_call
-                print(f"agentic_chat: function_call={function_call}")
-                context_str = _process_function_call(function_call, yoja_index, tracebuf,
-                                                filekey_to_file_chunks_dict, chat_config, searchsubdir, attempt)
+    plan_step = plan_dict['plan'][0]
+    user_message = messages[-1]['content']
+    content1, prtokens, cmptokens = generate(ASSISTANT_PROMPT_WITH_TOOL,
+                [{'role': 'user', 'content': f"Perform this step '{plan_step}' for this user message '{user_message}'"}],
+                True)
+    prompt_tokens += prtokens
+    completion_tokens += cmptokens
+    if content1:
+        if hasattr(content1, 'text'):
+            assistant_response = _get_json(content1.text)
+            print(f"agentic_chat: assistant_response={assistant_response}")
+        elif hasattr(content1, "function_call"):
+            function_call = content1.function_call
+            if function_call.name != 'info_for_any_question_I_may_have':
+                print(f"Error. Unknown function call {function_call.name}")
+                return None, None, None
+            if 'question' in function_call.args:
+                tool_arg_question = function_call.args['question']
+            elif 'prompt' in function_call.args:
+                tool_arg_question = function_call.args['prompt']
+            else:
+                print(f"agentic_chat: Error. No question or prompt in args to function")
+                return None, None, None
+            for retrieve_attempt in range(MAX_RETRIEVE_ATTEMPTS):
+                print(f"Retrieving with question={tool_arg_question}")
+                context_str:str = retrieve(yoja_index, tracebuf,
+                                        filekey_to_file_chunks_dict, chat_config,
+                                        tool_arg_question, searchsubdir=searchsubdir,
+                                        num_hits_multiplier=retrieve_attempt)
                 if len(plan_dict['plan']) > 1:
                     plan_step = plan_dict['plan'][1]
                 else:
@@ -183,18 +191,34 @@ def agentic_chat(yoja_index, tracebuf:List[str],
                     c2 = content2.text.strip()
                     if c2.startswith("##SUMMARY##"):
                         c2 = c2[11:].strip()
+                    elif c2.startswith('##TERMINATE##'):
+                        c2 = "Sorry, no useful answers found"
                     content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
                         [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
                         False, temperature=1.0)
                     prompt_tokens += prtokens
                     completion_tokens += cmptokens
-                    print(f"!!!!!!!!!!!!!!!!!!! {content3}")
                     if content3.text.find("##NO##") == -1:
                         return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                     else:
-                        if attempt == (MAX_PLAN_STEPS - 1):
-                            print(f"User question not answered. Returning the answer nonetheless..")
-                            return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
+                        print(f"User question not answered. Checking to see if context was accurate")
+                        content4, prtokens, cmptokens = generate(CHECK_CONTEXT_SYSTEM_PROMPT,
+                            [{'role': 'user', 'content': CHECK_CONTEXT_PROMPT.format(user_message=user_msg, search_query=tool_arg_question,
+                                                                                context_str=context_str, last_output=c2)}],
+                            False)
+                        prompt_tokens += prtokens
+                        completion_tokens += cmptokens
+                        c4 = content4.text.strip()
+                        if c4.startswith("##WRONG##"):
+                            print(f"Context was incorrect")
+                            if retrieve_attempt == (MAX_RETRIEVE_ATTEMPTS - 1):
+                                return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
+                            else:
+                                nq_ind = c4.find("**New Search Query:**")
+                                if nq_ind != -1:
+                                    tool_arg_question = c4[nq_ind + len("**New Search Query:**"):].strip()
+                                    continue
                         else:
-                            print(f"User question not answered. Retrying..")
+                            print(f"Context was accurate. However, question was not answered. Returning the answer nonetheless")
+                            return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
     return None, None, None
