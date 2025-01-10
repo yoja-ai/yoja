@@ -32,7 +32,7 @@ from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from openai_client import chat_using_openai_assistant
 from ollama_client import chat_using_ollama_assistant
 from yoja_retrieve import YojaIndex, get_max_token_limit
-from agentic import agentic_chat
+from agentic import agentic_new_chat, agentic_ongoing_chat
 
 def _get_agent_thread_id(messages:List[dict]) -> str:
     for msg in messages:
@@ -45,10 +45,6 @@ def _get_agent_thread_id(messages:List[dict]) -> str:
             thread_id = match.group(1)
             print(f"Extracted thread_id={thread_id}")
             return thread_id
-    return None
-
-def _get_llm_chat_function():
-    print("AAAAAAAAAAAAAARRRRRRRRRRRGGGGGGGGGGGGGHHHHHHHHHH")
     return None
 
 def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, toolprompts=None):
@@ -65,9 +61,10 @@ def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=No
         return respond({"error_msg": emsg}, status=500)
 
     filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]] = {};
-    srp, thread_id, run_usage = _get_llm_chat_function()(yoja_index, tracebuf,
-                                                        filekey_to_file_chunks_dict, thread_id,
-                                                        chat_config, body['messages'], toolprompts)
+    srp, thread_id, run_usage = agentic_ongoing_chat(yoja_index, tracebuf,
+                                                    filekey_to_file_chunks_dict, thread_id,
+                                                    chat_config, body['messages'],
+                                                    searchsubdir=searchsubdir, toolprompts=toolprompts)
     if not srp:
         return respond({"error_msg": "Error. retrieve using assistant failed"}, status=500)
     if run_usage:
@@ -175,7 +172,7 @@ def new_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, 
 
     # string response??
     srp:str = ""; thread_id:str 
-    srp, thread_id, run_usage = agentic_chat(yoja_index, tracebuf, filekey_to_file_chunks_dict,
+    srp, thread_id, run_usage = agentic_new_chat(yoja_index, tracebuf, filekey_to_file_chunks_dict,
                                             None, chat_config, body['messages'], searchsubdir, toolprompts)
     if not srp:
         return respond({"error_msg": "Error. chat using llm chat function failed"}, status=500)
