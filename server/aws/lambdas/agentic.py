@@ -193,31 +193,33 @@ def agentic_chat(yoja_index, tracebuf:List[str],
                         c2 = c2[11:].strip()
                     elif c2.startswith('##TERMINATE##'):
                         c2 = "Sorry, no useful answers found"
-                    content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
-                        [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
-                        False, temperature=1.0)
+                    content4, prtokens, cmptokens = generate(CHECK_CONTEXT_SYSTEM_PROMPT,
+                        [{'role': 'user', 'content': CHECK_CONTEXT_PROMPT.format(user_message=user_msg, search_query=tool_arg_question,
+                                                                            context_str=context_str, last_output=c2)}],
+                        False)
                     prompt_tokens += prtokens
                     completion_tokens += cmptokens
-                    if content3.text.find("##NO##") == -1:
-                        return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
+                    c4 = content4.text.strip()
+                    print(f"agentic_chat: check context response={c4}")
+                    if c4.startswith("##WRONG##"):
+                        print(f"Context was incorrect")
+                        if retrieve_attempt == (MAX_RETRIEVE_ATTEMPTS - 1):
+                            return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
+                        else:
+                            nq_ind = c4.find("**New Search Query:**")
+                            if nq_ind != -1:
+                                tool_arg_question = c4[nq_ind + len("**New Search Query:**"):].strip()
+                                continue
                     else:
-                        print(f"User question not answered. Checking to see if context was accurate")
-                        content4, prtokens, cmptokens = generate(CHECK_CONTEXT_SYSTEM_PROMPT,
-                            [{'role': 'user', 'content': CHECK_CONTEXT_PROMPT.format(user_message=user_msg, search_query=tool_arg_question,
-                                                                                context_str=context_str, last_output=c2)}],
-                            False)
+                        print(f"Context was accurate. Now checking whether user question was answered")
+                        content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
+                            [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
+                            False, temperature=1.0)
                         prompt_tokens += prtokens
                         completion_tokens += cmptokens
-                        c4 = content4.text.strip()
-                        if c4.startswith("##WRONG##"):
-                            print(f"Context was incorrect")
-                            if retrieve_attempt == (MAX_RETRIEVE_ATTEMPTS - 1):
-                                return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
-                            else:
-                                nq_ind = c4.find("**New Search Query:**")
-                                if nq_ind != -1:
-                                    tool_arg_question = c4[nq_ind + len("**New Search Query:**"):].strip()
-                                    continue
+                        print(f"agentic_chat: critic response={content3}")
+                        if content3.text.find("##NO##") == -1:
+                            return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                         else:
                             print(f"Context was accurate. However, question was not answered. Returning the answer nonetheless")
                             return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
