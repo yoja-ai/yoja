@@ -4,7 +4,9 @@ import json
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from typing import Tuple, List, Dict, Any, Self
-from utils import prtime, llm_run_usage
+from utils import prtime, llm_run_usage, lg
+from index_utils import generate_context_sources, ContextSource
+import dataclasses
 
 MAX_RETRIEVE_ATTEMPTS=2
 
@@ -157,13 +159,22 @@ def _get_json(text):
             print(f"_get_json: caught {ex}")
     return None
 
+def _log_context_sources(tracebuf, filekey_to_file_chunks_dict):
+    context_srcs_links:List[ContextSource]
+    context_srcs_links = generate_context_sources(filekey_to_file_chunks_dict)
+    lg(tracebuf, "        Context Sources:")
+    for csl in context_srcs_links:
+        lg(tracebuf, f"          {csl.file_path}{csl.file_name}")
+
 def agentic_new_chat(yoja_index, tracebuf:List[str],
                 filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                 assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                 searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
-    print(f"agentic_new_chat: Entered")
+    lg(tracebuf, f"{prtime()}: agentic_new_chat begin")
     prompt_tokens = 0
     completion_tokens = 0
+
+    detail_tracebuf = []
 
     user_msg = messages[-1]['content']
     content, prtokens, cmptokens = generate(PLANNER_MESSAGE,
@@ -175,10 +186,12 @@ def agentic_new_chat(yoja_index, tracebuf:List[str],
     if content:
         if hasattr(content, 'text'):
             plan_dict = _get_json(content.text)
-            print(f"agentic_new_chat: plan_dict={plan_dict}")
+            lg(tracebuf, f"{prtime()}: plan from LLM={plan_dict}")
         else:
-            print(f"agentic_new_chat: No text and hence no plan. Fail")
-            return None, None, None
+            fmsg = f"{prtime()}: No plan from LLM. Fail"
+            lg(tracebuf, fmsg)
+            return fmsg, None, None
+
 
     plan_step = plan_dict['plan'][0]
     user_message = messages[-1]['content']
@@ -189,26 +202,27 @@ def agentic_new_chat(yoja_index, tracebuf:List[str],
     completion_tokens += cmptokens
     if content1:
         if hasattr(content1, 'text'):
-            assistant_response = _get_json(content1.text)
-            print(f"agentic_new_chat: assistant_response={assistant_response}")
+            lg(tracebuf, f"{prtime()}: step 1 results from LLM={content1['text']}")
+            return content1['text'], "notused", llm_run_usage(prompt_tokens, completion_tokens)
         elif hasattr(content1, "function_call"):
             function_call = content1.function_call
             if function_call.name != 'info_for_any_question_I_may_have':
-                print(f"Error. Unknown function call {function_call.name}")
+                lg(tracebuf, f"{prtime()}: Unknown function call {function_call.name}. Fail")
                 return None, None, None
             if 'question' in function_call.args:
                 tool_arg_question = function_call.args['question']
             elif 'prompt' in function_call.args:
                 tool_arg_question = function_call.args['prompt']
             else:
-                print(f"agentic_new_chat: Error. No question or prompt in args to function")
+                lg(tracebuf, f"{prtime()}: No question or prompt in args to function. Fail")
                 return None, None, None
             for retrieve_attempt in range(MAX_RETRIEVE_ATTEMPTS):
-                print(f"Retrieving with question={tool_arg_question}")
-                context_str:str = retrieve(yoja_index, tracebuf,
+                lg(tracebuf, f"{prtime()}: Retrieve attempt={retrieve_attempt} question={tool_arg_question}")
+                context_str:str = retrieve(yoja_index, detail_tracebuf,
                                         filekey_to_file_chunks_dict, chat_config,
                                         tool_arg_question, searchsubdir=searchsubdir,
                                         num_hits_multiplier=retrieve_attempt)
+                _log_context_sources(tracebuf, filekey_to_file_chunks_dict)
                 if len(plan_dict['plan']) > 1:
                     plan_step = plan_dict['plan'][1]
                 else:
@@ -231,9 +245,8 @@ def agentic_new_chat(yoja_index, tracebuf:List[str],
                     prompt_tokens += prtokens
                     completion_tokens += cmptokens
                     c4 = content4.text.strip()
-                    print(f"agentic_new_chat: check context response={c4}")
                     if c4.startswith("##WRONG##"):
-                        print(f"Context was incorrect")
+                        lg(tracebuf, f"{prtime()}: LLM Check Context. Context provided was incorrect")
                         if retrieve_attempt == (MAX_RETRIEVE_ATTEMPTS - 1):
                             return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                         else:
@@ -242,17 +255,17 @@ def agentic_new_chat(yoja_index, tracebuf:List[str],
                                 tool_arg_question = c4[nq_ind + len("**New Search Query:**"):].strip()
                                 continue
                     else:
-                        print(f"Context was accurate. Now checking whether user question was answered")
+                        lg(tracebuf, f"{prtime()}: LLM Check Context. Context provided correct. Now checking whether user query was answered")
                         content3, prtokens, cmptokens = generate(CRITIC_SYSTEM_PROMPT,
                             [{'role': 'user', 'content': CRITIC_PROMPT.format(user_message=user_msg, last_output=c2)}],
                             False, temperature=1.0)
                         prompt_tokens += prtokens
                         completion_tokens += cmptokens
-                        print(f"agentic_new_chat: critic response={content3}")
                         if content3.text.find("##NO##") == -1:
+                            lg(tracebuf, f"{prtime()}: LLM Check Whether User Query Was Answered: Yes")
                             return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
                         else:
-                            print(f"Context was accurate. However, question was not answered. Returning the answer nonetheless")
+                            lg(tracebuf, f"{prtime()}: LLM Check Whether User Query Was Answered: No. Returning answer nonetheless")
                             return c2, "notused", llm_run_usage(prompt_tokens, completion_tokens)
     return None, None, None
 
@@ -260,8 +273,10 @@ def agentic_ongoing_chat(yoja_index, tracebuf:List[str],
                 filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]],
                 assistants_thread_id:str, chat_config:ChatConfiguration, messages,
                 searchsubdir=None, toolprompts=None) -> Tuple[str, str]:
-    print(f"agentic_ongoing_chat: Entered. messages={messages}")
+    lg(tracebuf, f"{prtime()}: agentic_ongoing_chat begin")
     user_message = messages[-1]['content']
+
+    detail_tracebuf = []
 
     llm_messages = []
     prompt_tokens = 0
@@ -274,33 +289,34 @@ def agentic_ongoing_chat(yoja_index, tracebuf:List[str],
     content1, prtokens, cmptokens = generate(ONGOING_ASSISTANT_PROMPT_WITH_TOOL, llm_messages, True)
     prompt_tokens += prtokens
     completion_tokens += cmptokens
-    print(f"agentic_ongoing_chat: response={content1}")
     if content1:
         if hasattr(content1, 'text'):
-            assistant_response = _get_json(content1.text)
-            print(f"agentic_ongoing_chat: assistant_response={assistant_response}")
+            lg(tracebuf, f"{prtime()}: step 1 results from LLM={content1['text']}")
+            return content1['text'], "notused", llm_run_usage(prompt_tokens, completion_tokens)
         elif hasattr(content1, "function_call"):
             function_call = content1.function_call
             if function_call.name != 'info_for_any_question_I_may_have':
-                print(f"Error. Unknown function call {function_call.name}")
+                lg(tracebuf, f"{prtime()}: Unknown function call {function_call.name}. Fail")
                 return None, None, None
             if 'question' in function_call.args:
                 tool_arg_question = function_call.args['question']
             elif 'prompt' in function_call.args:
                 tool_arg_question = function_call.args['prompt']
             else:
-                print(f"agentic_ongoing_chat: Error. No question or prompt in args to function")
+                lg(tracebuf, f"{prtime()}: No question or prompt in args to function. Fail")
                 return None, None, None
-            print(f"Retrieving with question={tool_arg_question}")
-            context_str:str = retrieve(yoja_index, tracebuf,
+            lg(tracebuf, f"{prtime()}: Retrieve question={tool_arg_question}")
+            context_str:str = retrieve(yoja_index, detail_tracebuf,
                                     filekey_to_file_chunks_dict, chat_config,
                                     tool_arg_question, searchsubdir=searchsubdir)
+            _log_context_sources(tracebuf, filekey_to_file_chunks_dict)
             content2, prtokens, cmptokens = generate(ONGOING_ASSISTANT_PROMPT_NO_TOOL,
                 [{'role': 'user', 'content': f"{user_message}. ## Context: {context_str}"}],
                 False)
             prompt_tokens += prtokens
             completion_tokens += cmptokens
             if content2 and hasattr(content2, 'text'):
+                lg(tracebuf, f"{prtime()}: generate result={content2.text}")
                 c2 = content2.text.strip()
                 if c2.startswith("##SUMMARY##"):
                     c2 = c2[11:].strip()

@@ -28,6 +28,11 @@ SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly",
           "https://www.googleapis.com/auth/userinfo.email",
           "https://www.googleapis.com/auth/userinfo.profile"]
 
+def lg(tracebuf, lgstr):
+    print(lgstr)
+    if tracebuf:
+        tracebuf.append(lgstr)
+
 def is_lambda_debug_enabled() -> bool:
      return os.getenv('LAMBDA_LOG_LEVEL', 'INFO').lower() == 'debug'
 

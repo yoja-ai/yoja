@@ -2,7 +2,7 @@ from typing import Union, Optional
 import numpy as np
 import faiss
 from scipy import spatial
-from utils import is_lambda_debug_enabled, prtime
+from utils import is_lambda_debug_enabled, prtime, lg
 from typing import List, Dict, Any, Tuple
 import os
 import tempfile
@@ -64,15 +64,14 @@ class FaissRM():
         self._vectorizer = vectorizer
         self._index_map = index_map
         self._chat_config = chat_config
-        self._tracebuf = tracebuf
-        self._lg(f"{prtime()} FaissRM: Entered")
+        lg(tracebuf, f"{prtime()} FaissRM: Entered")
 
         self._stemmer = Stemmer.Stemmer('english')
         if bm25s_index_fname:
             tmpdir=tempfile.mkdtemp()
             extract_tar_file(bm25s_index_fname, tmpdir)
             self._bm25s_retriever = bm25s.BM25.load(os.path.join(tmpdir, 'bm25s_index'), load_corpus=False)
-            self._lg(f"{prtime()} FaissRM: loaded pre-created bm25s index {bm25s_index_fname} untarred into {tmpdir}")
+            lg(tracebuf, f"{prtime()} FaissRM: loaded pre-created bm25s index {bm25s_index_fname} untarred into {tmpdir}")
         else:
             bm25s_corpus_lst = []
             for ind in range(len(index_map)):
@@ -83,7 +82,7 @@ class FaissRM():
             bm25s_corpus_tokens = bm25s.tokenize(bm25s_corpus_lst, stopwords="en", stemmer=self._stemmer)
             self._bm25s_retriever = bm25s.BM25()
             self._bm25s_retriever.index(bm25s_corpus_tokens)
-            self._lg(f"{prtime()} FaissRM: bm25s index created")
+            lg(tracebuf, f"{prtime()} FaissRM: bm25s index created")
 
         if is_lambda_debug_enabled():
             print(f"faiss_rm: Entered. Document chunks=")
@@ -255,12 +254,8 @@ class FaissRM():
     def __repr__(self):
         return f"FaissRM(storage={self.doc_storage_type!r})"
 
-    def _lg(self, lgstr):
-        print(lgstr)
-        if self._chat_config and self._chat_config.print_trace: self._tracebuf.append(lgstr)
-
     def __call__(self, query: str, bm25_num_hits: int, k: Optional[int] = None, index_type:str = 'flat',
-                named_entities=None, main_theme=None):
+                named_entities=None, main_theme=None, tracebuf=None):
         """Search the faiss index for k or self.k top passages for query.
 
         Args:
@@ -279,17 +274,17 @@ class FaissRM():
         faiss.normalize_L2(emb_npa)
 
         distance_list, index_list = self._faiss_search(emb_npa, k or self.k, index_type)
-        self._lg(f"{prtime()}: faiss search returns {len(distance_list[0])} hits")
+        lg(tracebuf, f"{prtime()}: faiss search returns {len(distance_list[0])} hits")
         if is_lambda_debug_enabled(): self._dump_raw_results(queries, index_list, distance_list)
 
         if self._bm25s_retriever:
             if named_entities:
-                self._lg(f"{prtime()}: named_entities present = {named_entities}")
+                lg(tracebuf, f"{prtime()}: named_entities present = {named_entities}")
                 search_entities = named_entities
             else:
                 search_entities = []
             if main_theme:
-                self._lg(f"{prtime()}: main theme present = {main_theme}")
+                lg(tracebuf, f"{prtime()}: main theme present = {main_theme}")
                 search_entities.append(main_theme)
             print(f"search_entities={search_entities}")
             if not search_entities:
@@ -305,26 +300,26 @@ class FaissRM():
                         para = self._index_map[index_in_faiss][1]
                         score = results[1][search_entity_ind][hit_ind]
                         if not index_in_faiss in search_entity_hits:
-                            self._lg(f"  bm25s result({search_entities[search_entity_ind]}): first {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
+                            lg(tracebuf, f"  bm25s result({search_entities[search_entity_ind]}): first {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
                             search_entity_hits[index_in_faiss] = (index_in_faiss, score)
                         else:
-                            self._lg(f"  bm25s result({search_entities[search_entity_ind]}): add {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
+                            lg(tracebuf, f"  bm25s result({search_entities[search_entity_ind]}): add {self._documents[self._index_map[index_in_faiss][0]]['path']}{self._documents[self._index_map[index_in_faiss][0]]['filename']},para={self._index_map[index_in_faiss][1]}: {score}")
                             search_entity_hits[index_in_faiss] = (index_in_faiss, search_entity_hits[index_in_faiss][1] + score)
                 if search_entity_hits.values():
                     for ky in search_entity_hits.keys():
                         if ky in index_list:
-                            self._lg(f"  bm25s res also in semantic seach:  {self._documents[self._index_map[ky][0]]['path']}{self._documents[self._index_map[ky][0]]['filename']},para={self._index_map[ky][1]}")
+                            lg(tracebuf, f"  bm25s res also in semantic seach:  {self._documents[self._index_map[ky][0]]['path']}{self._documents[self._index_map[ky][0]]['filename']},para={self._index_map[ky][1]}")
                             search_entity_hits[ky] = (ky, search_entity_hits[ky][1] + 10.0)
                     sorted_search_entity_hits = sorted(list(search_entity_hits.values()), key=lambda x: x[1], reverse=True)
                     sorted_truncated_search_entity_hits = sorted_search_entity_hits[:4]
                     print(f"sorted_truncated_search_entity_hits={sorted_truncated_search_entity_hits}")
                     indices = []
                     distances = []
-                    self._lg(f"{prtime()}: sorted_truncated_search_entity_hits:")
+                    lg(tracebuf, f"{prtime()}: sorted_truncated_search_entity_hits:")
                     for vl in sorted_truncated_search_entity_hits:
                         indices.append(vl[0])
                         distances.append(vl[1])
-                        self._lg(f"  {self._documents[self._index_map[vl[0]][0]]['path']}{self._documents[self._index_map[vl[0]][0]]['filename']},para={self._index_map[vl[0]][1]}: {vl[1]}")
+                        lg(tracebuf, f"  {self._documents[self._index_map[vl[0]][0]]['path']}{self._documents[self._index_map[vl[0]][0]]['filename']},para={self._index_map[vl[0]][1]}: {vl[1]}")
                     return np.array([np.array(distances)]), np.array([np.array(indices)])
                 else:
                     # No hits using bm25 for the named entities

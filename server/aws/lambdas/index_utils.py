@@ -16,6 +16,7 @@ import sys
 import base64
 from botocore.exceptions import ClientError
 from utils import refresh_user_google, refresh_user_dropbox, lambda_timelimit_exceeded, lambda_time_left_seconds, get_user_table_entry, extend_lock_time, set_user_table_cache_entry, prtime
+from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 from typing import Dict, List, Tuple, Any, Optional, Union
 from dataclasses import dataclass
 import datetime
@@ -1856,3 +1857,31 @@ if __name__=="__main__":
     rv['mtime'] = to_rfc3339(rv['mtime'])
     print(json.dumps(rv, indent=4))
     sys.exit(0)
+
+@dataclass
+class ContextSource:
+    file_path:str
+    file_name:str
+    file_url:str
+    file_id:str
+    para_id:str
+    file_extn:str
+
+def generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]]) -> Tuple[List[str],List[ContextSource]] :
+    context_srcs_links:List[str] = []
+    csdict = {}
+    for file_key, chunks in filekey_to_file_chunks_dict.items():
+        for chunk_det in chunks:
+            if chunk_det.file_id not in csdict:
+                csdict[chunk_det.file_id] = chunk_det # Only one context source for each file
+                para_dict = chunk_det.para_dict
+                if chunk_det.file_path:
+                    context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
+                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_path, chunk_det.file_name, chunk_det.file_id, para_dict),
+                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
+                else:
+                    context_srcs_links.append(ContextSource("", chunk_det.file_name,
+                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, None, chunk_det.file_name, chunk_det.file_id, para_dict),
+                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
+    return context_srcs_links
+

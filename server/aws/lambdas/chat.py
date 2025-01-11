@@ -12,7 +12,7 @@ import datetime
 from urllib.parse import unquote
 import numpy as np
 from utils import respond, get_service_conf, check_cookie, set_start_time, prtime
-from index_utils import init_vdb
+from index_utils import init_vdb, generate_context_sources, ContextSource
 import boto3
 from openai import OpenAI
 import traceback_with_variables
@@ -72,7 +72,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=No
         srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_max_token_limit()}), completion={run_usage.completion_tokens}"
     
     context_srcs_links:List[ContextSource]
-    context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
+    context_srcs_links = generate_context_sources(filekey_to_file_chunks_dict)
     srp = srp +f"  \n<!-- ; thread_id={thread_id} -->"
     print(f"ongoing_chat: srp={srp}")
         
@@ -108,7 +108,7 @@ def ongoing_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=No
         },
     }
 
-def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
+def _debug_flags(messages) -> Tuple[ChatConfiguration, str]:
     print_trace, use_ivfadc, retriever_stratgey = \
                 (False, False, RetrieverStrategyEnum.PreAndPostChunkStrategy)
     last_msg:str = messages[-1]['content']
@@ -135,33 +135,6 @@ def _debug_flags(messages, tracebuf:List[str]) -> Tuple[ChatConfiguration, str]:
 
     return chat_config
 
-@dataclasses.dataclass
-class ContextSource:
-    file_path:str
-    file_name:str
-    file_url:str
-    file_id:str
-    para_id:str
-    file_extn:str
-    
-def _generate_context_sources(filekey_to_file_chunks_dict:Dict[str, List[DocumentChunkDetails]]) -> Tuple[List[str],List[ContextSource]] :
-    context_srcs_links:List[str] = []
-    csdict = {}
-    for file_key, chunks in filekey_to_file_chunks_dict.items():
-        for chunk_det in chunks:
-            if chunk_det.file_id not in csdict:
-                csdict[chunk_det.file_id] = chunk_det # Only one context source for each file
-                para_dict = chunk_det.para_dict
-                if chunk_det.file_path:
-                    context_srcs_links.append(ContextSource(chunk_det.file_path, chunk_det.file_name,
-                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, chunk_det.file_path, chunk_det.file_name, chunk_det.file_id, para_dict),
-                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
-                else:
-                    context_srcs_links.append(ContextSource("", chunk_det.file_name,
-                            chunk_det.file_type.generate_link(chunk_det.doc_storage_type, None, chunk_det.file_name, chunk_det.file_id, para_dict),
-                            chunk_det.file_id, str(chunk_det.para_id), chunk_det.file_type.file_ext()))
-    return context_srcs_links
-
 def new_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, toolprompts=None):
     """
     documents is a dict like {fileid: finfo}; 
@@ -181,7 +154,7 @@ def new_chat(event, body, chat_config, tracebuf, yoja_index, searchsubdir=None, 
         srp = srp +f"  \n**Tokens:** prompt={run_usage.prompt_tokens}({pct}% of {get_max_token_limit()}), completion={run_usage.completion_tokens}"
 
     context_srcs_links:List[ContextSource]
-    context_srcs_links = _generate_context_sources(filekey_to_file_chunks_dict)
+    context_srcs_links = generate_context_sources(filekey_to_file_chunks_dict)
     
     srp = srp +f"  \n<!-- ; thread_id={thread_id} -->"
 
@@ -278,8 +251,8 @@ def chat_completions(event, context):
             print(f"chat_completions: check_cookie did not return email. Sending 403")
             return respond({"status": "Unauthorized: please login to google auth"}, 403, None)
 
-    tracebuf = [f"{prtime()} Begin Trace"];
-    chat_config = _debug_flags(body['messages'], tracebuf)
+    tracebuf = []
+    chat_config = _debug_flags(body['messages'])
 
     searchsubdir = None
     faiss_rms:List[faiss_rm.FaissRM] = []

@@ -93,10 +93,6 @@ TOOL_LIST_OF_FILES_FOR_GIVEN_QUESTION = {
     }
 }
 
-def _lg(tracebuf, lgstr):
-    print(lgstr)
-    tracebuf.append(lgstr)
-
 def _calc_tokens(context):
     global encoding_model
     return len(encoding_model.encode(context))

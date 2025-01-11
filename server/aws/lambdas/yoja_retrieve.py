@@ -17,7 +17,7 @@ from typing import Tuple, List, Dict, Any, Self
 from chatconfig import ChatConfiguration, RetrieverStrategyEnum
 from documentchunk import DocumentType, DocumentChunkDetails, DocumentChunkRange
 import tiktoken
-from utils import prtime
+from utils import prtime, lg
 from text_utils import format_paragraph
 from sentence_transformers.cross_encoder import CrossEncoder
 
@@ -30,10 +30,6 @@ g_cross_encoder = None
 
 def get_max_token_limit():
     return MAX_TOKEN_LIMIT
-
-def _lg(tracebuf, lgstr):
-    print(lgstr)
-    tracebuf.append(lgstr)
 
 def _truncate_cross_sorted_scores(cross_sorted_scores, most_relevant):
     print(f"_truncate_cross_sorted_scores: Entered. most_relevant={most_relevant}")
@@ -91,7 +87,8 @@ def _retrieve_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[
             qr = queries[qind]
             distances, indices_in_faiss = faiss_rm_vdb(qr, BM25_NUM_HITS * (num_hits_multiplier+1),
                                     k=MAX_VDB_RESULTS, index_type='ivfadc' if use_ivfadc else 'flat',
-                                    named_entities=named_entities, main_theme=main_theme)
+                                    named_entities=named_entities, main_theme=main_theme,
+                                    tracebuf=tracebuf)
             for idx in range(len(indices_in_faiss[0])):
                 ind_in_faiss = indices_in_faiss[0][idx]
                 finfo = documents[index_map[ind_in_faiss][0]]
@@ -182,10 +179,10 @@ def _retrieve_rerank(faiss_rms:List[faiss_rm.FaissRM], documents_list:List[Dict[
         chk=sorted_summed_scores[reranked_indices[ind]]
         chk.cross_encoder_score = cross_scores[reranked_indices[ind]]
         cross_sorted_scores.append(chk)
-    _lg(tracebuf, f"{prtime()}_retrieve_rerank: cross_sorted_scores:")
+    lg(tracebuf, f"{prtime()}_retrieve_rerank: cross_sorted_scores:")
     for ind in range(len(cross_sorted_scores)):
         chk = cross_sorted_scores[ind]
-        _lg(tracebuf, f"  reranker_sorted_idx={ind}, {chk.file_info['path']}{chk.file_info['filename']},para={chk.para_id}: cross_encoder_score={chk.cross_encoder_score}, index_in_faiss={chk.index_in_faiss}, distance={chk.distance}")
+        lg(tracebuf, f"  reranker_sorted_idx={ind}, {chk.file_info['path']}{chk.file_info['filename']},para={chk.para_id}: cross_encoder_score={chk.cross_encoder_score}, index_in_faiss={chk.index_in_faiss}, distance={chk.distance}")
     return True, cross_sorted_scores
 
 def _get_key(finfo):
@@ -266,7 +263,7 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
             cross_sorted_scores = _truncate_cross_sorted_scores(cross_sorted_scores, True)
         elif least_relevant_only:
             cross_sorted_scores = _truncate_cross_sorted_scores(cross_sorted_scores, False)
-    _lg(tracebuf, f"{prtime()}get_context: length of truncated cross_sorted_scores = {len(cross_sorted_scores)}")
+    lg(tracebuf, f"{prtime()}get_context: length of truncated cross_sorted_scores = {len(cross_sorted_scores)}")
 
     context:str = ''
     all_docs_token_count = 0
@@ -279,7 +276,7 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
         index_in_faiss = chunk_det.index_in_faiss
         fileid, para_index = chunk_det.file_id, chunk_det.para_id
         finfo = chunk_det.file_info
-        _lg(tracebuf, f"{prtime()}get_context: Processing {finfo['path']}{finfo['filename']},para={chunk_det.para_id}")
+        lg(tracebuf, f"{prtime()}get_context: Processing {finfo['path']}{finfo['filename']},para={chunk_det.para_id}")
 
         key = _get_key(finfo)
         if not key:
@@ -292,7 +289,7 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
         if chunk_det.file_type == DocumentType.GH_ISSUES_ZIP:
             chunk_range.start_para_id = chunk_det.para_id
             chunk_range.end_para_id = chunk_det.para_id
-            _lg(tracebuf, f"{prtime()}get_context: gh issues zip file. Not adding previous or next paragraphs for context")
+            lg(tracebuf, f"{prtime()}get_context: gh issues zip file. Not adding previous or next paragraphs for context")
             break
         
         if chat_config.retreiver_strategy == RetrieverStrategyEnum.FullDocStrategy:
@@ -331,7 +328,7 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
                 token_count += tiktoken_count
                 all_docs_token_count += tiktoken_count
                 if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
-            _lg(tracebuf, f"{prtime()}get_context: including prior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
+            lg(tracebuf, f"{prtime()}get_context: including prior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
 
             token_count:int = 0
             chunk_range.end_para_id = chunk_det.para_id
@@ -348,7 +345,7 @@ def get_context(yoja_index, tracebuf:List[str], filekey_to_file_chunks_dict:Dict
                     token_count += tiktoken_count
                     all_docs_token_count += tiktoken_count
                     if token_count >= max_pre_and_post_token_limit or all_docs_token_count >= max_token_limit: break
-                _lg(tracebuf, f"{prtime()}get_context: including posterior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
+                lg(tracebuf, f"{prtime()}get_context: including posterior chunks upto {idx} for {chunk_det.file_name} hit para_number={chunk_det.para_id}")
             
             prelude = f"Name of the file is {chunk_det.file_name}"
             context = context + "\n" + prelude + "\n" + ". ".join(fparagraphs)
